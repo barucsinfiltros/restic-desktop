@@ -1,0 +1,24 @@
+{
+    "theme": "amoled-black",
+    "restic_path": "restic",
+    "repositories": [
+        {
+            "name": "Data-Music",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Data/Music",
+            "password": "gAAAAABps9QtIndT8otNa-P9AacxXxoLT2DMJ7yTxfXCv9mxjeStCsnPS4qK-LxJxRm7vNecp-vCPB3lsW5j-kzPKvEnLx3bJw==",
+            "last_checked": "2026-03-13 09:09:01"
+        },
+        {
+            "name": "Data-Pictures",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Data/Pictures",
+            "password": "gAAAAABps9Sg_MWzEH0PrJx0iHh3SEsxa_Vpuel6n4ssaSfJuoZiek29i1EyeTahkWgc-Lg6dUhLCJmbQotF7X8L0L5Ev05jaw==",
+            "last_checked": "2026-03-13 09:10:56"
+        }
+    ],
+    "last_repository": "",
+    "auto_refresh_snapshots": true,
+    "snapshot_refresh_interval": 60,
+    "log_level": "info"
+}
