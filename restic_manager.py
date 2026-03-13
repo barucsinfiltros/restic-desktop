@@ -12,7 +12,9 @@ import sys
 import subprocess
 import traceback
 import base64
-from datetime import datetime, timezone
+import hmac
+import hashlib
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -32,7 +34,7 @@ from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
 import qdarkstyle
 from qdarkstyle.light.palette import LightPalette
 
-VERSION = "v1.0.5"
+VERSION = "v1.3.0"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 
@@ -73,9 +75,11 @@ stylesheet = (
 )
 # Password encryption key (derived from machine-specific data)
 def get_encryption_key():
-    """Generate encryption key from machine-specific data"""
-    # Use machine name + username as salt
-    salt = f"{os.environ.get('COMPUTERNAME', 'restic')}-{os.environ.get('USERNAME', 'user')}".encode()
+    """Generate encryption key from machine-specific system ID (cross-platform)"""
+    # Use machine ID as salt
+    machine_id = get_machine_id()
+    salt = machine_id.encode()
+    
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -84,6 +88,163 @@ def get_encryption_key():
     )
     key = base64.urlsafe_b64encode(kdf.derive(b"restic-manager-key"))
     return key
+
+def get_machine_id():
+    """Get machine-specific identifier (cross-platform)"""
+    import platform
+    import uuid
+    
+    # Get machine-specific identifier based on OS
+    machine_id = None
+    system = platform.system()
+    
+    if system == "Linux":
+        # Try to read machine-id on Linux
+        try:
+            with open('/etc/machine-id', 'r') as f:
+                machine_id = f.read().strip()
+        except:
+            try:
+                with open('/var/lib/dbus/machine-id', 'r') as f:
+                    machine_id = f.read().strip()
+            except:
+                pass
+    
+    elif system == "Windows":
+        # Try to get machine GUID on Windows
+        try:
+            result = subprocess.run(
+                ['wmic', 'csproduct', 'get', 'uuid'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                if len(lines) > 1:
+                    machine_id = lines[1].strip()
+        except:
+            pass
+    
+    elif system == "Darwin":  # macOS
+        # Try to get hardware UUID on macOS
+        try:
+            result = subprocess.run(
+                ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'IOPlatformUUID' in line:
+                        machine_id = line.split('"')[3]
+                        break
+        except:
+            pass
+    
+    # Fallback: use MAC address + hostname + username (cross-platform)
+    if not machine_id:
+        mac = uuid.getnode()
+        hostname = platform.node()
+        username = os.environ.get('USERNAME') or os.environ.get('USER') or 'user'
+        machine_id = f"{mac}-{hostname}-{username}"
+    
+    return machine_id
+
+class LicenseManager:
+    """Manage and validate license keys tied to machine ID"""
+    
+    # SECRET KEY - In production, keep this secret or use RSA signing
+    # For now, this is a shared secret. Change this to your own secret!
+    _SECRET_KEY = b"restic-manager-secret-key-change-this-in-production"
+    
+    def __init__(self, license_file="license.key"):
+        self.license_file = license_file
+        self.machine_id = get_machine_id()
+    
+    def validate_license(self) -> Tuple[bool, str]:
+        """
+        Validate the license key
+        Returns: (is_valid, message)
+        """
+        if not os.path.exists(self.license_file):
+            return False, "No license key found. Please enter a valid license key."
+        
+        try:
+            with open(self.license_file, 'r') as f:
+                license_key = f.read().strip()
+            
+            return self._verify_license_key(license_key)
+        except Exception as e:
+            return False, f"Error reading license: {str(e)}"
+    
+    def _verify_license_key(self, license_key: str) -> Tuple[bool, str]:
+        """Verify the license key format and signature"""
+        try:
+            # License format: BASE64(machine_id_hash:expiry_date:signature)
+            decoded = base64.b64decode(license_key).decode('utf-8')
+            parts = decoded.split(':')
+            
+            if len(parts) != 3:
+                return False, "Invalid license key format."
+            
+            machine_hash, expiry_str, signature = parts
+            
+            # Verify machine ID
+            current_machine_hash = hashlib.sha256(self.machine_id.encode()).hexdigest()[:16]
+            if machine_hash != current_machine_hash:
+                return False, "License key is not valid for this machine."
+            
+            # Verify signature
+            payload = f"{machine_hash}:{expiry_str}"
+            expected_sig = hmac.new(
+                self._SECRET_KEY,
+                payload.encode(),
+                hashlib.sha256
+            ).hexdigest()[:32]
+            
+            if signature != expected_sig:
+                return False, "License key signature is invalid."
+            
+            # Check expiration
+            if expiry_str != "unlimited":
+                try:
+                    expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d")
+                    if datetime.now() > expiry_date:
+                        return False, f"License expired on {expiry_str}."
+                except ValueError:
+                    return False, "Invalid expiration date in license."
+            
+            # All checks passed
+            if expiry_str == "unlimited":
+                return True, "License is valid (unlimited)."
+            else:
+                days_left = (expiry_date - datetime.now()).days
+                return True, f"License is valid until {expiry_str} ({days_left} days remaining)."
+        
+        except Exception as e:
+            return False, f"License validation error: {str(e)}"
+    
+    def save_license(self, license_key: str) -> Tuple[bool, str]:
+        """Save and validate a new license key"""
+        # First verify it
+        is_valid, message = self._verify_license_key(license_key)
+        
+        if not is_valid:
+            return False, message
+        
+        # Save to file
+        try:
+            with open(self.license_file, 'w') as f:
+                f.write(license_key)
+            return True, "License key activated successfully!"
+        except Exception as e:
+            return False, f"Error saving license: {str(e)}"
+    
+    def get_machine_id_for_licensing(self) -> str:
+        """Get machine ID to share with license generator"""
+        return self.machine_id
 
 class PasswordManager:
     """Encrypt and decrypt passwords"""
@@ -825,6 +986,129 @@ class BackupJobDialog(QDialog):
         return data
 
 
+# License Activation Dialog
+class LicenseDialog(QDialog):
+    """Dialog for entering and activating license keys"""
+    
+    def __init__(self, parent=None, machine_id=""):
+        super().__init__(parent)
+        self.machine_id = machine_id
+        self.license_manager = LicenseManager()
+        
+        self.setWindowTitle("License Activation")
+        self.setMinimumWidth(600)
+        self.setModal(True)
+        
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        # Title
+        title_label = QLabel("License Activation Required")
+        title_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # Info text
+        info_text = QLabel(
+            "This application requires a valid license key to run.\n"
+            "Please enter your license key below or contact support to purchase a license."
+        )
+        info_text.setWordWrap(True)
+        info_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(info_text)
+        
+        layout.addSpacing(20)
+        
+        # Machine ID display (for requesting license)
+        machine_group = QGroupBox("Machine Information")
+        machine_layout = QVBoxLayout()
+        machine_group.setLayout(machine_layout)
+        
+        machine_info = QLabel(
+            "When requesting a license key, provide the following Machine ID:"
+        )
+        machine_info.setWordWrap(True)
+        machine_layout.addWidget(machine_info)
+        
+        # Machine ID display with copy button
+        machine_id_layout = QHBoxLayout()
+        self.machine_id_display = QLineEdit(self.machine_id)
+        self.machine_id_display.setReadOnly(True)
+        self.machine_id_display.setFont(QFont("Courier", 9))
+        machine_id_layout.addWidget(self.machine_id_display)
+        
+        copy_btn = QPushButton("Copy")
+        copy_btn.setFixedWidth(80)
+        copy_btn.clicked.connect(self.copy_machine_id)
+        machine_id_layout.addWidget(copy_btn)
+        
+        machine_layout.addLayout(machine_id_layout)
+        layout.addWidget(machine_group)
+        
+        layout.addSpacing(20)
+        
+        # License key input
+        license_group = QGroupBox("License Key")
+        license_layout = QVBoxLayout()
+        license_group.setLayout(license_layout)
+        
+        self.license_input = QTextEdit()
+        self.license_input.setPlaceholderText("Enter your license key here...")
+        self.license_input.setMaximumHeight(100)
+        self.license_input.setFont(QFont("Courier", 9))
+        license_layout.addWidget(self.license_input)
+        
+        layout.addWidget(license_group)
+        
+        # Status message
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        activate_btn = QPushButton("Activate License")
+        activate_btn.setDefault(True)
+        activate_btn.clicked.connect(self.activate_license)
+        button_layout.addWidget(activate_btn)
+        
+        quit_btn = QPushButton("Quit Application")
+        quit_btn.clicked.connect(self.reject)
+        button_layout.addWidget(quit_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def copy_machine_id(self):
+        """Copy machine ID to clipboard"""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.machine_id)
+        self.status_label.setText("Machine ID copied to clipboard!")
+        self.status_label.setStyleSheet("color: green;")
+    
+    def activate_license(self):
+        """Attempt to activate the entered license key"""
+        license_key = self.license_input.toPlainText().strip()
+        
+        if not license_key:
+            self.status_label.setText("Please enter a license key.")
+            self.status_label.setStyleSheet("color: red;")
+            return
+        
+        # Try to save and validate
+        success, message = self.license_manager.save_license(license_key)
+        
+        if success:
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("color: green;")
+            # Give user time to see success message
+            QTimer.singleShot(1000, self.accept)
+        else:
+            self.status_label.setText(f"Activation failed: {message}")
+            self.status_label.setStyleSheet("color: red;")
+
+
 # Settings Manager
 class ResticSettingsManager:
     """Manager for application settings"""
@@ -1274,24 +1558,33 @@ class ResticManagerWindow(QMainWindow):
     def _update_splash(self, message):
         """Update splash screen message if available"""
         if self.splash:
-            # Get current theme for text color
-            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
-            
-            # Map themes to text colors
-            theme_text_colors = {
-                "light": "#333333",
-                "light-green": "#222423",
-                "light-blue": "#1a2b3c",
-                "sunset-orange": "#552200"
-            }
-            text_color = theme_text_colors.get(current_theme, "#ffffff")
-            
-            self.splash.showMessage(
-                f"Restic Backup Manager {VERSION}\n\n{message}\n",
-                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
-                QColor(text_color)
-            )
-            self.app.processEvents()  # Force UI update
+            try:
+                # Check if splash is still valid (not deleted)
+                if not self.splash.isVisible():
+                    # Splash may have been closed, but object might still exist
+                    return
+                
+                # Get current theme for text color
+                current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
+                
+                # Map themes to text colors
+                theme_text_colors = {
+                    "light": "#333333",
+                    "light-green": "#222423",
+                    "light-blue": "#1a2b3c",
+                    "sunset-orange": "#552200"
+                }
+                text_color = theme_text_colors.get(current_theme, "#ffffff")
+                
+                self.splash.showMessage(
+                    f"Restic Backup Manager {VERSION}\n\n{message}\n",
+                    Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
+                    QColor(text_color)
+                )
+                self.app.processEvents()  # Force UI update
+            except RuntimeError:
+                # Splash has been deleted, silently ignore
+                pass
     
     def create_sidebar(self, main_layout):
         """Create sidebar navigation menu"""
@@ -2030,9 +2323,69 @@ class ResticManagerWindow(QMainWindow):
         
         # Save button
         save_btn = QPushButton("Save Settings")
-        save_btn.setMinimumHeight(40)
+        save_btn.setFixedWidth(150)
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        save_btn_layout = QHBoxLayout()
+        save_btn_layout.addStretch()
+        save_btn_layout.addWidget(save_btn)
+        save_btn_layout.addStretch()
+        
         save_btn.clicked.connect(self.save_settings)
-        layout.addWidget(save_btn)
+        layout.addLayout(save_btn_layout)
+        
+        # License Management Section
+        license_group = QGroupBox("License Information")
+        license_layout = QVBoxLayout()
+        license_group.setLayout(license_layout)
+        
+        # License status
+        self.license_status_label = QLabel()
+        self.license_status_label.setWordWrap(True)
+        license_layout.addWidget(self.license_status_label)
+        
+        # Machine ID display
+        machine_id_layout = QHBoxLayout()
+        machine_id_layout.addWidget(QLabel("Machine ID:"))
+        self.machine_id_display = QLineEdit()
+        self.machine_id_display.setFixedWidth(400)
+        self.machine_id_display.setReadOnly(True)
+        self.machine_id_display.setFont(QFont("Courier", 9))
+        
+        machine_id_display_layout = QHBoxLayout()
+        machine_id_display_layout.addWidget(self.machine_id_display)
+        machine_id_display_layout.addStretch()
+        
+        machine_id_layout.addLayout(machine_id_display_layout)
+        
+        copy_machine_id_btn = QPushButton("Copy")
+        copy_machine_id_btn.setFixedWidth(80)
+        copy_machine_id_btn.clicked.connect(self.copy_machine_id)
+        machine_id_layout.addWidget(copy_machine_id_btn)
+        license_layout.addLayout(machine_id_layout)
+        
+        # License action buttons
+        license_btn_layout = QHBoxLayout()
+        
+        update_license_btn = QPushButton("Update License Key")
+        update_license_btn.setFixedWidth(180)
+        update_license_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        update_license_btn.clicked.connect(self.update_license_key)
+        license_btn_layout.addWidget(update_license_btn)
+        
+        refresh_license_btn = QPushButton("Refresh Status")
+        refresh_license_btn.setFixedWidth(180)
+        refresh_license_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_license_btn.clicked.connect(self.refresh_license_status)
+        license_btn_layout.addWidget(refresh_license_btn)
+        
+        license_layout.addLayout(license_btn_layout)
+        
+        layout.addWidget(license_group)
+        
+        # Initialize license display
+        self.refresh_license_status()
         
         layout.addStretch()
         
@@ -3804,6 +4157,145 @@ class ResticManagerWindow(QMainWindow):
         QMessageBox.information(self, "Success", "Settings saved successfully!")
         self.log("Settings saved")
     
+    # License Management Methods
+    def refresh_license_status(self):
+        """Refresh and display license status"""
+        license_manager = LicenseManager()
+        is_valid, message = license_manager.validate_license()
+        
+        # Update machine ID display
+        machine_id = license_manager.get_machine_id_for_licensing()
+        if hasattr(self, 'machine_id_display'):
+            self.machine_id_display.setText(machine_id)
+        
+        # Update status label with color coding
+        if hasattr(self, 'license_status_label'):
+            if is_valid:
+                self.license_status_label.setText(f"✓ {message}")
+                self.license_status_label.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                self.license_status_label.setText(f"✗ {message}")
+                self.license_status_label.setStyleSheet("color: red; font-weight: bold;")
+    
+    def copy_machine_id(self):
+        """Copy machine ID to clipboard"""
+        if hasattr(self, 'machine_id_display'):
+            clipboard = QApplication.clipboard()
+            clipboard.setText(self.machine_id_display.text())
+            QMessageBox.information(
+                self,
+                "Machine ID Copied",
+                "Machine ID has been copied to clipboard.\n\nYou can send this to your license provider to request a new license key."
+            )
+            self.log("Machine ID copied to clipboard")
+    
+    def update_license_key(self):
+        """Show dialog to update/change license key"""
+        license_manager = LicenseManager()
+        machine_id = license_manager.get_machine_id_for_licensing()
+        
+        # Create dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Update License Key")
+        dialog.setMinimumWidth(600)
+        
+        layout = QVBoxLayout()
+        dialog.setLayout(layout)
+        
+        # Info text
+        info_label = QLabel(
+            "Enter your new license key below.\n"
+            "If you need a new license key, send your Machine ID to your license provider."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Machine ID display
+        machine_group = QGroupBox("Your Machine ID")
+        machine_layout = QHBoxLayout()
+        machine_group.setLayout(machine_layout)
+        
+        machine_display = QLineEdit(machine_id)
+        machine_display.setReadOnly(True)
+        machine_display.setFont(QFont("Courier", 9))
+        machine_layout.addWidget(machine_display)
+        
+        copy_btn = QPushButton("Copy")
+        copy_btn.setFixedWidth(80)
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(machine_id))
+        machine_layout.addWidget(copy_btn)
+        
+        layout.addWidget(machine_group)
+        
+        # License key input
+        license_group = QGroupBox("New License Key")
+        license_layout = QVBoxLayout()
+        license_group.setLayout(license_layout)
+        
+        license_input = QTextEdit()
+        license_input.setPlaceholderText("Paste your license key here...")
+        license_input.setMaximumHeight(100)
+        license_input.setFont(QFont("Courier", 9))
+        license_layout.addWidget(license_input)
+        
+        layout.addWidget(license_group)
+        
+        # Status message
+        status_label = QLabel("")
+        status_label.setWordWrap(True)
+        layout.addWidget(status_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        activate_btn = QPushButton("Activate License")
+        activate_btn.clicked.connect(lambda: self._activate_new_license(
+            license_input.toPlainText().strip(),
+            status_label,
+            dialog
+        ))
+        button_layout.addWidget(activate_btn)
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(button_layout)
+        
+        dialog.exec()
+    
+    def _activate_new_license(self, license_key, status_label, dialog):
+        """Activate a new license key"""
+        if not license_key:
+            status_label.setText("Please enter a license key.")
+            status_label.setStyleSheet("color: red;")
+            return
+        
+        license_manager = LicenseManager()
+        success, message = license_manager.save_license(license_key)
+        
+        if success:
+            status_label.setText(f"✓ {message}")
+            status_label.setStyleSheet("color: green; font-weight: bold;")
+            self.log("License key updated successfully")
+            
+            # Refresh license status in settings page
+            self.refresh_license_status()
+            
+            # Close dialog after short delay
+            QTimer.singleShot(1500, dialog.accept)
+            
+            # Show success message
+            QMessageBox.information(
+                self,
+                "License Activated",
+                "Your license key has been updated successfully!"
+            )
+        else:
+            status_label.setText(f"✗ {message}")
+            status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.log(f"License activation failed: {message}")
+    
     # Theme Methods
     def apply_theme(self, theme: str):
         # Update the theme setting first
@@ -4848,6 +5340,51 @@ def main():
     )
     splash.show()
     app.processEvents()
+
+    # Check license before proceeding
+    license_manager = LicenseManager()
+    is_valid, license_message = license_manager.validate_license()
+    
+    if not is_valid:
+        # Close splash and show license dialog
+        splash.close()
+        splash.deleteLater()
+        app.processEvents()  # Process the deletion
+        
+        machine_id = license_manager.get_machine_id_for_licensing()
+        license_dialog = LicenseDialog(machine_id=machine_id)
+        
+        # Apply basic styling to license dialog based on theme
+        if current_theme == "dark" or "dark" in current_theme:
+            license_dialog.setStyleSheet("QDialog { background-color: #2b2b2b; color: #ffffff; }")
+        
+        result = license_dialog.exec()
+        
+        if result != QDialog.DialogCode.Accepted:
+            # User cancelled - exit application
+            return 0
+        
+        # Re-validate after activation
+        is_valid, license_message = license_manager.validate_license()
+        if not is_valid:
+            QMessageBox.critical(
+                None,
+                "License Activation Failed",
+                f"Could not activate license:\n{license_message}\n\nApplication will now exit."
+            )
+            return 1
+        
+        # Recreate splash screen after successful license activation
+        splash_pix = QPixmap(400, 200)
+        splash_pix.fill(QColor(splash_bg_color))
+        splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
+        splash.showMessage(
+            f"Restic Backup Manager {VERSION}\n\nLicense activated! Loading application...\n",
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
+            QColor(splash_text_color)
+        )
+        splash.show()
+        app.processEvents()
 
     # Create window and pass splash for dynamic updates
     window = ResticManagerWindow(app, splash)

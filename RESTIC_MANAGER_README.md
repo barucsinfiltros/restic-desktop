@@ -8,9 +8,17 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 #### Core Infrastructure
 - **Settings Manager**: JSON-based settings storage (restic_settings.json)
+- **License System**: Machine-bound license key activation (NEW v1.3.0)
+  - Cross-platform machine ID generation (Windows, Linux, macOS)
+  - HMAC-SHA256 cryptographic signatures prevent forgery
+  - Machine-specific license binding (cannot share between computers)
+  - Support for unlimited and time-limited licenses
+  - License validation on startup
+  - License management in Settings page
+  - Separate license key generator tools (CLI and GUI)
 - **Encrypted Password Storage**: Using `cryptography` library with Fernet encryption
   - PBKDF2HMAC with 100,000 iterations
-  - Machine-specific encryption key (based on computer name + username)
+  - Machine-specific encryption key (based on unique hardware/system ID)
   - Passwords securely stored in settings file
 - **Theme Support**: 25 themes including:
   - light, dark, dark-cyan, dark-navy, dark-green, light-green
@@ -197,17 +205,30 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 ## Directory Structure
 
 ```
-restic_manager.py          # Main application
-restic_settings.json       # Settings (auto-created)
-RESTIC_MANAGER_README.md   # This file
+restic_manager.py              # Main application
+restic_settings.json           # Settings (auto-created)
+license.key                    # License key (created after activation)
+
+# License System (v1.3.0)
+license_generator.py           # CLI license generator (KEEP SECURE!)
+license_generator_gui.py       # GUI license generator (KEEP SECURE!)
+check_machine_id.py            # Machine ID checker utility
+test_license.py                # License testing script
+LICENSE_SYSTEM.md              # Complete license documentation
+LICENSE_QUICKSTART.md          # Quick start for license system
+
+# Documentation
+RESTIC_MANAGER_README.md       # This file
 ```
+
+**Security Note:** The `license_generator.py` and `license_generator_gui.py` files should be kept secure and NOT distributed to end users. They are administrator/developer tools only.
 
 ## Dependencies
 
 Already installed in your environment:
 - PyQt6
 - qdarkstyle
-- cryptography (for password encryption)
+- cryptography (for password encryption and license system)
 
 Additional requirement:
 - **Restic**: Download from https://restic.net/
@@ -230,12 +251,35 @@ python restic_manager.py
 ## Configuration
 
 On first run:
-1. Install Restic if not already installed
-2. Go to Settings and configure Restic path
-3. Choose your preferred theme
-4. Add your first repository
+1. **Activate License**: Enter your license key when prompted
+   - Copy your Machine ID using the Copy button
+   - Send Machine ID to your license provider
+   - Enter received license key and click "Activate License"
+2. Install Restic if not already installed
+3. Go to Settings and configure Restic path
+4. Choose your preferred theme
+5. Add your first repository
+
+**License Management:**
+- License keys are stored in `license.key` in the application directory
+- Your license can be viewed and updated in Settings → License Information
+- Each machine requires its own license (licenses are machine-specific)
+- License validation occurs on application startup
 
 ## Quick Start Guide
+
+### First Run - License Activation
+
+On first run, the application requires a valid license key:
+
+1. The **License Activation** dialog will appear automatically
+2. Copy your **Machine ID** using the Copy button
+3. Send your Machine ID to your license provider to request a license key
+4. Paste the received license key into the text field
+5. Click **Activate License**
+6. Once activated, the application will start normally
+
+**Note:** License keys are machine-specific and cannot be shared between computers. Each machine requires its own license.
 
 ### Adding Your First Repository
 
@@ -304,7 +348,168 @@ Your password is now encrypted and stored securely! 🔒
 3. Click **Refresh Stats** to see repository information
 4. Click **Verify Repository** to check data integrity
 
+### Managing Your License
+
+The Settings page includes license management features:
+
+1. Click **Settings** in the sidebar
+2. Scroll to the **License Information** section
+3. View your current license status:
+   - ✓ Green: License is valid (shows expiration date and days remaining)
+   - ✗ Red: License expired or invalid
+4. **Copy Machine ID**: Copy your unique machine identifier for license requests
+5. **Update License Key**: Enter a new or replacement license key
+6. **Refresh Status**: Revalidate your current license
+
+**License Renewal/Update:**
+- If your license expires, use "Update License Key" to enter a new key
+- Your Machine ID never changes - use the same ID for renewals
+- No need to restart the application after updating your license
+
 ## Implementation Guide
+
+### License System (✅ Fully Implemented - v1.3.0)
+
+The application includes a complete license key system that binds licenses to specific machines using hardware/system identifiers.
+
+#### Machine ID Generation
+
+```python
+def get_machine_id():
+    """Get cross-platform machine-specific identifier"""
+    # Windows: Machine UUID from WMIC
+    # Linux: /etc/machine-id or /var/lib/dbus/machine-id
+    # macOS: Hardware UUID from IOPlatformExpertDevice
+    # Fallback: MAC address + hostname + username
+    
+    machine_id = None
+    system = platform.system()
+    
+    if system == "Windows":
+        result = subprocess.run(['wmic', 'csproduct', 'get', 'uuid'], ...)
+        machine_id = result.stdout.lines[1].strip()
+    elif system == "Linux":
+        with open('/etc/machine-id', 'r') as f:
+            machine_id = f.read().strip()
+    # ... macOS and fallback implementations
+    
+    return machine_id
+```
+
+#### License Validation
+
+```python
+class LicenseManager:
+    """Manage and validate machine-bound license keys"""
+    
+    _SECRET_KEY = b"your-secret-key-change-in-production"
+    
+    def validate_license(self) -> Tuple[bool, str]:
+        """Validate the license key"""
+        if not os.path.exists(self.license_file):
+            return False, "No license key found"
+        
+        with open(self.license_file, 'r') as f:
+            license_key = f.read().strip()
+        
+        # Decode: BASE64(machine_hash:expiry_date:signature)
+        decoded = base64.b64decode(license_key).decode()
+        machine_hash, expiry_str, signature = decoded.split(':')
+        
+        # Verify machine ID
+        current_hash = hashlib.sha256(self.machine_id.encode()).hexdigest()[:16]
+        if machine_hash != current_hash:
+            return False, "License not valid for this machine"
+        
+        # Verify signature
+        payload = f"{machine_hash}:{expiry_str}"
+        expected_sig = hmac.new(_SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()[:32]
+        if signature != expected_sig:
+            return False, "Invalid license signature"
+        
+        # Check expiration
+        if expiry_str != "unlimited":
+            expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d")
+            if datetime.now() > expiry_date:
+                return False, f"License expired on {expiry_str}"
+        
+        return True, "License is valid"
+```
+
+#### License Generation (For Administrators)
+
+**Command Line Generator:**
+```bash
+# Generate unlimited license
+python license_generator.py "MACHINE_ID_HERE"
+
+# Generate 365-day license
+python license_generator.py "MACHINE_ID_HERE" --days 365
+
+# Save to file
+python license_generator.py "MACHINE_ID_HERE" --days 365 --output license.key
+```
+
+**GUI Generator:**
+```bash
+# Launch graphical license generator
+python license_generator_gui.py
+```
+
+**Generator Code:**
+```python
+def generate_license_key(machine_id: str, expiry_days: int = None) -> str:
+    """Generate a license key for a specific machine"""
+    machine_hash = hashlib.sha256(machine_id.encode()).hexdigest()[:16]
+    
+    if expiry_days is None:
+        expiry_str = "unlimited"
+    else:
+        expiry_date = datetime.now() + timedelta(days=expiry_days)
+        expiry_str = expiry_date.strftime("%Y-%m-%d")
+    
+    payload = f"{machine_hash}:{expiry_str}"
+    signature = hmac.new(_SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()[:32]
+    
+    license_data = f"{machine_hash}:{expiry_str}:{signature}"
+    return base64.b64encode(license_data.encode()).decode()
+```
+
+#### License Workflow
+
+**Customer Side:**
+1. Runs application → License Activation dialog appears
+2. Copies Machine ID using Copy button
+3. Sends Machine ID to administrator/vendor
+4. Receives license key via email/support
+5. Pastes license key into activation dialog
+6. Clicks "Activate License"
+7. License validated → Application starts
+
+**Administrator Side:**
+1. Receives Machine ID from customer
+2. Runs license generator: `python license_generator.py "MACHINE_ID" --days 365`
+3. Sends generated license key to customer
+4. Customer activates and application works
+
+#### Security Features
+
+- **Machine-Bound**: License keys contain machine ID hash - cannot be shared
+- **Cryptographically Signed**: HMAC-SHA256 prevents forgery/tampering
+- **Expiration Support**: Time-limited trials or subscriptions
+- **Secure Storage**: License stored in `license.key` file
+- **No Cloud Required**: All validation is local
+
+#### Available Tools
+
+1. **license_generator.py** - CLI tool for generating licenses (KEEP SECURE!)
+2. **license_generator_gui.py** - GUI tool for license generation
+3. **check_machine_id.py** - Utility for customers to get their Machine ID
+4. **test_license.py** - Test license generation/validation
+5. **LICENSE_SYSTEM.md** - Complete documentation
+6. **LICENSE_QUICKSTART.md** - Quick start guide
+
+**Important:** Keep the license generator tools secure! Do not distribute to end users.
 
 ### Using Encrypted Passwords
 
@@ -843,6 +1048,23 @@ def verify_repository(self):
 
 ### Version 1.3.0 - March 13, 2026
 
+**Major New Features:**
+- ✅ **License System - Fully Implemented**: Complete machine-bound licensing
+  - Cross-platform machine ID generation (Windows/Linux/macOS with fallback)
+  - HMAC-SHA256 cryptographic signature verification
+  - License validation on application startup
+  - License activation dialog for first-run and invalid licenses
+  - License management in Settings page:
+    - View license status (valid/expired/invalid)
+    - Copy Machine ID for license requests
+    - Update/renew license key without restart
+    - Refresh license status
+  - Support for unlimited and time-limited licenses
+  - License generator tools (CLI and GUI)
+  - Comprehensive documentation (LICENSE_SYSTEM.md, LICENSE_QUICKSTART.md)
+  - Utility scripts (check_machine_id.py, test_license.py)
+  - Machine-specific binding prevents license sharing
+
 **New Features:**
 - ✅ **Diff Snapshots - Fully Implemented**: Compare changes between snapshots
   - Executes `restic diff` command in background worker thread
@@ -937,6 +1159,127 @@ def verify_repository(self):
 - Passwords stored encrypted in restic_settings.json
 - All dialogs and UI elements ready for command execution
 
+## License Key Generation (For Administrators)
+
+The application includes tools for generating license keys. These should only be used by administrators/vendors.
+
+### Command-Line Generator
+
+```bash
+# Generate unlimited license
+python license_generator.py "CUSTOMER_MACHINE_ID"
+
+# Generate 30-day trial
+python license_generator.py "CUSTOMER_MACHINE_ID" --days 30
+
+# Generate 1-year license
+python license_generator.py "CUSTOMER_MACHINE_ID" --days 365
+
+# Save directly to file
+python license_generator.py "CUSTOMER_MACHINE_ID" --days 365 --output customer_license.key
+```
+
+### GUI Generator
+
+For non-technical staff, use the graphical generator:
+
+```bash
+python license_generator_gui.py
+```
+
+Features:
+- Paste customer's Machine ID
+- Select license type (unlimited or time-limited)
+- Set duration for time-limited licenses
+- Generate with one click
+- Copy to clipboard or save to file
+
+### Customer Support Workflow
+
+1. **Customer Reports Issue**: "I need a license key"
+2. **Request Machine ID**: Ask customer to run `check_machine_id.py` or copy from activation dialog
+3. **Generate License**: Use license generator with their Machine ID
+4. **Send to Customer**: Email or provide through support portal
+5. **Customer Activates**: Paste into activation dialog
+6. **Verification**: Customer confirms application starts successfully
+
+### Important Security Notes
+
+- **Keep generators secure**: Do not distribute `license_generator.py` or `license_generator_gui.py`
+- **Change secret key**: Before production, change `_SECRET_KEY` in both files to match
+- **Secret key must match**: The key in `restic_manager.py` and generators must be identical
+- **Machine IDs are not secret**: They identify machines but are not sensitive
+- **One license per machine**: Licenses cannot be shared between computers
+
+### Checking Machine ID
+
+Customers can check their own Machine ID:
+
+```bash
+python check_machine_id.py
+```
+
+This displays:
+- Detected operating system
+- Machine ID detection method used
+- The unique Machine ID
+- Auto-copies to clipboard (if pyperclip installed)
+
 ## Support
 
 The application logs errors to the Logs page. Check there first if something doesn't work.
+
+For license-related issues:
+- **"No license key found"**: Normal on first run - enter license in activation dialog
+- **"License not valid for this machine"**: License was generated for different machine ID
+- **"License expired"**: Request new license or renewal from administrator
+- **"Invalid license signature"**: License may be corrupted or secret keys don't match
+
+For license requests or renewals, provide your Machine ID (found in Settings → License Information).
+
+---
+
+## License System Summary
+
+### Key Features
+✅ **Machine-bound licensing** - Licenses tied to unique hardware/system IDs  
+✅ **Cryptographically secure** - HMAC-SHA256 prevents forgery  
+✅ **Cross-platform** - Works on Windows, Linux, macOS  
+✅ **Time-limited trials** - Support for expiring licenses  
+✅ **Easy activation** - Simple dialog-based activation  
+✅ **In-app management** - Update license without restart  
+✅ **Admin tools** - CLI and GUI license generators  
+
+### Quick Reference
+
+**For Users:**
+- First run → License Activation dialog
+- Copy Machine ID → Send to administrator
+- Receive license key → Paste and activate
+- Manage in Settings → License Information
+
+**For Administrators:**
+- Receive Machine ID from user
+- Generate: `python license_generator.py "MACHINE_ID" --days 365`
+- Send license key to user
+- Done!
+
+**Files:**
+- `license.key` - Activated license (don't delete!)
+- `license_generator.py` - CLI generator (keep secure!)
+- `license_generator_gui.py` - GUI generator (keep secure!)
+- `check_machine_id.py` - Machine ID checker
+- `LICENSE_SYSTEM.md` - Full documentation
+- `LICENSE_QUICKSTART.md` - Quick start guide
+
+**Security:**
+- Change `_SECRET_KEY` before production
+- Keep generators secure (don't distribute)
+- Licenses cannot be shared between machines
+- Machine IDs are not sensitive (safe to share for licensing)
+
+---
+
+**Version:** 1.3.0  
+**License System:** Fully Implemented  
+**Last Updated:** March 13, 2026
