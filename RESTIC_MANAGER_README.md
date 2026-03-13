@@ -2,7 +2,7 @@
 
 A PyQt6 GUI application for managing Restic backups with a familiar interface similar to your Network Management Tool.
 
-## Current Implementation (v1.0.0)
+## Current Implementation (v1.3.0)
 
 ### ✅ Completed Features
 
@@ -23,39 +23,111 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - **Logging System**: Built-in activity logging
 
 #### User Interface
+- **Dynamic Splash Screen**: Displays 8 progress messages during app initialization
+  - Loading settings
+  - Initializing repositories
+  - Checking snapshots
+  - Loading backup jobs
+  - Preparing dashboard
+  - Verifying connections
+  - Loading logs
+  - Ready!
+
 - **8 Main Pages**:
   1. Dashboard - Statistics, repository stats, and recent activity overview
   2. Repositories - Manage backup repositories
-  3. Snapshots - Browse, view, and manage snapshots
+  3. Snapshots - Browse, view, restore, and manage snapshots
   4. Restore Files - Restore from backups
-  5. Create Backup - Configure and run backups with advanced options
+  5. **Backup Jobs** - Create, edit, manage, and run saved backup configurations
   6. Retention Policy - Set retention rules
   7. Logs - View application logs
   8. Settings - Configure application
 
-- **Sidebar Navigation**: Clean menu system matching your existing app
+- **Sidebar Navigation**: Clean menu system with Exit button
 - **Responsive Layout**: Proper sizing and scroll areas
 
-#### Repository Management ✅ NEW
+#### Repository Management ✅ FULLY IMPLEMENTED
 - **Full Add/Edit Repository Dialog**:
   - Support for local, SFTP, S3, B2, Azure, GS, REST repositories
   - Repository name and type selection
   - Path/URL input with browse button for local paths
   - **Encrypted password field** with show/hide toggle
-  - Initialize repository option (for new repositories)
-  - Test connection button (template ready)
+  - **Initialize repository option** with real-time progress dialog
+  - **Test connection button** - validates repository access with `restic snapshots --latest 1`
   - Edit existing repositories
   - Delete repositories with confirmation
+- **Windows UTF-8 Support**: Subprocess encoding fix for non-ASCII characters in Restic output
 
-#### Snapshot Management ✅ NEW
-- **Browse Content**: View files within a snapshot (dialog template)
-- **Diff Snapshots**: Compare changes between snapshot and previous (dialog template)
+#### Snapshot Management ✅ FULLY IMPLEMENTED
+- **Comprehensive Snapshot Details**: Display all metadata
+  - Snapshot ID (short hash)
+  - Date/Time of backup
+  - Hostname
+  - Username
+  - Tags
+  - Paths backed up
+  - Excludes used
+  - Statistics (files, directories, total size)
+  - Parent snapshot ID
+  - Restic version
+- **Browse Content**: View files within a snapshot
+  - Background loading with `restic ls --long`
+  - File tree with paths, permissions, size, modification date
+  - **Advanced Search & Filter**:
+    - Contains / Not Contains modes
+    - AND operator (&) - all terms must match
+    - OR operator (|) - any term can match
+    - Real-time filtering
+- **Diff Snapshots**: Compare changes between snapshots ✅ FULLY IMPLEMENTED
+  - Executes `restic diff` command in background
+  - Shows actual diff output (added, modified, removed files)
+  - Statistics with color-coding (green/yellow/red)
+  - Compares selected snapshot with previous (older) snapshot
+  - Monospaced font for easy reading
+  - Correct chronological comparison (oldest to newest)
 - **Forget/Delete**: Mark snapshots for deletion with confirmation
 - **Prune Repository**: Remove unreferenced data to free disk space
-- Snapshot details view
-- Selection and viewing capabilities
+- **Unlock Repository**: Clear stale locks with confirmation dialog
+  - Handles repository locks from interrupted operations
+  - Confirmation before unlocking
 
-#### Advanced Backup Options ✅ NEW
+#### Backup Jobs System ✅ FULLY IMPLEMENTED
+- **Persistent Job Storage**: Save backup configurations to settings.json
+- **Create New Jobs**: Full job configuration dialog
+  - Job name
+  - Repository selection
+  - Multiple paths selection
+  - Tags (comma-separated)
+  - Exclude patterns (one per line)
+  - Advanced options (see below)
+- **Edit Existing Jobs**: Modify saved job configurations
+- **Delete Jobs**: Remove saved jobs with confirmation
+- **Run Jobs**: Execute saved backup jobs with real-time progress
+- **Job List View**: Table showing all saved backup jobs with name, repository, paths, and tags
+
+#### Real-Time Backup Progress ✅ FULLY IMPLEMENTED
+- **Progress Dialog** during backup operations:
+  - Progress bar with percentage
+  - Files processed (done/total)
+  - Bytes processed (done/total) with human-readable format
+  - ETA (estimated time remaining)
+  - Current files being processed (scrollable list)
+  - **Dynamic output display**: All Restic JSON output shown in real-time
+  - **Auto-scrolling**: Always shows the latest output
+  - Completion indicator with visual separator
+- **JSON Progress Parsing**: Parses Restic's JSON output from stderr
+- **Non-Blocking Stream Reading**: Threaded queue-based output reading prevents UI freezing
+- **Throttled Updates**: Maximum 10 updates/second to prevent UI freezing
+- **UI Responsiveness**: QApplication.processEvents() for smooth progress updates
+- **Cancel Button**: Stop backup in progress
+  - Terminates background worker thread
+  - Automatically unlocks repository if lock exists
+  - Confirmation dialog when closing during active backup
+- **Auto-Unlock After Completion**: Checks for locks and removes them automatically
+  - Only unlocks if locks are actually present
+  - Uses `restic list locks` to detect stale locks
+
+#### Advanced Backup Options ✅ FULLY IMPLEMENTED
 - **--exclude-caches**: Checkbox option (default: enabled)
 - **--pack-size**: Configurable pack size (0-1024 MB, 0 = default)
 - **--one-file-system**: Stay on same filesystem checkbox
@@ -78,72 +150,49 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 #### High Priority
 
-1. **Snapshot Loading & Display** (UI Ready)
-   - Execute `restic snapshots --json`
-   - Parse and display snapshot data in table
-   - Filtering and sorting
-   - Load snapshot details
+1. **Snapshot Loading & Display** (Partially Complete)
+   - ✅ Snapshot details display implemented
+   - ✅ Browse content with search/filter implemented
+   - ✅ Diff snapshots fully implemented
+   - Execute `restic snapshots --json` and populate table (UI ready)
+   - Filtering and sorting in main snapshots view
 
-2. **Actual Backup Operations** (UI Ready)
-   - Execute backup commands with progress
-   - Real-time output streaming
-   - Handle all advanced options (exclude-caches, pack-size, etc.)
-   - Progress bar updates
-
-3. **File Restore Operations** (UI Ready)
-   - Browse snapshot file tree (execute `restic ls`)
-   - Select specific files/folders
+2. **File Restore Operations** (UI Ready)
+   - ✅ Browse snapshot file tree implemented (`restic ls --long`)
+   - Select specific files/folders for restore
    - Execute restore with progress
    - Verify restored files
 
-4. **Retention Policy Execution** (UI Ready)
+3. **Retention Policy Execution** (UI Ready)
    - Execute `restic forget` with policies
    - Preview what will be deleted (dry-run)
    - Execute `restic prune`
    - Show space savings
 
-5. **Repository Operations** (UI Ready)
-   - Repository initialization (`restic init`)
-   - Test connection functionality
-   - Repository stats (`restic stats`)
-   - Repository verification (`restic check`)
-
-6. **Snapshot Operations** (UI Ready)
-   - Browse content implementation (`restic ls`)
-   - Diff implementation (`restic diff`)
-   - Forget implementation (`restic forget`)
-   - Prune implementation (`restic prune`)
-
 #### Medium Priority
 
-7. **Backup Scheduling**
+5. **Backup Scheduling**
    - Windows Task Scheduler integration
    - Cron-like scheduler UI
-   - Backup profiles
-   - Schedule management
+   - Schedule management for backup jobs
+   - Automated backup execution
 
-8. **Enhanced Dashboard**
+6. **Enhanced Dashboard**
    - Calculate total repositories
    - Count total snapshots across all repos
    - Calculate total backup size
    - Show last backup time
    - Repository health status indicators
 
-9. **Snapshot Browser Enhancements**
-   - File tree view within snapshot (hierarchical)
-   - Search files in snapshots
-   - Mount snapshots (if supported on Windows)
-   - Preview file contents
-
 #### Low Priority
 
-10. **Advanced Features**
+7. **Advanced Features**
     - Repository migration/copying
     - Multi-repository operations
     - Backup statistics and charts
     - Email notifications
     - Export/import settings
-    - Backup profiles with saved configurations
+    - Mount snapshots (if supported on Windows)
 
 ## Directory Structure
 
@@ -203,30 +252,50 @@ On first run:
 
 Your password is now encrypted and stored securely! 🔒
 
-### Configuring a Backup
+### Configuring a Backup Job
 
-1. Click **Create Backup** in the sidebar
-2. Select your repository from the dropdown
-3. Click **Add Path** to add directories to backup
-4. Optionally add tags (comma-separated)
-5. Add exclude patterns (one per line)
-6. Configure **Advanced Options**:
-   - ✅ Exclude Caches (recommended)
-   - Set Pack Size if needed (0 = default)
-   - One File System (stay on same drive)
-   - Exclude If Present (marker file like .nobackup)
-7. Click **Start Backup**
+1. Click **Backup Jobs** in the sidebar
+2. Click **Create Job** button
+3. In the dialog:
+   - Enter a **Job Name** (e.g., "Daily Documents Backup")
+   - Select your repository from the dropdown
+   - Click **Add Path** to add directories to backup
+   - Optionally add tags (comma-separated)
+   - Add exclude patterns (one per line)
+   - Configure **Advanced Options**:
+     - ✅ Exclude Caches (recommended)
+     - Set Pack Size if needed (0 = default)
+     - One File System (stay on same drive)
+     - Exclude If Present (marker file like .nobackup)
+4. Click **OK** to save the job
+
+### Running a Backup
+
+1. Click **Backup Jobs** in the sidebar
+2. Select a saved job from the list
+3. Click **Run Job** button
+4. Watch real-time progress:
+   - Progress bar with percentage
+   - Files and bytes processed
+   - ETA (estimated time remaining)
+   - Current files being backed up
+5. Click **Cancel** to stop the backup (repository will auto-unlock)
 
 ### Managing Snapshots
 
 1. Click **Snapshots** in the sidebar
 2. Select a repository
 3. Click **Refresh** to load snapshots
-4. Select a snapshot and use action buttons:
-   - **Browse Content** - See files in snapshot
+4. Select a snapshot to view details (ID, time, host, tags, paths, stats)
+5. Use action buttons:
+   - **Browse Content** - See files in snapshot with search/filter
+     - Use & for AND search (term1 & term2)
+     - Use | for OR search (term1 | term2)
+     - Toggle Contains/Not Contains filter mode
    - **Diff with Previous** - See what changed
    - **Forget (Delete)** - Mark for deletion
    - **Prune Repository** - Free disk space
+   - **Unlock Repository** - Clear stale locks
 
 ### Viewing Repository Stats
 
@@ -258,9 +327,9 @@ args = ["-r", repo["path"], "snapshots", "--json"]
 success, stdout, stderr = self.restic_cmd.run(args, env)
 ```
 
-### Repository Management (✅ Implemented)
+### Repository Management (✅ Fully Implemented)
 
-The repository dialog is fully functional:
+The repository dialog is fully functional with initialization and testing:
 
 ```python
 def add_repository(self):
@@ -268,9 +337,205 @@ def add_repository(self):
     if dialog.exec() == QDialog.DialogCode.Accepted:
         repo_data = dialog.get_repository_data()
         # Password is automatically encrypted in get_repository_data()
+        
+        # Initialize if requested
+        if dialog.initialize_checkbox.isChecked():
+            self.initialize_repository(repo_data)
+        
+        # Save repository
         repositories = self.settings_manager.get("repositories")
         repositories.append(repo_data)
         self.settings_manager.save_settings()
+
+def test_connection(self, repo_data, password):
+    """Test repository connection"""
+    args = ["-r", repo_data["path"], "snapshots", "--latest", "1"]
+    env = {"RESTIC_PASSWORD": password}
+    success, stdout, stderr = self.restic_cmd.run(args, env)
+    return success
+```
+
+### Backup Jobs System (✅ Fully Implemented)
+
+Save and manage backup configurations:
+
+```python
+def save_backup_job(self):
+    """Save current backup configuration as a job"""
+    job_data = {
+        "name": self.job_name_input.text(),
+        "repository": self.backup_repo_combo.currentText(),
+        "paths": [self.backup_paths_list.item(i).text() 
+                 for i in range(self.backup_paths_list.count())],
+        "tags": [tag.strip() for tag in self.backup_tags_input.text().split(",") 
+                if tag.strip()],
+        "excludes": [p.strip() for p in 
+                    self.backup_exclude_input.toPlainText().split("\n") 
+                    if p.strip()],
+        "exclude_caches": self.exclude_caches_check.isChecked(),
+        "pack_size": self.pack_size_spin.value(),
+        "one_file_system": self.one_file_system_check.isChecked(),
+        "exclude_if_present": self.exclude_if_present_input.text().strip()
+    }
+    
+    # Save to settings
+    backup_jobs = self.settings_manager.get("backup_jobs", [])
+    backup_jobs.append(job_data)
+    self.settings_manager.set("backup_jobs", backup_jobs)
+    self.settings_manager.save_settings()
+
+def run_backup_job(self, job_data):
+    """Execute a saved backup job with real-time progress"""
+    # Get repository and decrypt password
+    repo, password = self.get_repository_by_name(job_data["repository"])
+    
+    # Build command
+    args = ["-r", repo["path"], "backup", "--json"]
+    args.extend(job_data["paths"])
+    
+    for tag in job_data.get("tags", []):
+        args += ["--tag", tag]
+    
+    for pattern in job_data.get("excludes", []):
+        args += ["--exclude", pattern]
+    
+    if job_data.get("exclude_caches", True):
+        args.append("--exclude-caches")
+    
+    # ... add other options
+    
+    # Execute with progress tracking
+    env = {"RESTIC_PASSWORD": password}
+    worker = ResticWorker(self.restic_cmd, args, env)
+    worker.progress_data.connect(self.update_backup_progress)
+    worker.start()
+```
+
+### Real-Time Backup Progress (✅ Fully Implemented)
+
+Parse JSON progress from Restic and display:
+
+```python
+def _parse_progress(self, line):
+    """Parse JSON progress output from Restic"""
+    try:
+        data = json.loads(line)
+        if data.get("message_type") == "status":
+            percent = data.get("percent_done", 0) * 100
+            files_done = data.get("files_done", 0)
+            files_total = data.get("total_files", 0)
+            bytes_done = data.get("bytes_done", 0)
+            bytes_total = data.get("total_bytes", 0)
+            
+            # Calculate ETA
+            if percent > 0:
+                elapsed = time.time() - self.start_time
+                eta_seconds = (elapsed / (percent / 100)) - elapsed
+                eta = self.format_eta(eta_seconds)
+            else:
+                eta = "Calculating..."
+            
+            # Emit progress signal
+            self.progress_data.emit({
+                "percent": percent,
+                "files_done": files_done,
+                "files_total": files_total,
+                "bytes_done": bytes_done,
+                "bytes_total": bytes_total,
+                "eta": eta,
+                "current_files": data.get("current_files", [])
+            })
+    except json.JSONDecodeError:
+        pass
+
+def update_backup_progress(self, progress_dict):
+    """Update progress dialog (throttled to 10 updates/second)"""
+    current_time = time.time()
+    if current_time - self.last_update_time < 0.1:  # 100ms throttle
+        return
+    
+    self.last_update_time = current_time
+    
+    # Update UI
+    self.progress_bar.setValue(int(progress_dict["percent"]))
+    self.files_label.setText(f"{progress_dict['files_done']}/{progress_dict['files_total']}")
+    self.bytes_label.setText(f"{self.format_bytes(progress_dict['bytes_done'])}/
+                                {self.format_bytes(progress_dict['bytes_total'])}")
+    self.eta_label.setText(progress_dict["eta"])
+    
+    # Update current files list
+    for file in progress_dict.get("current_files", []):
+        self.current_files_list.addItem(file)
+    
+    # Process UI events to keep responsive
+    QApplication.processEvents()
+```
+
+### Browse Snapshot Content (✅ Fully Implemented)
+
+```python
+def browse_snapshot_content(self, repo_data, snapshot_id, password):
+    """Browse files in a snapshot with search/filter"""
+    args = ["-r", repo_data["path"], "ls", "--long", snapshot_id]
+    env = {"RESTIC_PASSWORD": password}
+    
+    # Execute in background worker
+    worker = ResticWorker(self.restic_cmd, args, env)
+    worker.finished.connect(self.display_snapshot_files)
+    worker.start()
+
+def search_snapshot_files(self, search_text, filter_mode):
+    """Search files with AND/OR operators"""
+    # AND operator: term1 & term2 (all must match)
+    # OR operator: term1 | term2 (any can match)
+    
+    if "&" in search_text:
+        # AND search - all terms must be present
+        terms = [t.strip().lower() for t in search_text.split("&")]
+        for row in range(self.files_table.rowCount()):
+            path = self.files_table.item(row, 0).text().lower()
+            if filter_mode == "Contains":
+                match = all(term in path for term in terms)
+            else:  # Not Contains
+                match = all(term not in path for term in terms)
+            self.files_table.setRowHidden(row, not match)
+    
+    elif "|" in search_text:
+        # OR search - any term can match
+        terms = [t.strip().lower() for t in search_text.split("|")]
+        for row in range(self.files_table.rowCount()):
+            path = self.files_table.item(row, 0).text().lower()
+            if filter_mode == "Contains":
+                match = any(term in path for term in terms)
+            else:  # Not Contains
+                match = not any(term in path for term in terms)
+            self.files_table.setRowHidden(row, not match)
+```
+
+### Lock Management (✅ Fully Implemented)
+
+```python
+def unlock_repository(self, repo_data, password):
+    """Unlock repository after confirmation"""
+    reply = QMessageBox.question(self, "Unlock Repository",
+                                "Are you sure you want to unlock this repository?",
+                                QMessageBox.StandardButton.Yes | 
+                                QMessageBox.StandardButton.No)
+    if reply == QMessageBox.StandardButton.Yes:
+        args = ["-r", repo_data["path"], "unlock"]
+        env = {"RESTIC_PASSWORD": password}
+        success, stdout, stderr = self.restic_cmd.run(args, env)
+
+def _auto_unlock_after_completion(self, repo_info):
+    """Auto-unlock only if locks exist"""
+    args = ["-r", repo_info["repo"]["path"], "list", "locks"]
+    env = {"RESTIC_PASSWORD": repo_info["password"]}
+    success, stdout, stderr = self.restic_cmd.run(args, env)
+    
+    # Only unlock if locks were found
+    if success and stdout.strip():
+        unlock_args = ["-r", repo_info["repo"]["path"], "unlock"]
+        self.restic_cmd.run(unlock_args, env)
 ```
 
 ### Loading Snapshots (To Implement)
@@ -390,13 +655,58 @@ def browse_snapshot_content(self):
     # Parse stdout and display in file list
 ```
 
-#### Diff Snapshots
+#### Diff Snapshots (✅ Fully Implemented)
 ```python
 def diff_snapshots(self):
-    # restic -r <repo> diff <snapshot1> <snapshot2>
-    args = ["-r", repo["path"], "diff", snapshot_id, prev_snapshot_id]
+    """Show diff between selected snapshot and previous"""
+    row = selected[0].row()
+    
+    # Snapshots in chronological order (oldest first)
+    # Row 0 = oldest, Row N-1 = newest
+    if row == 0:
+        QMessageBox.information(self, "No Previous", 
+                               "This is the oldest snapshot")
+        return
+    
+    # Current snapshot (newer)
+    snapshot_id = self.snapshots_table.item(row, 0).text()
+    # Previous snapshot (older) - one row before
+    prev_snapshot_id = self.snapshots_table.item(row - 1, 0).text()
+    
+    # Create dialog with output display
+    dialog = QDialog(self)
+    diff_output = QPlainTextEdit()
+    diff_output.setFont(QFont("Consolas", 9))
+    
+    # Execute diff in background
+    args = ["-r", repo["path"], "diff", prev_snapshot_id, snapshot_id]
     env = {"RESTIC_PASSWORD": password}
-    success, stdout, stderr = self.restic_cmd.run(args, env)
+    
+    worker = ResticWorker(self.restic_cmd, args, env, timeout=300)
+    worker.finished.connect(lambda success, stdout, stderr: 
+                          self._on_diff_completed(success, stdout, stderr, 
+                                                 diff_output, stats_labels))
+    worker.start()
+    
+    dialog.exec()
+
+def _on_diff_completed(self, success, stdout, stderr, output_widget, 
+                      added_label, modified_label, removed_label):
+    """Display diff results with statistics"""
+    output_widget.setPlainText(stdout if stdout else stderr)
+    
+    # Parse and display statistics
+    added_count = output.count('\n+')
+    modified_count = output.count('\nM')
+    removed_count = output.count('\n-')
+    
+    # Color-code statistics
+    added_label.setText(f"Added: {added_count}")
+    added_label.setStyleSheet("color: #28a745; font-weight: bold;")
+    modified_label.setText(f"Modified: {modified_count}")
+    modified_label.setStyleSheet("color: #ffc107; font-weight: bold;")
+    removed_label.setText(f"Removed: {removed_count}")
+    removed_label.setStyleSheet("color: #dc3545; font-weight: bold;")
 ```
 
 #### Repository Statistics
@@ -420,23 +730,64 @@ def verify_repository(self):
 ## Key Design Decisions
 
 1. **Settings Storage**: Simple JSON file (similar to your client_gui_full.py)
+   - Added `backup_jobs` array for persistent job storage
+   - Each job stores full configuration (paths, tags, excludes, advanced options)
+
 2. **Password Security**: Fernet encryption with PBKDF2HMAC key derivation
    - Machine-specific encryption (prevents password portability across machines)
    - 100,000 PBKDF2 iterations for strong key derivation
+
 3. **Theme System**: Reused your exact theme implementation (25 themes)
+
 4. **Command Execution**: Wrapper class for consistent Restic interaction
+   - Subprocess with UTF-8 encoding and error handling for Windows
+   - Environment variable RESTIC_PASSWORD for secure password passing
+
 5. **Threading**: Worker threads prevent UI freezing
+   - QThread-based ResticWorker for background operations
+   - pyqtSignal for progress updates
+   - Proper thread cleanup and cancellation support
+
 6. **Modular Pages**: Each feature is a separate page in stacked widget
-7. **Password Handling**: RESTIC_PASSWORD environment variable (Restic best practice)
+   - "Backup Jobs" page for managing saved configurations
+   - Dashboard, Repositories, Snapshots, Restore, Retention, Logs, Settings
+
+7. **Progress Tracking**: Real-time JSON parsing from Restic
+   - Parse stderr (not stdout) for JSON progress data
+   - Throttled updates (10/second max) to prevent UI overload
+   - QApplication.processEvents() for responsive UI during updates
+   - ETA calculation based on elapsed time and percentage
+
+8. **Lock Management**: Comprehensive repository lock handling
+   - Manual unlock with confirmation
+   - Automatic unlock on backup cancellation
+   - Auto-cleanup after completion (only if locks detected)
+   - Prevents stale locks from interrupted operations
+
+9. **Search & Filter**: Flexible file searching in snapshots
+   - AND operator (&) - all terms must match
+   - OR operator (|) - any term can match
+   - Contains / Not Contains modes
+   - Real-time filtering without re-loading data
+
+10. **Background Loading**: Long operations in separate threads
+    - Repository initialization with progress dialog
+    - Snapshot content browsing (restic ls --long)
+    - Backup execution with real-time progress
+    - Non-blocking UI for all operations
 
 ## Next Steps
 
 1. ✅ ~~**Repository Management**~~ - COMPLETED
-2. **Implement Snapshot Loading**: Execute and parse `restic snapshots --json`
-3. **Add Backup Functionality**: Wire up backup command execution
-4. **Complete Restore Operations**: Implement file browsing and restore
-5. **Connect Snapshot Operations**: Implement forget, prune, diff, browse
-6. **Add Scheduling**: Windows Task Scheduler automation
+2. ✅ ~~**Backup Jobs System**~~ - COMPLETED
+3. ✅ ~~**Real-Time Progress Tracking**~~ - COMPLETED
+4. ✅ ~~**Snapshot Details & Browse Content**~~ - COMPLETED
+5. ✅ ~~**Lock Management**~~ - COMPLETED
+6. ✅ ~~**Diff Snapshots**~~ - COMPLETED
+7. **Implement Snapshot Table Loading**: Execute and parse `restic snapshots --json`
+8. **Complete Restore Operations**: Implement file selection and restore execution
+9. **Connect Forget/Prune**: Wire up snapshot deletion and repository pruning
+10. **Add Scheduling**: Windows Task Scheduler automation for backup jobs
 
 ## Estimated Implementation Time
 
@@ -444,15 +795,24 @@ def verify_repository(self):
 - ✅ Password Encryption: ~~2-3 hours~~ COMPLETED  
 - ✅ Advanced Backup Options: ~~2-3 hours~~ COMPLETED
 - ✅ Snapshot Action Buttons: ~~3-4 hours~~ COMPLETED
-- Snapshot Loading: 2-3 hours
-- Backup Operations: 3-4 hours (command building done, just need execution)
+- ✅ Repository Initialize/Test: ~~2-3 hours~~ COMPLETED
+- ✅ Backup Jobs System: ~~6-8 hours~~ COMPLETED
+- ✅ Real-Time Progress Tracking: ~~4-5 hours~~ COMPLETED
+- ✅ Snapshot Details Display: ~~2-3 hours~~ COMPLETED
+- ✅ Browse Snapshot Content: ~~4-5 hours~~ COMPLETED
+- ✅ Search & Filter: ~~2-3 hours~~ COMPLETED
+- ✅ Lock Management: ~~3-4 hours~~ COMPLETED
+- ✅ Progress UI Optimization: ~~2-3 hours~~ COMPLETED
+- ✅ Diff Implementation: ~~2-3 hours~~ COMPLETED
+- ✅ Dynamic Output Display: ~~1-2 hours~~ COMPLETED
+- Snapshot Loading (main table): 2-3 hours
 - Restore Operations: 6-8 hours
-- Forget/Prune Execution: 2-3 hours (dialogs done, just need commands)
-- Repository Stats/Verify: 2-3 hours (UI done, just need commands)
+- Forget/Prune Execution: 2-3 hours
+- Repository Stats/Verify: 2-3 hours
 - Scheduling: 8-10 hours
 
-**Completed: ~15 hours**
-**Remaining: ~25-35 hours for full implementation**
+**Completed: ~48-60 hours**
+**Remaining: ~20-27 hours for full implementation**
 
 ## Notes
 
@@ -460,17 +820,106 @@ def verify_repository(self):
 - ✅ Theme system works perfectly (25 themes total)
 - ✅ Settings persistence is implemented
 - ✅ Password encryption is working (tested and secure)
-- ✅ Repository dialog fully functional (add/edit/delete)
-- ✅ Advanced backup options implemented (exclude-caches, pack-size, etc.)
-- ✅ Snapshot action buttons in place (forget, prune, diff, browse)
-- ✅ Repository stats and verification UI ready
-- Just need to connect Restic commands to the UI
+- ✅ Repository dialog fully functional (add/edit/delete/initialize/test)
+- ✅ Advanced backup options implemented and saved in jobs
+- ✅ Snapshot details display complete with all metadata
+- ✅ Browse content fully working with background loading
+- ✅ Diff snapshots fully implemented with statistics
+- ✅ Dynamic output display with auto-scrolling
+- ✅ Non-blocking stream reading for progress updates
+- ✅ Search & filter with AND/OR operators implemented
+- ✅ Backup Jobs system fully operational with persistent storage
+- ✅ Real-time backup progress with JSON parsing, ETA, throttling
+- ✅ Comprehensive lock management (unlock, cancel, auto-cleanup)
+- ✅ UTF-8 encoding fix for Windows subprocess
+- ✅ Progress UI optimization to prevent freezing
+- ✅ Exit menu item functional
+- Snapshot table loading (execute restic snapshots --json) still needed
+- Restore operations need implementation
 - Error handling framework is ready
 - Worker threads prevent UI freezing
 
 ## Recent Updates (Latest)
 
-### Version 1.0.0 - March 13, 2026
+### Version 1.3.0 - March 13, 2026
+
+**New Features:**
+- ✅ **Diff Snapshots - Fully Implemented**: Compare changes between snapshots
+  - Executes `restic diff` command in background worker thread
+  - Shows actual diff output (added, modified, removed files)
+  - Statistics with color-coding (green for added, yellow for modified, red for removed)
+  - Monospaced font for easy reading
+  - Compares selected snapshot with previous (older) snapshot
+  - Fixed chronological comparison logic (oldest first = row 0)
+- ✅ **Dynamic Output Display**: Real-time backup output in progress dialog
+  - All Restic JSON output displayed as it arrives
+  - Auto-scrolling to always show latest output
+  - Throttled scrolling (20 updates/second) to prevent UI lag
+  - Visual completion separator at end of backup
+
+**Bug Fixes:**
+- Fixed snapshot comparison logic - now correctly identifies oldest snapshot
+- Fixed progress dialog hanging after backup completion
+- Implemented non-blocking stream reading with threaded queues
+- Fixed JSON progress lines not appearing in output display
+
+**Technical Improvements:**
+- Non-blocking stdout/stderr reading using Queue and threading
+- Proper process completion detection
+- Summary message triggers 100% progress update
+- All output lines emitted to progress signal for display
+
+### Version 1.2.0 - March 13, 2026
+
+**Major Features Added:**
+- ✅ **Dynamic Splash Screen**: Shows 8 progress messages during app initialization
+- ✅ **Backup Jobs System**: Save, edit, delete, and run backup configurations
+  - Persistent storage in settings.json
+  - Full job management UI (create/edit/delete/run)
+  - Rename from "Create Backup" to "Backup Jobs" page
+- ✅ **Real-Time Backup Progress**: Complete progress tracking during backups
+  - JSON progress parsing from Restic stderr output
+  - Progress bar with percentage
+  - Files and bytes processed (done/total)
+  - ETA calculation and display
+  - Current files being processed (scrollable list)
+  - Throttled updates (max 10/second) to prevent UI freezing
+  - QApplication.processEvents() for responsive UI
+- ✅ **Comprehensive Lock Management**:
+  - Unlock Repository button with confirmation
+  - Cancel backup button with automatic unlock
+  - Close warning dialog during active backups
+  - Auto-unlock after backup completion (only if locks exist)
+- ✅ **Complete Snapshot Details**: Display all metadata
+  - Snapshot ID, date/time, host, username
+  - Tags, paths, excludes
+  - Statistics (files, directories, size)
+  - Parent snapshot, Restic version
+- ✅ **Browse Snapshot Content**: Fully functional file browsing
+  - Background loading with `restic ls --long`
+  - File path, permissions, size, modification date
+  - Advanced search with AND (&) / OR (|) operators
+  - Contains / Not Contains filter modes
+  - Real-time filtering
+- ✅ **Repository Operations**:
+  - Initialize repository with real-time progress dialog
+  - Test connection functionality
+  - UTF-8 encoding fix for Windows subprocess (handles non-ASCII characters)
+- ✅ **Exit Menu Item**: Properly exits application with QApplication.quit()
+
+**Technical Improvements:**
+- Windows UTF-8 subprocess support (encoding='utf-8', errors='replace')
+- JSON progress parsing from stderr (Restic outputs to stderr, not stdout)
+- Progress throttling to prevent UI freezing
+- Background worker threads for all long-running operations
+- Automatic lock detection and cleanup
+- Improved error handling and user feedback
+
+**Settings Schema Updates:**
+- Added `backup_jobs` array to settings.json
+- Job structure: name, repository, paths, tags, excludes, advanced options
+
+### Version 1.0.0 - Initial Release
 
 **Added:**
 - ✅ Encrypted password storage with cryptography library
@@ -487,7 +936,6 @@ def verify_repository(self):
 - Password encryption using Fernet with PBKDF2HMAC (100,000 iterations)
 - Passwords stored encrypted in restic_settings.json
 - All dialogs and UI elements ready for command execution
-- Template implementations with placeholders for actual Restic command execution
 
 ## Support
 

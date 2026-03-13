@@ -15,10 +15,86 @@
             "path": "//192.168.0.50/backups/Data/Pictures",
             "password": "gAAAAABps9Sg_MWzEH0PrJx0iHh3SEsxa_Vpuel6n4ssaSfJuoZiek29i1EyeTahkWgc-Lg6dUhLCJmbQotF7X8L0L5Ev05jaw==",
             "last_checked": "2026-03-13 09:10:56"
+        },
+        {
+            "name": "Data-Test",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Data/Test",
+            "password": "gAAAAABptB9HU68hBr02z0nt24Ur2GIjwHJr9xsK-3IM_97fkPHx4hYDDT9CPnU7Od3bMHU7Nvu1BH7T8btED1upGpsq3Y16ng==",
+            "last_checked": "2026-03-13 14:29:27"
+        },
+        {
+            "name": "Production",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Music/Production",
+            "password": "gAAAAABptDvobzsqLADW44TLbvmG0JxthZHkRuA6xD8CqcCtyL_3PVVgs669VIuPCAsva_NDk75PTrqWbAaQifaVkZj_MUUbZA==",
+            "last_checked": "2026-03-13 16:31:36"
         }
     ],
     "last_repository": "",
     "auto_refresh_snapshots": true,
     "snapshot_refresh_interval": 60,
-    "log_level": "info"
+    "log_level": "info",
+    "backup_jobs": [
+        {
+            "name": "Music Data",
+            "repository": "Data-Music",
+            "paths": [
+                "D:/001 Music"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 64,
+            "one_file_system": false,
+            "exclude_if_present": "",
+            "created": "2026-03-13 14:45:15"
+        },
+        {
+            "name": "Pictures",
+            "repository": "Data-Pictures",
+            "paths": [
+                "D:/003 Pictures"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 64,
+            "one_file_system": false,
+            "exclude_if_present": "",
+            "created": "2026-03-13 14:47:22"
+        },
+        {
+            "name": "Test",
+            "repository": "Data-Test",
+            "paths": [
+                "D:/temp/testBackup"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 0,
+            "one_file_system": false,
+            "exclude_if_present": "",
+            "created": "2026-03-13 15:54:18"
+        },
+        {
+            "name": "Music Production",
+            "repository": "Data-Music",
+            "paths": [
+                "E:/001 Shared/Med & Nuendo",
+                "E:/001 Shared/Productions"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 64,
+            "one_file_system": false,
+            "exclude_if_present": "",
+            "schedule": {
+                "enabled": false
+            },
+            "created": "2026-03-13 16:34:52"
+        }
+    ]
 }
