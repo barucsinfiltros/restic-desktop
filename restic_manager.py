@@ -14,6 +14,9 @@ import traceback
 import base64
 import hmac
 import hashlib
+import tempfile
+import shutil
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from cryptography.fernet import Fernet
@@ -26,7 +29,8 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QFrame, QMessageBox, QSpinBox, QTextEdit, QPlainTextEdit,
     QFileDialog, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
     QGroupBox, QGridLayout, QProgressBar, QListWidget, QListWidgetItem,
-    QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit
+    QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit,
+    QProgressDialog, QTreeWidget, QTreeWidgetItem
 )
 from PyQt6.QtGui import QColor, QFont, QTextCursor, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
@@ -161,6 +165,7 @@ class LicenseManager:
     
     def __init__(self, license_file="license.key"):
         self.license_file = license_file
+        self.check_file = ".license_check"
         self.machine_id = get_machine_id()
     
     def validate_license(self) -> Tuple[bool, str]:
@@ -175,13 +180,25 @@ class LicenseManager:
             with open(self.license_file, 'r') as f:
                 license_key = f.read().strip()
             
-            return self._verify_license_key(license_key)
+            # Verify the license and check for clock tampering
+            is_valid, message = self._verify_license_key(license_key)
+            
+            # If valid, update the last check timestamp
+            if is_valid:
+                self._update_last_check()
+            
+            return is_valid, message
         except Exception as e:
             return False, f"Error reading license: {str(e)}"
     
     def _verify_license_key(self, license_key: str) -> Tuple[bool, str]:
         """Verify the license key format and signature"""
         try:
+            # Check for clock rollback (anti-tampering)
+            clock_check = self._check_clock_tampering()
+            if not clock_check[0]:
+                return clock_check
+            
             # License format: BASE64(machine_id_hash:expiry_date:signature)
             decoded = base64.b64decode(license_key).decode('utf-8')
             parts = decoded.split(':')
@@ -228,19 +245,80 @@ class LicenseManager:
     
     def save_license(self, license_key: str) -> Tuple[bool, str]:
         """Save and validate a new license key"""
-        # First verify it
-        is_valid, message = self._verify_license_key(license_key)
-        
-        if not is_valid:
-            return False, message
+        # First verify it (skip clock check for new license activation)
+        try:
+            # License format: BASE64(machine_id_hash:expiry_date:signature)
+            decoded = base64.b64decode(license_key).decode('utf-8')
+            parts = decoded.split(':')
+            
+            if len(parts) != 3:
+                return False, "Invalid license key format."
+            
+            machine_hash, expiry_str, signature = parts
+            
+            # Verify machine ID
+            current_machine_hash = hashlib.sha256(self.machine_id.encode()).hexdigest()[:16]
+            if machine_hash != current_machine_hash:
+                return False, "License key is not valid for this machine."
+            
+            # Verify signature
+            payload = f"{machine_hash}:{expiry_str}"
+            expected_sig = hmac.new(
+                self._SECRET_KEY,
+                payload.encode(),
+                hashlib.sha256
+            ).hexdigest()[:32]
+            
+            if signature != expected_sig:
+                return False, "License key signature is invalid."
+            
+            # Check expiration
+            if expiry_str != "unlimited":
+                try:
+                    expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d")
+                    if datetime.now() > expiry_date:
+                        return False, f"License expired on {expiry_str}."
+                except ValueError:
+                    return False, "Invalid expiration date in license."
+        except Exception as e:
+            return False, f"License validation error: {str(e)}"
         
         # Save to file
         try:
             with open(self.license_file, 'w') as f:
                 f.write(license_key)
+            # Initialize the check file with current timestamp
+            self._update_last_check()
             return True, "License key activated successfully!"
         except Exception as e:
             return False, f"Error saving license: {str(e)}"
+    
+    def _check_clock_tampering(self) -> Tuple[bool, str]:
+        """Check if system clock has been rolled back"""
+        try:
+            if os.path.exists(self.check_file):
+                with open(self.check_file, 'r') as f:
+                    last_check_str = f.read().strip()
+                    if last_check_str:
+                        last_check = datetime.fromisoformat(last_check_str)
+                        current_time = datetime.now()
+                        
+                        # If current time is earlier than last check, clock was rolled back
+                        if current_time < last_check:
+                            return False, "System clock tampering detected. License validation failed."
+            
+            return True, "Clock check passed"
+        except Exception:
+            # If we can't read the check file, allow validation to continue
+            return True, "Clock check skipped"
+    
+    def _update_last_check(self):
+        """Update the last validation timestamp"""
+        try:
+            with open(self.check_file, 'w') as f:
+                f.write(datetime.now().isoformat())
+        except Exception:
+            pass  # Silently fail if we can't update
     
     def get_machine_id_for_licensing(self) -> str:
         """Get machine ID to share with license generator"""
@@ -531,6 +609,36 @@ class ResticWorker(QThread):
             pass
 
 
+class MountMonitorThread(QThread):
+    """Monitor file explorer process and request unmount when closed"""
+    unmount_requested = pyqtSignal()
+    
+    def __init__(self, mount_info, parent=None):
+        super().__init__(parent)
+        self.mount_info = mount_info
+        self.should_stop = False
+    
+    def run(self):
+        """Monitor the explorer process"""
+        explorer_process = self.mount_info.get('explorer_process')
+        
+        if not explorer_process:
+            return
+        
+        # Wait for explorer process to finish
+        while not self.should_stop:
+            if explorer_process.poll() is not None:
+                # Explorer has closed
+                time.sleep(1)  # Brief delay before unmounting
+                self.unmount_requested.emit()
+                break
+            time.sleep(1)  # Check every second
+    
+    def stop(self):
+        """Stop monitoring"""
+        self.should_stop = True
+
+
 # Repository Dialog
 class RepositoryDialog(QDialog):
     """Dialog for adding/editing repositories"""
@@ -722,10 +830,25 @@ class BackupJobDialog(QDialog):
         
         self.setWindowTitle("New Backup Job" if not existing_job else "Edit Backup Job")
         self.setMinimumWidth(600)
-        self.setMinimumHeight(500)
+        self.setMinimumHeight(600)  # Increased minimum height
         
+        # Main dialog layout
+        main_layout = QVBoxLayout()
+        self.setLayout(main_layout)
+        
+        # Create scroll area for the form content
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_area.setStyleSheet(stylesheet)
+        
+        # Content widget inside scroll area
+        content_widget = QWidget()
         layout = QVBoxLayout()
-        self.setLayout(layout)
+        content_widget.setLayout(layout)
+        scroll_area.setWidget(content_widget)
+        
+        main_layout.addWidget(scroll_area)
         
         # Form layout
         form_layout = QFormLayout()
@@ -799,13 +922,26 @@ class BackupJobDialog(QDialog):
         
         # Pack size
         pack_layout = QHBoxLayout()
-        self.pack_size_spin = QSpinBox()
-        self.pack_size_spin.setMinimum(0)
-        self.pack_size_spin.setMaximum(1024)
-        self.pack_size_spin.setValue(existing_job.get("pack_size", 0) if existing_job else 0)
-        self.pack_size_spin.setSuffix(" MB")
-        pack_layout.addWidget(self.pack_size_spin)
-        pack_layout.addWidget(QLabel("(0 = default)"))
+        self.pack_size_combo = QComboBox()
+        self.pack_size_combo.addItems(["8 MB", "16 MB", "32 MB", "64 MB", "128 MB"])
+        # Set current value based on existing job
+        if existing_job:
+            existing_pack = existing_job.get("pack_size", 8)
+            if existing_pack == 8:
+                self.pack_size_combo.setCurrentText("8 MB")
+            elif existing_pack == 16:
+                self.pack_size_combo.setCurrentText("16 MB")
+            elif existing_pack == 32:
+                self.pack_size_combo.setCurrentText("32 MB")
+            elif existing_pack == 64:
+                self.pack_size_combo.setCurrentText("64 MB")
+            elif existing_pack == 128:
+                self.pack_size_combo.setCurrentText("128 MB")
+            else:
+                self.pack_size_combo.setCurrentText("16 MB")  # Default
+        else:
+            self.pack_size_combo.setCurrentText("16 MB")  # Default for new jobs
+        pack_layout.addWidget(self.pack_size_combo)
         pack_layout.addStretch()
         options_layout.addRow("Pack Size:", pack_layout)
         
@@ -814,12 +950,49 @@ class BackupJobDialog(QDialog):
         self.one_file_system_check.setChecked(existing_job.get("one_file_system", False) if existing_job else False)
         options_layout.addRow("One File System:", self.one_file_system_check)
         
+        # Timeout
+        timeout_layout = QHBoxLayout()
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setMinimum(0)
+        self.timeout_spin.setMaximum(24)  # Max 24 hours
+        # Convert seconds to hours for display
+        timeout_seconds = existing_job.get("timeout", 7200) if existing_job else 7200
+        self.timeout_spin.setValue(timeout_seconds // 3600 if timeout_seconds > 0 else 0)
+        self.timeout_spin.setSuffix(" hours")
+        timeout_layout.addWidget(self.timeout_spin)
+        timeout_layout.addWidget(QLabel("(0 = no timeout, default: 2 hours)"))
+        timeout_layout.addStretch()
+        options_layout.addRow("Backup Timeout:", timeout_layout)
+        
         # Exclude if present
         self.exclude_if_present_input = QLineEdit()
         self.exclude_if_present_input.setPlaceholderText(".nobackup")
         if existing_job:
             self.exclude_if_present_input.setText(existing_job.get("exclude_if_present", ""))
         options_layout.addRow("Exclude If Present:", self.exclude_if_present_input)
+        
+        # Compression
+        compression_layout = QHBoxLayout()
+        self.compression_combo = QComboBox()
+        self.compression_combo.addItems(["off", "auto", "max"])
+        current_compression = existing_job.get("compression", "auto") if existing_job else "auto"
+        self.compression_combo.setCurrentText(current_compression)
+        compression_layout.addWidget(self.compression_combo)
+        compression_layout.addWidget(QLabel("(auto = automatic, max = maximum compression)"))
+        compression_layout.addStretch()
+        options_layout.addRow("Compression:", compression_layout)
+        
+        # No cache
+        self.no_cache_check = QCheckBox()
+        self.no_cache_check.setChecked(existing_job.get("no_cache", False) if existing_job else False)
+        self.no_cache_check.setToolTip("Do not use local cache (slower but uses less disk space)")
+        options_layout.addRow("No Cache:", self.no_cache_check)
+        
+        # Ignore inode
+        self.ignore_inode_check = QCheckBox()
+        self.ignore_inode_check.setChecked(existing_job.get("ignore_inode", False) if existing_job else False)
+        self.ignore_inode_check.setToolTip("Ignore inode number changes when checking for modified files")
+        options_layout.addRow("Ignore Inode:", self.ignore_inode_check)
         
         layout.addWidget(options_group)
         
@@ -899,7 +1072,7 @@ class BackupJobDialog(QDialog):
         # Initial UI state
         self.update_schedule_ui()
         
-        # Buttons
+        # Buttons (outside scroll area, always visible at bottom)
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
@@ -910,7 +1083,7 @@ class BackupJobDialog(QDialog):
         buttons.rejected.connect(self.reject)
         button_layout.addWidget(buttons)
         
-        layout.addLayout(button_layout)
+        main_layout.addLayout(button_layout)
     
     def update_schedule_ui(self):
         """Update schedule UI based on selections"""
@@ -976,9 +1149,13 @@ class BackupJobDialog(QDialog):
             "tags": tags,
             "exclude_patterns": exclude_patterns,
             "exclude_caches": self.exclude_caches_check.isChecked(),
-            "pack_size": self.pack_size_spin.value(),
+            "pack_size": int(self.pack_size_combo.currentText().split()[0]),  # Extract number from "XX MB"
             "one_file_system": self.one_file_system_check.isChecked(),
+            "timeout": self.timeout_spin.value() * 3600,  # Convert hours to seconds
             "exclude_if_present": self.exclude_if_present_input.text().strip(),
+            "compression": self.compression_combo.currentText(),
+            "no_cache": self.no_cache_check.isChecked(),
+            "ignore_inode": self.ignore_inode_check.isChecked(),
             "schedule": schedule_data,
             "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
@@ -1506,6 +1683,7 @@ class ResticManagerWindow(QMainWindow):
             debug=DEBUG_MODE
         )
         self.current_repository = None
+        self._dashboard_loaded = False  # Track if dashboard has been loaded
         
         self._update_splash("Creating main window...")
         self.setWindowTitle(f"Restic Backup Manager {VERSION}")
@@ -1551,9 +1729,9 @@ class ResticManagerWindow(QMainWindow):
         self._update_splash("Applying theme...")
         self.apply_theme(self.settings_manager.get("theme"))
         
-        # Check Restic installation
+        # Check Restic installation at startup
         self._update_splash("Checking Restic installation...")
-        QTimer.singleShot(100, self.check_restic_installation)
+        QTimer.singleShot(100, self._check_restic_at_startup)
     
     def _update_splash(self, message):
         """Update splash screen message if available"""
@@ -1655,9 +1833,16 @@ class ResticManagerWindow(QMainWindow):
         for i, btn in enumerate(self.menu_buttons):
             btn.setChecked(i == page_index)
         
-        # Refresh dashboard when switching to it
-        if page_index == 0:  # Dashboard page
+        # Refresh dashboard only on first load
+        if page_index == 0 and not self._dashboard_loaded:  # Dashboard page
             self.refresh_dashboard()
+            self._dashboard_loaded = True
+        
+        # Load snapshots when switching to Snapshots page (if repository selected)
+        if page_index == 2:  # Snapshots page
+            if hasattr(self, 'snapshot_repo_combo') and self.snapshot_repo_combo.currentText():
+                # Only load if not already loaded or needs refresh
+                self.load_snapshots()
     
     def create_dashboard_page(self):
         """Create dashboard overview page"""
@@ -1665,10 +1850,21 @@ class ResticManagerWindow(QMainWindow):
         layout = QVBoxLayout()
         page.setLayout(layout)
         
-        # Title
+        # Title and refresh button
+        title_layout = QHBoxLayout()
         title = QLabel("Dashboard")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        layout.addWidget(title)
+        title_layout.addWidget(title)
+        title_layout.addStretch()
+        
+        refresh_dashboard_btn = QPushButton("Refresh Dashboard")
+        refresh_dashboard_btn.setFixedWidth(150)
+        refresh_dashboard_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_dashboard_btn.setToolTip("Refresh all dashboard statistics")
+        refresh_dashboard_btn.clicked.connect(self.refresh_dashboard)
+        title_layout.addWidget(refresh_dashboard_btn)
+        
+        layout.addLayout(title_layout)
         
         # Statistics grid
         stats_group = QGroupBox("Statistics")
@@ -1725,8 +1921,8 @@ class ResticManagerWindow(QMainWindow):
         # Stats display
         self.repo_stats_text = QTextEdit()
         self.repo_stats_text.setReadOnly(True)
-        self.repo_stats_text.setMaximumHeight(150)
-        self.repo_stats_text.setText("Select a repository and click Refresh Stats")
+        self.repo_stats_text.setMaximumHeight(260)  # Increased height for detailed breakdown
+        self.repo_stats_text.setHtml("<i>Select a repository and click Refresh Stats</i>")
         repo_stats_layout.addWidget(self.repo_stats_text)
         
         layout.addWidget(repo_stats_group)
@@ -1747,6 +1943,14 @@ class ResticManagerWindow(QMainWindow):
     
     def refresh_dashboard(self):
         """Refresh dashboard statistics"""
+        # Show loading indicator
+        if hasattr(self, 'stats_labels'):
+            for label in self.stats_labels.values():
+                label.setText("Loading...")
+        
+        # Process events to update UI
+        QApplication.processEvents()
+        
         repositories = self.settings_manager.get("repositories")
         
         # Update total repositories
@@ -1891,40 +2095,6 @@ class ResticManagerWindow(QMainWindow):
         self.snapshot_details = QTextEdit()
         self.snapshot_details.setReadOnly(True)
         self.snapshot_details.setFont(QFont("Courier", 9))
-        #self.snapshot_details.setMaximumHeight(150)
-        # self.snapshot_details.setStyleSheet("""
-        #     QScrollBar:vertical {
-        #         width: 10px;
-        #         background: transparent;
-        #     }
-        #     QScrollBar::handle:vertical {
-        #         background: #888;
-        #         border-radius: 4px;
-        #         min-height: 20px;
-        #     }
-        #     QScrollBar::handle:vertical:hover {
-        #         background: #555;
-        #     }
-        #     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-        #         background: none;
-        #     }
-            
-        #     QScrollBar:horizontal {
-        #         height: 10px;
-        #         background: transparent;
-        #     }
-        #     QScrollBar::handle:horizontal {
-        #         background: #888;
-        #         border-radius: 4px;
-        #         min-width: 20px;
-        #     }
-        #     QScrollBar::handle:horizontal:hover {
-        #         background: #555;
-        #     }
-        #     QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-        #         background: none;
-        #     }
-        # """)
         self.snapshot_details.setStyleSheet(stylesheet)
         
         details_layout.addWidget(self.snapshot_details)
@@ -1946,6 +2116,13 @@ class ResticManagerWindow(QMainWindow):
         diff_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         diff_btn.clicked.connect(self.diff_snapshots)
         actions_layout.addWidget(diff_btn)
+        
+        copy_btn = QPushButton("Copy to Repository")
+        copy_btn.setFixedWidth(150)
+        copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_btn.setToolTip("Copy this snapshot to another repository")
+        copy_btn.clicked.connect(self.copy_snapshot_to_repository)
+        actions_layout.addWidget(copy_btn)
         
         forget_btn = QPushButton("Forget (Delete)")
         forget_btn.setFixedWidth(150)
@@ -2026,17 +2203,25 @@ class ResticManagerWindow(QMainWindow):
         
         layout.addWidget(form_group)
         
-        # Restore button
+        # Restore buttons
         restore_btn = QPushButton("Start Restore")
         restore_btn.setFixedWidth(150)
         restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        restore_btn.clicked.connect(self.start_restore)
+        
+        self.mount_browse_btn = QPushButton("Browse Files")
+        self.mount_browse_btn.setFixedWidth(150)
+        self.mount_browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mount_browse_btn.clicked.connect(self.mount_and_browse_snapshot)
+        self.mount_browse_btn.setToolTip("Browse all snapshots in the repository and restore specific files")
         
         restore_layout = QHBoxLayout()
         restore_layout.addStretch()
+        restore_layout.addWidget(self.mount_browse_btn)
+        restore_layout.addSpacing(10)
         restore_layout.addWidget(restore_btn)
         restore_layout.addStretch()
         
-        restore_btn.clicked.connect(self.start_restore)
         layout.addLayout(restore_layout)
         
         # Progress
@@ -2213,7 +2398,77 @@ class ResticManagerWindow(QMainWindow):
         
         layout.addWidget(form_group)
         
-        # Action buttons
+        # Scheduling section
+        schedule_group = QGroupBox("Schedule Retention (Task Scheduler)")
+        schedule_layout = QVBoxLayout()
+        schedule_group.setLayout(schedule_layout)
+        
+        schedule_form = QFormLayout()
+        
+        # Frequency
+        self.retention_frequency_combo = QComboBox()
+        self.retention_frequency_combo.addItems(["Daily", "Weekly", "Monthly"])
+        self.retention_frequency_combo.setCurrentText("Weekly")
+        self.retention_frequency_combo.currentTextChanged.connect(self._on_retention_frequency_changed)
+        schedule_form.addRow("Frequency:", self.retention_frequency_combo)
+        
+        # Time
+        self.retention_time_edit = QTimeEdit()
+        self.retention_time_edit.setTime(QTime(2, 0))  # Default 2:00 AM
+        self.retention_time_edit.setDisplayFormat("HH:mm")
+        schedule_form.addRow("Time:", self.retention_time_edit)
+        
+        # Day of week (for weekly)
+        self.retention_day_combo = QComboBox()
+        self.retention_day_combo.addItems(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+        self.retention_day_combo.setCurrentText("Sunday")
+        schedule_form.addRow("Day of Week:", self.retention_day_combo)
+        
+        # Day of month (for monthly)
+        self.retention_dom_spin = QSpinBox()
+        self.retention_dom_spin.setMinimum(1)
+        self.retention_dom_spin.setMaximum(28)  # Safe for all months
+        self.retention_dom_spin.setValue(1)
+        self.retention_dom_spin.setSuffix(" of month")
+        schedule_form.addRow("Day of Month:", self.retention_dom_spin)
+        self.retention_dom_spin.setVisible(False)
+        schedule_form.labelForField(self.retention_dom_spin).setVisible(False)
+        
+        schedule_layout.addLayout(schedule_form)
+        
+        # Task scheduler buttons
+        task_btn_layout = QHBoxLayout()
+        
+        create_task_btn = QPushButton("Create Scheduled Task")
+        create_task_btn.setToolTip("Create a Windows Task Scheduler task to run retention automatically")
+        create_task_btn.clicked.connect(self.create_retention_scheduled_task)
+        task_btn_layout.addWidget(create_task_btn)
+        
+        view_tasks_btn = QPushButton("View Tasks")
+        view_tasks_btn.setToolTip("Open Task Scheduler to view scheduled tasks")
+        view_tasks_btn.clicked.connect(self.open_task_scheduler)
+        task_btn_layout.addWidget(view_tasks_btn)
+        
+        delete_task_btn = QPushButton("Delete Task")
+        delete_task_btn.setToolTip("Delete the scheduled retention task for this repository")
+        delete_task_btn.clicked.connect(self.delete_retention_scheduled_task)
+        task_btn_layout.addWidget(delete_task_btn)
+        
+        schedule_layout.addLayout(task_btn_layout)
+        
+        # Info label
+        info_label = QLabel("ℹ️ Creates a system task that runs retention independently of this application")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #888; font-size: 10px; padding: 5px;")
+        schedule_layout.addWidget(info_label)
+        
+        layout.addWidget(schedule_group)
+        
+        # Action buttons (Manual)
+        manual_group = QGroupBox("Manual Execution")
+        manual_layout = QVBoxLayout()
+        manual_group.setLayout(manual_layout)
+        
         btn_layout = QHBoxLayout()
         
         dry_run_btn = QPushButton("Dry Run (Preview)")
@@ -2224,7 +2479,8 @@ class ResticManagerWindow(QMainWindow):
         apply_btn.clicked.connect(lambda: self.apply_retention(dry_run=False))
         btn_layout.addWidget(apply_btn)
         
-        layout.addLayout(btn_layout)
+        manual_layout.addLayout(btn_layout)
+        layout.addWidget(manual_group)
         
         # Output
         output_group = QGroupBox("Policy Output")
@@ -2333,6 +2589,44 @@ class ResticManagerWindow(QMainWindow):
         
         save_btn.clicked.connect(self.save_settings)
         layout.addLayout(save_btn_layout)
+        
+        # System Dependencies Section
+        deps_group = QGroupBox("System Dependencies")
+        deps_layout = QVBoxLayout()
+        deps_group.setLayout(deps_layout)
+        
+        # Info label
+        info_label = QLabel("Check and install required system dependencies:")
+        info_label.setWordWrap(True)
+        deps_layout.addWidget(info_label)
+        
+        # Restic status
+        restic_status_layout = QHBoxLayout()
+        restic_status_layout.addWidget(QLabel("Restic:"))
+        self.restic_status_label = QLabel("Click 'Check' to verify installation")
+        self.restic_status_label.setMinimumWidth(200)
+        self.restic_status_label.setStyleSheet("color: gray; font-style: italic;")
+        restic_status_layout.addWidget(self.restic_status_label)
+        restic_status_layout.addStretch()
+        
+        self.restic_check_btn = QPushButton("Check")
+        self.restic_check_btn.setFixedWidth(100)
+        self.restic_check_btn.clicked.connect(self.check_restic_installation)
+        restic_status_layout.addWidget(self.restic_check_btn)
+        
+        self.restic_install_btn = QPushButton("Install")
+        self.restic_install_btn.setFixedWidth(100)
+        self.restic_install_btn.clicked.connect(self.install_restic)
+        self.restic_install_btn.setVisible(False)
+        restic_status_layout.addWidget(self.restic_install_btn)
+        
+        deps_layout.addLayout(restic_status_layout)
+        
+        layout.addWidget(deps_group)
+        
+        # Don't auto-check on page load - let users click "Check" manually
+        # Auto-checking can cause UI hangs if restic is not properly configured
+        # QTimer.singleShot(100, self.check_restic_installation)
         
         # License Management Section
         license_group = QGroupBox("License Information")
@@ -2574,10 +2868,13 @@ class ResticManagerWindow(QMainWindow):
         repositories = self.settings_manager.get("repositories")
         repo_names = [repo.get("name", "") for repo in repositories]
         
+        # Block signals during update to prevent triggering load_snapshots during initialization
         for combo in [self.snapshot_repo_combo, self.restore_repo_combo, 
                       self.retention_repo_combo, self.dashboard_repo_combo]:
+            combo.blockSignals(True)
             combo.clear()
             combo.addItems(repo_names)
+            combo.blockSignals(False)
         
         # Refresh dashboard after updating combos
         self.refresh_dashboard()
@@ -2839,10 +3136,10 @@ class ResticManagerWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Repository not found")
             return
         
-        # Show dialog with file list
+        # Show dialog with file tree
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Snapshot Content - {snapshot_id}")
-        dialog.setMinimumSize(800, 600)
+        dialog.setMinimumSize(900, 650)
         
         layout = QVBoxLayout()
         dialog.setLayout(layout)
@@ -2852,8 +3149,18 @@ class ResticManagerWindow(QMainWindow):
         header_layout.addWidget(QLabel(f"<b>Browsing snapshot:</b> {snapshot_id}"))
         header_layout.addStretch()
         
+        # Add expand/collapse buttons
+        expand_all_btn = QPushButton("Expand All")
+        expand_all_btn.setFixedWidth(100)
+        header_layout.addWidget(expand_all_btn)
+        
+        collapse_all_btn = QPushButton("Collapse All")
+        collapse_all_btn.setFixedWidth(100)
+        header_layout.addWidget(collapse_all_btn)
+        
         # Add refresh button
         refresh_btn = QPushButton("Refresh")
+        refresh_btn.setFixedWidth(100)
         header_layout.addWidget(refresh_btn)
         
         layout.addLayout(header_layout)
@@ -2863,94 +3170,96 @@ class ResticManagerWindow(QMainWindow):
         search_layout.addWidget(QLabel("Search:"))
         
         search_input = QLineEdit()
-        search_input.setPlaceholderText("Search files... (use '|' for OR, '&' for AND)")
+        search_input.setPlaceholderText("Search files/folders...")
         search_input.setFixedWidth(450)
-        search_input.setToolTip("Enter text to filter files. Use '|' for OR (any match) or '&' for AND (all must match).")
+        search_input.setToolTip("Enter text to filter the tree view")
         search_layout.addWidget(search_input)
-        
-        search_filter_dropdown = QComboBox()
-        search_filter_dropdown.addItems(["Contains", "Not Contain"])
-        search_filter_dropdown.setCurrentText("Contains")
-        search_filter_dropdown.setFixedWidth(110)
-        search_filter_dropdown.setToolTip("Select the type of search filter to apply.")
-        search_layout.addWidget(search_filter_dropdown)
         
         search_layout.addStretch()
         layout.addLayout(search_layout)
         
-        # File list
-        file_list = QListWidget()
-        file_list.setFont(QFont("Courier", 9))
-        file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        layout.addWidget(file_list)
+        # File tree view
+        file_tree = QTreeWidget()
+        file_tree.setHeaderLabels(["Name", "Type", "Size", "Modified", "Permissions"])
+        file_tree.setColumnWidth(0, 400)
+        file_tree.setColumnWidth(1, 80)
+        file_tree.setColumnWidth(2, 100)
+        file_tree.setColumnWidth(3, 150)
+        file_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        file_tree.setSortingEnabled(True)
+        file_tree.setAlternatingRowColors(True)
+        layout.addWidget(file_tree)
         
-        # Status label (define before filter function)
+        # Status label
         status_label = QLabel("Loading files...")
         layout.addWidget(status_label)
         
         # Store all files for filtering
         dialog._all_files = []
+        dialog._file_tree_items = {}  # Map path -> QTreeWidgetItem
         
         # Filter function
-        def filter_files():
-            """Filter file list based on search text"""
-            search_text = search_input.text().strip()
+        def filter_tree():
+            """Filter tree view based on search text"""
+            search_text = search_input.text().strip().lower()
             
-            # Start with all files
-            filtered_files = dialog._all_files[:]
+            def set_item_visible(item, visible):
+                """Recursively set item and children visibility"""
+                item.setHidden(not visible)
             
-            if search_text:
-                # Check if using AND logic (&) or OR logic (|)
-                if '&' in search_text and '|' not in search_text:
-                    # AND logic: all terms must be present
-                    search_terms = [term.strip().lower() for term in search_text.split('&')]
-                    
-                    if search_filter_dropdown.currentText() == "Contains":
-                        # Match if ALL terms are found in the line
-                        filtered_files = [line for line in filtered_files if all(term in line.lower() for term in search_terms)]
-                    else:
-                        # Match if NOT ALL terms are found (at least one term is missing)
-                        filtered_files = [line for line in filtered_files if not all(term in line.lower() for term in search_terms)]
-                else:
-                    # OR logic (default): split by '|' to support multiple search terms
-                    search_terms = [term.strip().lower() for term in search_text.split('|')]
-                    
-                    if search_filter_dropdown.currentText() == "Contains":
-                        # Match if ANY term is found in the line
-                        filtered_files = [line for line in filtered_files if any(term in line.lower() for term in search_terms)]
-                    else:
-                        # Match if NONE of the terms are found in the line
-                        filtered_files = [line for line in filtered_files if not any(term in line.lower() for term in search_terms)]
+            def check_item_matches(item, text):
+                """Check if item or any child matches search text"""
+                if not text:
+                    return True
+                
+                # Check item text
+                item_text = item.text(0).lower()
+                if text in item_text:
+                    return True
+                
+                # Check children
+                for i in range(item.childCount()):
+                    if check_item_matches(item.child(i), text):
+                        return True
+                
+                return False
             
-            # Update file list
-            file_list.clear()
-            if not filtered_files and search_text:
-                file_list.addItem(f"No files found matching '{search_text}'")
-            else:
-                for line in filtered_files:
-                    file_list.addItem(line)
+            # Filter all root items
+            visible_count = 0
+            for i in range(file_tree.topLevelItemCount()):
+                item = file_tree.topLevelItem(i)
+                matches = check_item_matches(item, search_text)
+                item.setHidden(not matches)
+                if matches:
+                    visible_count += 1
+                    # Expand to show matching children
+                    if search_text:
+                        item.setExpanded(True)
             
             # Update status
             if search_text:
-                status_label.setText(f"Showing {len(filtered_files)} of {len(dialog._all_files)} files")
+                status_label.setText(f"Showing {visible_count} matching items")
             else:
-                status_label.setText(f"Loaded {len(filtered_files)} files")
+                status_label.setText(f"Loaded {len(dialog._all_files)} files and folders")
         
-        # Connect search input and dropdown to filter function
-        search_input.textChanged.connect(filter_files)
-        search_filter_dropdown.currentIndexChanged.connect(filter_files)
+        # Connect search
+        search_input.textChanged.connect(filter_tree)
+        
+        # Connect expand/collapse buttons
+        expand_all_btn.clicked.connect(file_tree.expandAll)
+        collapse_all_btn.clicked.connect(file_tree.collapseAll)
         
         # Store filter function reference
-        dialog._filter_files = filter_files
+        dialog._filter_files = filter_tree
         
-        # Connect refresh button (after defining file_list)
-        refresh_btn.clicked.connect(lambda: self._load_snapshot_content(file_list, full_id, repo, password, status_label, dialog))
+        # Connect refresh button
+        refresh_btn.clicked.connect(lambda: self._load_snapshot_content(file_tree, full_id, repo, password, status_label, dialog))
         
         # Buttons
         btn_layout = QHBoxLayout()
         
-        copy_path_btn = QPushButton("Copy Selected Path")
-        copy_path_btn.clicked.connect(lambda: self._copy_selected_paths(file_list))
+        copy_path_btn = QPushButton("Copy Selected Path(s)")
+        copy_path_btn.clicked.connect(lambda: self._copy_selected_tree_paths(file_tree))
         btn_layout.addWidget(copy_path_btn)
         
         btn_layout.addStretch()
@@ -2962,14 +3271,14 @@ class ResticManagerWindow(QMainWindow):
         layout.addLayout(btn_layout)
         
         # Store references for the worker callback
-        dialog._file_list = file_list
+        dialog._file_list = file_tree
         dialog._status_label = status_label
         dialog._repo = repo
         dialog._password = password
         dialog._full_id = full_id
         
         # Load snapshot content
-        self._load_snapshot_content(file_list, full_id, repo, password, status_label, dialog)
+        self._load_snapshot_content(file_tree, full_id, repo, password, status_label, dialog)
         
         self.log(f"Browsing content of snapshot {snapshot_id}")
         dialog.exec()
@@ -2980,7 +3289,8 @@ class ResticManagerWindow(QMainWindow):
             status_label.setText("Loading files...")
         
         file_list.clear()
-        file_list.addItem("Loading snapshot contents...")
+        loading_item = QTreeWidgetItem(["Loading snapshot contents...", "", "", ""])
+        file_list.addTopLevelItem(loading_item)
         
         # Execute restic ls command in background thread
         env = {"RESTIC_PASSWORD": password} if password else {}
@@ -3000,44 +3310,150 @@ class ResticManagerWindow(QMainWindow):
             self._content_workers = []
         self._content_workers.append(worker)
     
-    def _on_snapshot_content_loaded(self, success, stdout, stderr, file_list, status_label=None, dialog=None):
+    def _on_snapshot_content_loaded(self, success, stdout, stderr, file_tree, status_label=None, dialog=None):
         """Callback when snapshot content is loaded"""
-        file_list.clear()
+        file_tree.clear()
         
         if success and stdout:
             # Parse the output - each line is a file
             lines = stdout.strip().split('\n')
             
             if lines:
+                # Build tree structure
+                root_items = {}
+                file_count = 0
+                
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    
+                    # Parse restic ls --long output
+                    # Format: permissions size date time /path/to/file
+                    parts = line.split()
+                    if len(parts) < 4:
+                        continue
+                    
+                    permissions = parts[0]
+                    size = parts[1] if len(parts) > 1 else ""
+                    date = parts[2] if len(parts) > 2 else ""
+                    time_str = parts[3] if len(parts) > 3 else ""
+                    path = " ".join(parts[4:]) if len(parts) > 4 else ""
+                    
+                    if not path:
+                        continue
+                    
+                    # Remove leading slash
+                    path = path.lstrip('/')
+                    
+                    # Determine if directory
+                    is_dir = permissions.startswith('d')
+                    
+                    # Split path into components
+                    path_parts = path.split('/')
+                    
+                    # Build tree structure
+                    current_path = ""
+                    parent = None
+                    
+                    for i, part in enumerate(path_parts):
+                        if not part:
+                            continue
+                        
+                        # Build full path up to this point
+                        if current_path:
+                            current_path += "/" + part
+                        else:
+                            current_path = part
+                        
+                        # Check if this item already exists
+                        if current_path not in root_items:
+                            # Determine item type
+                            is_last = (i == len(path_parts) - 1)
+                            item_type = "File" if (is_last and not is_dir) else "Folder"
+                            
+                            # Create tree item
+                            item = QTreeWidgetItem()
+                            item.setText(0, part)  # Name
+                            item.setText(1, item_type)  # Type
+                            
+                            # Add size, date, permissions for files
+                            if is_last:
+                                item.setText(2, size if not is_dir else "")
+                                item.setText(3, f"{date} {time_str}")
+                                item.setText(4, permissions)
+                                if not is_dir:
+                                    file_count += 1
+                            else:
+                                item.setText(2, "")
+                                item.setText(3, "")
+                                item.setText(4, "")
+                            
+                            # Set icon based on type
+                            if item_type == "Folder":
+                                item.setForeground(0, QColor("#4A9EFF"))
+                            
+                            # Store full path as data
+                            item.setData(0, Qt.ItemDataRole.UserRole, "/" + current_path)
+                            
+                            # Add to parent or root
+                            if parent:
+                                parent.addChild(item)
+                            else:
+                                file_tree.addTopLevelItem(item)
+                            
+                            # Store item for future reference
+                            root_items[current_path] = item
+                            parent = item
+                        else:
+                            # Item exists, use it as parent for next level
+                            parent = root_items[current_path]
+                
                 # Store all files in dialog for filtering
                 if dialog:
                     dialog._all_files = [line for line in lines if line.strip()]
-                    # Apply current filter
-                    if hasattr(dialog, '_filter_files'):
-                        dialog._filter_files()
-                else:
-                    # Fallback if no dialog (shouldn't happen)
-                    for line in lines:
-                        if line.strip():
-                            file_list.addItem(line)
+                    dialog._file_tree_items = root_items
                 
                 if status_label:
-                    status_label.setText(f"Loaded {len(lines)} items")
+                    status_label.setText(f"Loaded {file_count} files in {len(root_items)} total items")
                 
-                self.log(f"Loaded {len(lines)} items from snapshot")
+                self.log(f"Loaded {file_count} files from snapshot")
             else:
-                file_list.addItem("(No files in snapshot)")
+                # No files
+                item = QTreeWidgetItem()
+                item.setText(0, "(No files in snapshot)")
+                file_tree.addTopLevelItem(item)
                 if status_label:
                     status_label.setText("No files found")
         else:
             error_msg = stderr if stderr else "Unknown error"
-            file_list.addItem(f"Error loading snapshot contents:\n{error_msg}")
+            item = QTreeWidgetItem()
+            item.setText(0, f"Error loading snapshot contents: {error_msg}")
+            file_tree.addTopLevelItem(item)
             if status_label:
                 status_label.setText("Error loading files")
             self.log(f"Error loading snapshot content: {error_msg}")
     
+    def _copy_selected_tree_paths(self, file_tree):
+        """Copy selected file paths from tree to clipboard"""
+        selected_items = file_tree.selectedItems()
+        if not selected_items:
+            return
+        
+        # Get paths from selected items
+        paths = []
+        for item in selected_items:
+            path = item.data(0, Qt.ItemDataRole.UserRole)
+            if path:
+                paths.append(path)
+        
+        if paths:
+            clipboard_text = "\n".join(paths)
+            QApplication.clipboard().setText(clipboard_text)
+            self.log(f"Copied {len(paths)} path(s) to clipboard")
+            QMessageBox.information(None, "Copied", f"Copied {len(paths)} path(s) to clipboard")
+    
     def _copy_selected_paths(self, file_list):
-        """Copy selected file paths to clipboard"""
+        """Copy selected file paths to clipboard (legacy list version)"""
         selected_items = file_list.selectedItems()
         if not selected_items:
             return
@@ -3241,6 +3657,289 @@ class ResticManagerWindow(QMainWindow):
             self._forget_worker.finished.connect(lambda success, stdout, stderr: self._on_forget_complete(success, stdout, stderr, snapshot_id))
             self._forget_worker.start()
     
+    def copy_snapshot_to_repository(self):
+        """Copy selected snapshot to another repository"""
+        selected = self.snapshots_table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Please select a snapshot first")
+            return
+        
+        row = selected[0].row()
+        snapshot_item = self.snapshots_table.item(row, 0)
+        snapshot_id = snapshot_item.text()
+        snapshot_data = snapshot_item.data(Qt.ItemDataRole.UserRole)
+        
+        # Get full snapshot ID from stored data
+        full_id = snapshot_data.get("id", snapshot_id) if snapshot_data else snapshot_id
+        
+        # Get current repository
+        source_repo_name = self.snapshot_repo_combo.currentText()
+        source_repo, source_password = self.get_repository_by_name(source_repo_name)
+        
+        if not source_repo:
+            QMessageBox.warning(self, "Error", "Source repository not found")
+            return
+        
+        # Get snapshot info for display
+        paths = snapshot_data.get("paths", []) if snapshot_data else []
+        paths_str = "\n  • ".join(paths) if paths else "Unknown"
+        snapshot_time = snapshot_data.get("time", "Unknown") if snapshot_data else "Unknown"
+        
+        # Create dialog to select destination repository
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Copy Snapshot to Repository")
+        dialog.setMinimumWidth(500)
+        
+        layout = QVBoxLayout()
+        dialog.setLayout(layout)
+        
+        # Info about snapshot
+        info_text = QLabel(
+            f"<b>Snapshot to Copy:</b><br>"
+            f"ID: {snapshot_id}<br>"
+            f"Time: {snapshot_time}<br>"
+            f"Paths:<br>  • {paths_str.replace(chr(10), '<br>')}<br><br>"
+            f"<b>Source Repository:</b> {source_repo_name}"
+        )
+        info_text.setWordWrap(True)
+        layout.addWidget(info_text)
+        
+        # Destination repository selection
+        dest_layout = QFormLayout()
+        dest_combo = QComboBox()
+        
+        repositories = self.settings_manager.get("repositories")
+        for repo in repositories:
+            # Don't include source repo in destination list
+            if repo["name"] != source_repo_name:
+                dest_combo.addItem(repo["name"])
+        
+        if dest_combo.count() == 0:
+            QMessageBox.warning(self, "No Destination", "No other repositories available. Please add another repository first.")
+            return
+        
+        dest_layout.addRow("Destination Repository:", dest_combo)
+        layout.addLayout(dest_layout)
+        
+        # Timeout configuration
+        timeout_layout = QHBoxLayout()
+        timeout_spin = QSpinBox()
+        timeout_spin.setMinimum(0)
+        timeout_spin.setMaximum(24)
+        timeout_spin.setValue(6)  # Default 6 hours
+        timeout_spin.setSuffix(" hours")
+        timeout_layout.addWidget(timeout_spin)
+        timeout_layout.addWidget(QLabel("(0 = no timeout, recommended for large snapshots)"))
+        timeout_layout.addStretch()
+        dest_layout.addRow("Timeout:", timeout_layout)
+        
+        # Option to delete from source after successful copy
+        delete_source_check = QCheckBox("Delete from source repository after successful copy")
+        delete_source_check.setToolTip("This will remove the snapshot from source after copying (copy-then-delete operation)")
+        layout.addWidget(delete_source_check)
+        
+        # Warning message
+        warning_label = QLabel(
+            "⚠ Note: Large snapshots may take several hours to copy.\n"
+            "Set timeout to 0 for no limit, or increase hours as needed.\n"
+            "Progress will be shown in real-time during the copy operation."
+        )
+        warning_label.setStyleSheet("color: orange;")
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+        
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            dest_repo_name = dest_combo.currentText()
+            dest_repo, dest_password = self.get_repository_by_name(dest_repo_name)
+            
+            if not dest_repo:
+                QMessageBox.warning(self, "Error", "Destination repository not found")
+                return
+            
+            delete_after_copy = delete_source_check.isChecked()
+            copy_timeout = timeout_spin.value() * 3600  # Convert hours to seconds
+            
+            self.log(f"Copying snapshot {snapshot_id} from '{source_repo_name}' to '{dest_repo_name}'...")
+            if copy_timeout > 0:
+                self.log(f"Timeout: {timeout_spin.value()} hours ({copy_timeout} seconds)")
+            else:
+                self.log(f"Timeout: No limit")
+            
+            # Show progress dialog
+            progress_dialog = QDialog(self)
+            progress_dialog.setWindowTitle("Copying Snapshot")
+            progress_dialog.setModal(False)  # Non-modal so user can access main window
+            progress_dialog.setMinimumWidth(600)
+            progress_dialog.setMinimumHeight(400)
+            
+            progress_layout = QVBoxLayout()
+            progress_dialog.setLayout(progress_layout)
+            
+            info_label = QLabel(
+                f"Copying snapshot {snapshot_id}\n"
+                f"From: {source_repo_name}\n"
+                f"To: {dest_repo_name}\n\n"
+                f"This may take a while for large snapshots..."
+            )
+            progress_layout.addWidget(info_label)
+            
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, 0)  # Indeterminate progress
+            progress_layout.addWidget(progress_bar)
+            
+            status_label = QLabel("Starting copy operation...")
+            progress_layout.addWidget(status_label)
+            
+            output_text = QPlainTextEdit()
+            output_text.setReadOnly(True)
+            output_text.setPlaceholderText("Real-time output will appear here...")
+            progress_layout.addWidget(output_text)
+            
+            # Cancel button
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.setEnabled(False)  # Disable for now - copy can't be easily cancelled
+            cancel_btn.setToolTip("Copy operation cannot be cancelled once started")
+            progress_layout.addWidget(cancel_btn)
+            
+            # Store references
+            self._copy_progress_dialog = progress_dialog
+            self._copy_output_text = output_text
+            self._copy_status_label = status_label
+            
+            progress_dialog.show()
+            QApplication.processEvents()
+            
+            # Execute restic copy command with progress
+            env = {
+                "RESTIC_PASSWORD": source_password if source_password else "",
+                "RESTIC_PASSWORD2": dest_password if dest_password else ""
+            }
+            args = [
+                "-r", source_repo["path"],
+                "copy",
+                "--repo2", dest_repo["path"],
+                full_id
+            ]
+            
+            self._copy_worker = ResticWorker(self.restic_cmd, args, env, timeout=copy_timeout, use_progress=False)
+            self._copy_worker.progress.connect(self._on_copy_progress)
+            self._copy_worker.finished.connect(
+                lambda success, stdout, stderr: self._on_copy_complete(
+                    success, stdout, stderr, snapshot_id, dest_repo_name, 
+                    delete_after_copy, source_repo, source_password, full_id,
+                    progress_dialog
+                )
+            )
+            self._copy_worker.start()
+    
+    def _on_copy_progress(self, line):
+        """Handle progress output from copy operation"""
+        if hasattr(self, '_copy_output_text'):
+            self._copy_output_text.appendPlainText(line)
+            # Auto-scroll to bottom
+            scrollbar = self._copy_output_text.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        
+        if hasattr(self, '_copy_status_label'):
+            # Update status with last non-empty line
+            if line.strip():
+                self._copy_status_label.setText(f"Status: {line.strip()[:100]}...")  # First 100 chars
+    
+    def _on_copy_complete(self, success, stdout, stderr, snapshot_id, dest_repo_name, 
+                          delete_after_copy, source_repo, source_password, full_id, progress_dialog):
+        """Callback when snapshot copy completes"""
+        # Add final output to display
+        if hasattr(self, '_copy_output_text'):
+            if stdout:
+                self._copy_output_text.appendPlainText("\n=== STDOUT ===")
+                self._copy_output_text.appendPlainText(stdout)
+            if stderr:
+                self._copy_output_text.appendPlainText("\n=== STDERR ===")
+                self._copy_output_text.appendPlainText(stderr)
+        
+        # Update status
+        if hasattr(self, '_copy_status_label'):
+            if success:
+                self._copy_status_label.setText("✓ Copy completed successfully!")
+                self._copy_status_label.setStyleSheet("color: green;")
+            else:
+                self._copy_status_label.setText("✗ Copy failed!")
+                self._copy_status_label.setStyleSheet("color: red;")
+        
+        # Wait a moment for user to see final status
+        QApplication.processEvents()
+        
+        # Keep dialog open for a moment if successful, close immediately if failed
+        if not success:
+            progress_dialog.close()
+        
+        if success:
+            message = f"Snapshot {snapshot_id} successfully copied to '{dest_repo_name}'!"
+            
+            if delete_after_copy:
+                # Delete from source repository
+                reply = QMessageBox.question(
+                    self, "Delete from Source?",
+                    f"Snapshot copied successfully!\n\n"
+                    f"Do you want to delete it from the source repository now?\n\n"
+                    f"Note: You may want to verify the copy first before deleting.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.log(f"Deleting snapshot {snapshot_id} from source repository...")
+                    env = {"RESTIC_PASSWORD": source_password if source_password else ""}
+                    args = ["-r", source_repo["path"], "forget", full_id]
+                    
+                    success_delete, stdout_del, stderr_del = self.restic_cmd.run(args, env)
+                    
+                    if success_delete:
+                        message += f"\n\nSnapshot also deleted from source repository."
+                        self.log(f"Snapshot {snapshot_id} deleted from source")
+                        self.load_snapshots()  # Refresh list
+                    else:
+                        message += f"\n\nWarning: Failed to delete from source: {stderr_del}"
+                        self.log(f"Failed to delete snapshot from source: {stderr_del}")
+            
+            progress_dialog.close()
+            QMessageBox.information(self, "Copy Complete", message)
+            self.log(f"Snapshot copy completed: {snapshot_id} -> {dest_repo_name}")
+        else:
+            error_msg = stderr if stderr else stdout if stdout else "Unknown error"
+            
+            # Show detailed error in a scrollable dialog
+            error_dialog = QDialog(self)
+            error_dialog.setWindowTitle("Copy Failed")
+            error_dialog.setMinimumWidth(500)
+            error_dialog.setMinimumHeight(300)
+            
+            error_layout = QVBoxLayout()
+            error_dialog.setLayout(error_layout)
+            
+            error_label = QLabel(f"Failed to copy snapshot {snapshot_id}")
+            error_label.setStyleSheet("color: red; font-weight: bold;")
+            error_layout.addWidget(error_label)
+            
+            error_text = QPlainTextEdit()
+            error_text.setReadOnly(True)
+            error_text.setPlainText(error_msg)
+            error_layout.addWidget(error_text)
+            
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(error_dialog.close)
+            error_layout.addWidget(close_btn)
+            
+            error_dialog.exec()
+            self.log(f"Snapshot copy failed: {error_msg}")
+    
     def _on_forget_complete(self, success, stdout, stderr, snapshot_id):
         """Callback when forget completes"""
         if success:
@@ -3329,6 +4028,15 @@ class ResticManagerWindow(QMainWindow):
                 pass
         
         if success:
+            # Update last prune date in repository metadata
+            repositories = self.settings_manager.get("repositories")
+            for repo in repositories:
+                if repo["name"] == repo_name:
+                    repo["last_prune"] = datetime.now().isoformat()
+                    break
+            self.settings_manager.set("repositories", repositories)
+            self.settings_manager.save_settings()
+            
             # Extract useful info from stdout
             output_preview = stdout[:500] if stdout else "Prune completed successfully"
             QMessageBox.information(self, "Prune Complete",
@@ -3437,69 +4145,176 @@ class ResticManagerWindow(QMainWindow):
             QMessageBox.warning(self, "Error", f"Repository '{repo_name}' not found")
             return
         
-        self.repo_stats_text.setText(f"Loading stats for {repo_name}...")
+        self.repo_stats_text.setText(f"Loading comprehensive stats for {repo_name}...\nThis may take a moment...")
         self.log(f"Loading stats for repository {repo_name}")
+        QApplication.processEvents()
         
-        # Store repo info for callback
+        # Store repo info
         self._current_stats_repo = repo
         self._current_stats_repo_name = repo_name
+        self._current_stats_password = password
         
-        # Execute restic stats command in background thread
+        # Start loading stats in background
+        # We'll gather: snapshots count, repository size, restore size, and check status
         env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "stats", "--json"]
         
-        # Create and start worker thread
+        # First, get snapshot count
+        args = ["-r", repo["path"], "snapshots", "--json"]
         self._stats_worker = ResticWorker(self.restic_cmd, args, env)
-        self._stats_worker.finished.connect(self._on_stats_loaded)
+        self._stats_worker.finished.connect(self._on_snapshots_counted)
         self._stats_worker.start()
     
-    def _on_stats_loaded(self, success, stdout, stderr):
-        """Callback when stats loading completes"""
-        repo = self._current_stats_repo
-        repo_name = self._current_stats_repo_name
+    def _on_snapshots_counted(self, success, stdout, stderr):
+        """Callback when snapshot count is retrieved"""
+        snapshot_count = 0
+        last_backup = "Never"
         
-        # Log raw output for debugging
-        self.log(f"Stats result for {repo_name}: success={success}, stdout_len={len(stdout) if stdout else 0}, stderr_len={len(stderr) if stderr else 0}")
+        if success and stdout:
+            try:
+                snapshots = json.loads(stdout)
+                if isinstance(snapshots, list):
+                    snapshot_count = len(snapshots)
+                    # Get most recent backup time
+                    if snapshots:
+                        latest = max(snapshots, key=lambda s: s.get("time", ""))
+                        last_backup = latest.get("time", "Unknown")
+                        # Format datetime
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(last_backup.replace("Z", "+00:00"))
+                            last_backup = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        except:
+                            pass
+            except:
+                pass
+        
+        self._stats_snapshot_count = snapshot_count
+        self._stats_last_backup = last_backup
+        
+        # Now get repository size stats (raw data)
+        repo = self._current_stats_repo
+        password = self._current_stats_password
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", repo["path"], "stats", "--mode", "raw-data", "--json"]
+        
+        self._stats_worker = ResticWorker(self.restic_cmd, args, env)
+        self._stats_worker.finished.connect(self._on_raw_stats_loaded)
+        self._stats_worker.start()
+    
+    def _on_raw_stats_loaded(self, success, stdout, stderr):
+        """Callback when raw repository size is retrieved (actual on-disk size)"""
+        repo_size = 0
         
         if success and stdout:
             try:
                 stats = json.loads(stdout)
-                
-                # Log the parsed stats for debugging
-                self.log(f"Parsed stats: {stats}")
-                
-                # Format stats display
-                total_size = stats.get("total_size", 0)
-                total_file_count = stats.get("total_file_count", 0)
-                
-                # Convert size to human readable
-                size_str = self.format_bytes(total_size)
-                
-                stats_text = f"Repository: {repo_name}\n"
-                stats_text += f"Path: {repo['path']}\n"
-                stats_text += f"Type: {repo.get('type', 'local')}\n\n"
-                stats_text += f"Total Size: {size_str}\n"
-                stats_text += f"Total Files: {total_file_count:,}\n"
-                
-                # Add info if repository is empty
-                if total_size == 0 and total_file_count == 0:
-                    stats_text += f"\nℹ This repository is empty (no snapshots yet).\n"
-                    stats_text += f"Create a backup to this repository to see statistics."
-                
-                self.repo_stats_text.setText(stats_text)
-                self.log(f"Successfully loaded stats for {repo_name}")
-                
-            except json.JSONDecodeError as e:
-                # Try parsing plain text output
-                self.log(f"JSON decode error: {str(e)}")
-                self.repo_stats_text.setText(f"Repository: {repo_name}\n"
-                                             f"Path: {repo['path']}\n\n"
-                                             f"Stats Output:\n{stdout}")
-                self.log(f"Stats loaded (plain text) for {repo_name}")
+                repo_size = stats.get("total_size", 0)
+            except:
+                pass
+        
+        self._stats_repo_size = repo_size
+        
+        # Now get restore size (original data size before deduplication and compression)
+        repo = self._current_stats_repo
+        password = self._current_stats_password
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", repo["path"], "stats", "--mode", "restore-size", "--json"]
+        
+        self._stats_worker = ResticWorker(self.restic_cmd, args, env)
+        self._stats_worker.finished.connect(self._on_restore_stats_loaded)
+        self._stats_worker.start()
+    
+    def _on_restore_stats_loaded(self, success, stdout, stderr):
+        """Callback when restore size is retrieved - final step"""
+        restore_size = 0
+        total_files = 0
+        
+        if success and stdout:
+            try:
+                stats = json.loads(stdout)
+                restore_size = stats.get("total_size", 0)
+                total_files = stats.get("total_file_count", 0)
+            except:
+                pass
+        
+        self._stats_restore_size = restore_size
+        self._stats_total_files = total_files
+        
+        # Now compile all stats and display
+        self._display_comprehensive_stats()
+    
+    def _display_comprehensive_stats(self):
+        """Display all gathered statistics"""
+        repo = self._current_stats_repo
+        repo_name = self._current_stats_repo_name
+        
+        snapshot_count = getattr(self, '_stats_snapshot_count', 0)
+        last_backup = getattr(self, '_stats_last_backup', 'Never')
+        repo_size = getattr(self, '_stats_repo_size', 0)
+        restore_size = getattr(self, '_stats_restore_size', 0)
+        total_files = getattr(self, '_stats_total_files', 0)
+        
+        # Calculate total savings (deduplication + compression combined)
+        if restore_size > 0 and repo_size > 0:
+            total_saved = restore_size - repo_size
+            savings_percent = (total_saved / restore_size) * 100 if restore_size > 0 else 0
         else:
-            error_msg = stderr if stderr else "Unknown error"
-            self.repo_stats_text.setText(f"Error loading stats for {repo_name}:\n\n{error_msg}")
-            self.log(f"Error loading stats for {repo_name}: {error_msg}")
+            total_saved = 0
+            savings_percent = 0
+        
+        # Get last prune date from repository metadata if available
+        last_prune = repo.get("last_prune", "Never")
+        if last_prune != "Never":
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(last_prune)
+                days_ago = (datetime.now() - dt).days
+                if days_ago == 0:
+                    last_prune = "Today"
+                elif days_ago == 1:
+                    last_prune = "Yesterday"
+                else:
+                    last_prune = f"{days_ago} days ago"
+            except:
+                pass
+        
+        # Format the comprehensive stats display with clear breakdown
+        stats_text = f"<b>Repository:</b> {repo_name}<br>"
+        stats_text += f"<b>Path:</b> {repo['path']}<br>"
+        stats_text += f"<b>Type:</b> {repo.get('type', 'local')}<br><br>"
+        
+        stats_text += f"<b>Snapshots:</b> {snapshot_count:,}<br>"
+        stats_text += f"<b>Last Backup:</b> {last_backup}<br>"
+        stats_text += f"<b>Total Files:</b> {total_files:,}<br><br>"
+        
+        # Storage breakdown section
+        stats_text += "<b>=== Storage Breakdown ===</b><br>"
+        stats_text += f"<b>Original Data Size:</b> {self.format_bytes(restore_size)}<br>"
+        stats_text += f"<b>Repository Size:</b> {self.format_bytes(repo_size)}<br>"
+        stats_text += f"<small><i>(After deduplication + compression)</i></small><br>"
+        
+        if total_saved > 0:
+            stats_text += f"<br><b style='color: green;'>Total Saved:</b> <span style='color: green;'>{self.format_bytes(total_saved)} ({savings_percent:.1f}%)</span><br>"
+            
+            # Calculate storage efficiency ratio
+            if restore_size > 0:
+                efficiency_ratio = repo_size / restore_size
+                stats_text += f"<small><i>Storage efficiency: {efficiency_ratio:.2f}x (storing {self.format_bytes(repo_size)} instead of {self.format_bytes(restore_size)})</i></small><br>"
+        else:
+            stats_text += f"<br><b>Total Saved:</b> N/A<br>"
+        
+        stats_text += f"<br><b>Last Prune:</b> {last_prune}<br>"
+        stats_text += f"<b>Corruption:</b> <span style='color: green;'>Not checked (click Verify to check)</span>"
+        
+        if snapshot_count == 0:
+            stats_text += "<br><br><i>ℹ This repository is empty (no snapshots yet).</i>"
+        
+        self.repo_stats_text.setHtml(stats_text)
+        self.log(f"Successfully loaded comprehensive stats for {repo_name}")
+    
+    def _on_stats_loaded(self, success, stdout, stderr):
+        """Legacy callback - not used with new comprehensive stats"""
+        pass
     
     def verify_repository(self):
         """Verify repository integrity"""
@@ -3579,13 +4394,139 @@ class ResticManagerWindow(QMainWindow):
     def load_snapshots_for_restore(self):
         """Load snapshots into restore dropdown"""
         self.restore_snapshot_combo.clear()
-        # TODO: Load actual snapshots
-        self.restore_snapshot_combo.addItem("Select a snapshot")
+        self.restore_snapshot_combo.addItem("Loading...")
+        
+        repo_name = self.restore_repo_combo.currentText()
+        if not repo_name:
+            self.restore_snapshot_combo.clear()
+            self.restore_snapshot_combo.addItem("Select a repository first")
+            return
+        
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            self.restore_snapshot_combo.clear()
+            self.restore_snapshot_combo.addItem("Repository not found")
+            return
+        
+        # Load snapshots
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", repo["path"], "snapshots", "--json"]
+        
+        # Store worker reference to prevent garbage collection
+        self._restore_snapshot_worker = ResticWorker(self.restic_cmd, args, env)
+        self._restore_snapshot_worker.finished.connect(lambda success, stdout, stderr: self._on_restore_snapshots_loaded(success, stdout, stderr))
+        self._restore_snapshot_worker.start()
+    
+    def _on_restore_snapshots_loaded(self, success, stdout, stderr):
+        """Callback when snapshots are loaded for restore"""
+        self.restore_snapshot_combo.clear()
+        
+        if not success:
+            self.restore_snapshot_combo.addItem("Failed to load snapshots")
+            self.log(f"Error loading snapshots: {stderr}")
+            return
+        
+        try:
+            snapshots = json.loads(stdout)
+            if not isinstance(snapshots, list) or len(snapshots) == 0:
+                self.restore_snapshot_combo.addItem("No snapshots available")
+                return
+            
+            self.restore_snapshot_combo.addItem("Select a snapshot")
+            
+            # Add snapshots to combo box
+            for snapshot in reversed(snapshots):  # Most recent first
+                snap_id = snapshot.get("short_id", snapshot.get("id", "unknown")[:8])
+                snap_time = snapshot.get("time", "unknown")
+                snap_host = snapshot.get("hostname", "unknown")
+                snap_paths = snapshot.get("paths", [])
+                
+                # Format time
+                try:
+                    dt = datetime.fromisoformat(snap_time.replace("Z", "+00:00"))
+                    time_str = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    time_str = snap_time
+                
+                # Create description
+                paths_str = ", ".join(snap_paths[:2])
+                if len(snap_paths) > 2:
+                    paths_str += f" (+{len(snap_paths)-2} more)"
+                
+                display = f"{snap_id} - {time_str} - {snap_host} - {paths_str}"
+                self.restore_snapshot_combo.addItem(display, snapshot.get("id", snap_id))
+        
+        except Exception as e:
+            self.restore_snapshot_combo.addItem("Error parsing snapshots")
+            self.log(f"Error parsing snapshots: {str(e)}")
     
     # Restore Methods
     def browse_snapshot_files(self):
         """Browse files in selected snapshot"""
-        self.log("Snapshot file browser - to be implemented")
+        repo_name = self.restore_repo_combo.currentText()
+        snapshot_text = self.restore_snapshot_combo.currentText()
+        
+        if not repo_name or snapshot_text == "Select a snapshot":
+            QMessageBox.warning(self, "Selection Required", "Please select a repository and snapshot first")
+            return
+        
+        # Get snapshot ID
+        snapshot_id = self.restore_snapshot_combo.currentData()
+        if not snapshot_id:
+            snapshot_id = snapshot_text.split(" - ")[0]
+        
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            return
+        
+        # List files in snapshot
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", repo["path"], "ls", snapshot_id]
+        
+        # Show loading dialog
+        progress = QProgressDialog("Loading snapshot contents...", "Cancel", 0, 0, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        
+        # Store worker reference to prevent garbage collection
+        self._browse_files_worker = ResticWorker(self.restic_cmd, args, env)
+        self._browse_files_worker.finished.connect(lambda success, stdout, stderr: self._on_snapshot_files_loaded(success, stdout, stderr, progress))
+        self._browse_files_worker.start()
+    
+    def _on_snapshot_files_loaded(self, success, stdout, stderr, progress):
+        """Callback when snapshot file list is loaded"""
+        progress.close()
+        
+        if not success:
+            QMessageBox.warning(self, "Error", f"Failed to load snapshot contents:\n{stderr}")
+            return
+        
+        # Show file browser dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Snapshot File Browser")
+        dialog.resize(600, 500)
+        
+        layout = QVBoxLayout()
+        
+        # File list
+        file_list = QPlainTextEdit()
+        file_list.setReadOnly(True)
+        file_list.setPlainText(stdout)
+        layout.addWidget(file_list)
+        
+        # Info label
+        info_label = QLabel("Tip: Copy a file path and paste it into the 'Path to Restore' field")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.setLayout(layout)
+        dialog.exec()
     
     def browse_restore_target(self):
         """Browse for restore target directory"""
@@ -3598,20 +4539,478 @@ class ResticManagerWindow(QMainWindow):
     def start_restore(self):
         """Start file restore operation"""
         repo_name = self.restore_repo_combo.currentText()
-        snapshot = self.restore_snapshot_combo.currentText()
+        snapshot_text = self.restore_snapshot_combo.currentText()
         target = self.restore_target_input.text()
+        restore_path = self.restore_path_input.text().strip()
         
-        if not all([repo_name, snapshot, target]):
-            QMessageBox.warning(self, "Incomplete", "Please fill all required fields")
+        if not repo_name or snapshot_text == "Select a snapshot" or not snapshot_text:
+            QMessageBox.warning(self, "Incomplete", "Please select a repository and snapshot")
+            return
+        
+        if not target:
+            QMessageBox.warning(self, "Incomplete", "Please select a target directory")
+            return
+        
+        # Get snapshot ID
+        snapshot_id = self.restore_snapshot_combo.currentData()
+        if not snapshot_id:
+            # Try to extract from text
+            snapshot_id = snapshot_text.split(" - ")[0]
+        
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            QMessageBox.warning(self, "Error", "Repository not found")
+            return
+        
+        # Confirm restore
+        if restore_path:
+            msg = f"Restore '{restore_path}' from snapshot {snapshot_id} to:\n{target}?"
+        else:
+            msg = f"Restore ALL FILES from snapshot {snapshot_id} to:\n{target}?\n\nThis may take a long time!"
+        
+        reply = QMessageBox.question(self, "Confirm Restore", msg,
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply != QMessageBox.StandardButton.Yes:
             return
         
         self.restore_progress.setVisible(True)
         self.restore_progress.setRange(0, 0)  # Indeterminate
+        self.restore_log.clear()
         
-        self.log(f"Starting restore from {repo_name}/{snapshot} to {target}")
-        # TODO: Implement actual restore
+        # Build restore command
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", repo["path"], "restore", snapshot_id, "--target", target]
         
-        QTimer.singleShot(2000, lambda: self.restore_progress.setVisible(False))
+        if restore_path:
+            args.extend(["--include", restore_path])
+        
+        self.log(f"Starting restore from {repo_name}/{snapshot_id} to {target}")
+        if restore_path:
+            self.log(f"Restoring path: {restore_path}")
+        else:
+            self.log("Restoring all files...")
+        
+        # Start restore worker
+        self._restore_worker = ResticWorker(self.restic_cmd, args, env)
+        self._restore_worker.output_received.connect(lambda text: self.restore_log.appendPlainText(text))
+        self._restore_worker.finished.connect(self._on_restore_complete)
+        self._restore_worker.start()
+    
+    def _on_restore_complete(self, success, stdout, stderr):
+        """Callback when restore is complete"""
+        self.restore_progress.setVisible(False)
+        
+        if success:
+            self.log("Restore completed successfully!")
+            QMessageBox.information(self, "Restore Complete", "Files have been restored successfully!")
+        else:
+            self.log(f"Restore failed: {stderr}")
+            QMessageBox.warning(self, "Restore Failed", f"Restore operation failed:\n{stderr}")
+    
+    def mount_and_browse_snapshot(self):
+        """Browse repository snapshots using restic ls --json (no mounting required)"""
+        repo_name = self.restore_repo_combo.currentText()
+        
+        if not repo_name:
+            QMessageBox.warning(self, "Selection Required", "Please select a repository first")
+            return
+        
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            return
+        
+        self.log(f"Opening snapshot browser for repository: {repo_name}")
+        self._browse_repository_snapshots(repo, password, repo_name)
+    
+    def _browse_repository_snapshots(self, repo, password, repo_name):
+        """Show dialog to browse and restore files from snapshots using JSON API"""
+        # Create browser dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Browse Snapshots - {repo_name}")
+        dialog.setMinimumSize(900, 600)
+        layout = QVBoxLayout()
+        dialog.setLayout(layout)
+        
+        # Snapshot selector at top
+        selector_layout = QHBoxLayout()
+        selector_layout.addWidget(QLabel("Snapshot:"))
+        
+        snapshot_combo = QComboBox()
+        snapshot_combo.setMinimumWidth(400)
+        selector_layout.addWidget(snapshot_combo)
+        
+        refresh_snapshots_btn = QPushButton("Refresh List")
+        refresh_snapshots_btn.setFixedWidth(100)
+        selector_layout.addWidget(refresh_snapshots_btn)
+        selector_layout.addStretch()
+        
+        layout.addLayout(selector_layout)
+        
+        # File tree
+        file_tree = QTreeWidget()
+        file_tree.setHeaderLabels(["Name", "Size", "Modified", "Type"])
+        file_tree.setColumnWidth(0, 400)
+        file_tree.setColumnWidth(1, 100)
+        file_tree.setColumnWidth(2, 150)
+        file_tree.setSortingEnabled(True)
+        layout.addWidget(file_tree)
+        
+        # Status label
+        status_label = QLabel("Select a snapshot to browse")
+        status_label.setStyleSheet("color: #888; font-style: italic;")
+        layout.addWidget(status_label)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        
+        restore_selected_btn = QPushButton("Restore Selected...")
+        restore_selected_btn.setEnabled(False)
+        restore_selected_btn.clicked.connect(
+            lambda: self._restore_selected_from_browser(file_tree, snapshot_combo, repo, password, dialog)
+        )
+        btn_layout.addWidget(restore_selected_btn)
+        
+        btn_layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(close_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        # Load snapshots function
+        def load_snapshots():
+            snapshot_combo.clear()
+            snapshot_combo.addItem("Loading snapshots...")
+            status_label.setText("Loading snapshots...")
+            
+            env = {"RESTIC_PASSWORD": password} if password else {}
+            args = ["-r", repo["path"], "snapshots", "--json"]
+            
+            worker = ResticWorker(self.restic_cmd, args, env)
+            worker.finished.connect(
+                lambda success, stdout, stderr: _on_snapshots_loaded(success, stdout, stderr)
+            )
+            worker.start()
+            
+            # Store worker reference
+            dialog._snapshot_worker = worker
+        
+        def _on_snapshots_loaded(success, stdout, stderr):
+            snapshot_combo.clear()
+            
+            if success and stdout:
+                try:
+                    import json
+                    snapshots = json.loads(stdout)
+                    
+                    if snapshots:
+                        for snap in reversed(snapshots):  # Most recent first
+                            snap_id = snap.get("short_id", snap.get("id", ""))[:8]
+                            snap_time = snap.get("time", "")[:19].replace("T", " ")
+                            snap_host = snap.get("hostname", "unknown")
+                            snap_paths = ", ".join(snap.get("paths", []))[:50]
+                            
+                            display_text = f"{snap_time} | {snap_host} | {snap_paths}"
+                            snapshot_combo.addItem(display_text, snap.get("id"))
+                        
+                        status_label.setText(f"Loaded {len(snapshots)} snapshots")
+                    else:
+                        snapshot_combo.addItem("No snapshots found")
+                        status_label.setText("No snapshots in repository")
+                
+                except json.JSONDecodeError as e:
+                    snapshot_combo.addItem("Error loading snapshots")
+                    status_label.setText(f"Error parsing snapshot data: {str(e)}")
+                    self.log(f"JSON decode error: {str(e)}")
+            else:
+                snapshot_combo.addItem("Error loading snapshots")
+                status_label.setText(f"Failed to load snapshots")
+                if stderr:
+                    self.log(f"Snapshot load error: {stderr}")
+        
+        # Load files for selected snapshot
+        def load_snapshot_files():
+            file_tree.clear()
+            restore_selected_btn.setEnabled(False)
+            
+            if snapshot_combo.currentIndex() < 0 or not snapshot_combo.currentData():
+                return
+            
+            snapshot_id = snapshot_combo.currentData()
+            status_label.setText(f"Loading files from snapshot {snapshot_id[:8]}...")
+            
+            loading_item = QTreeWidgetItem(["Loading...", "", "", ""])
+            file_tree.addTopLevelItem(loading_item)
+            
+            env = {"RESTIC_PASSWORD": password} if password else {}
+            args = ["-r", repo["path"], "ls", snapshot_id, "--json"]
+            
+            worker = ResticWorker(self.restic_cmd, args, env)
+            worker.finished.connect(
+                lambda success, stdout, stderr: _on_files_loaded(success, stdout, stderr, snapshot_id)
+            )
+            worker.start()
+            
+            # Store worker reference
+            dialog._files_worker = worker
+        
+        def _on_files_loaded(success, stdout, stderr, snapshot_id):
+            file_tree.clear()
+            
+            if success and stdout:
+                try:
+                    import json
+                    
+                    # Parse JSON lines
+                    items = {}
+                    file_count = 0
+                    
+                    for line in stdout.strip().split('\n'):
+                        if not line.strip():
+                            continue
+                        
+                        try:
+                            entry = json.loads(line)
+                            path = entry.get("path", "")
+                            
+                            if not path or path == "/":
+                                continue
+                            
+                            # Remove leading slash
+                            path = path.lstrip('/')
+                            
+                            # Get entry details
+                            entry_type = entry.get("type", "file")
+                            size = entry.get("size", 0)
+                            mtime = entry.get("mtime", "")[:19].replace("T", " ")
+                            
+                            # Format size
+                            size_str = self._format_size(size) if entry_type == "file" else ""
+                            
+                            # Build tree structure
+                            parts = path.split('/')
+                            current_path = ""
+                            parent = None
+                            
+                            for i, part in enumerate(parts):
+                                if not part:
+                                    continue
+                                
+                                if current_path:
+                                    current_path += "/" + part
+                                else:
+                                    current_path = part
+                                
+                                # Create item if it doesn't exist
+                                if current_path not in items:
+                                    is_last = (i == len(parts) - 1)
+                                    
+                                    if is_last:
+                                        # This is the actual entry
+                                        item = QTreeWidgetItem([
+                                            part,
+                                            size_str,
+                                            mtime,
+                                            "Folder" if entry_type == "dir" else "File"
+                                        ])
+                                    else:
+                                        # This is an intermediate directory
+                                        item = QTreeWidgetItem([part, "", "", "Folder"])
+                                    
+                                    # Store full path in first column's data
+                                    item.setData(0, Qt.ItemDataRole.UserRole, current_path)
+                                    
+                                    if parent:
+                                        parent.addChild(item)
+                                    else:
+                                        file_tree.addTopLevelItem(item)
+                                    
+                                    items[current_path] = item
+                                    
+                                    if is_last:
+                                        file_count += 1
+                                
+                                parent = items[current_path]
+                        
+                        except json.JSONDecodeError:
+                            continue
+                    
+                    status_label.setText(f"Loaded {file_count} files from snapshot {snapshot_id[:8]}")
+                    restore_selected_btn.setEnabled(True)
+                    
+                    # Sort tree
+                    file_tree.sortItems(0, Qt.SortOrder.AscendingOrder)
+                
+                except Exception as e:
+                    status_label.setText(f"Error parsing files: {str(e)}")
+                    self.log(f"File tree error: {str(e)}")
+            else:
+                status_label.setText("Failed to load files")
+                if stderr:
+                    self.log(f"File load error: {stderr}")
+        
+        # Connect signals
+        refresh_snapshots_btn.clicked.connect(load_snapshots)
+        snapshot_combo.currentIndexChanged.connect(load_snapshot_files)
+        
+        # Load initial snapshots
+        load_snapshots()
+        
+        # Show dialog
+        dialog.exec()
+    
+    def _restore_selected_from_browser(self, file_tree, snapshot_combo, repo, password, parent_dialog):
+        """Restore selected files from the browser"""
+        selected_items = file_tree.selectedItems()
+        
+        if not selected_items:
+            QMessageBox.warning(parent_dialog, "No Selection", "Please select files or folders to restore")
+            return
+        
+        snapshot_id = snapshot_combo.currentData()
+        if not snapshot_id:
+            return
+        
+        # Get paths to restore
+        paths_to_restore = []
+        for item in selected_items:
+            path = item.data(0, Qt.ItemDataRole.UserRole)
+            if path:
+                paths_to_restore.append(path)
+        
+        # Ask for restore target
+        target_dir = QFileDialog.getExistingDirectory(
+            parent_dialog,
+            "Select Restore Target Directory",
+            os.path.expanduser("~")
+        )
+        
+        if not target_dir:
+            return
+        
+        # Confirm restore
+        file_list = "\n".join([f"  • {p}" for p in paths_to_restore[:10]])
+        if len(paths_to_restore) > 10:
+            file_list += f"\n  ... and {len(paths_to_restore) - 10} more"
+        
+        result = QMessageBox.question(
+            parent_dialog,
+            "Confirm Restore",
+            f"Restore {len(paths_to_restore)} item(s) to:\n{target_dir}\n\nFiles:\n{file_list}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Perform restore
+        self.log(f"Restoring {len(paths_to_restore)} items from snapshot {snapshot_id[:8]} to {target_dir}")
+        
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", repo["path"], "restore", snapshot_id, "--target", target_dir]
+        
+        # Add include filters for selected paths
+        for path in paths_to_restore:
+            args.extend(["--include", path])
+        
+        worker = ResticWorker(self.restic_cmd, args, env, timeout=3600, use_progress=True)
+        
+        # Progress dialog
+        progress = QProgressDialog("Restoring files...", "Cancel", 0, 0, parent_dialog)
+        progress.setWindowTitle("Restore Progress")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
+        worker.progress.connect(lambda msg: progress.setLabelText(f"Restoring files...\n{msg}"))
+        worker.finished.connect(
+            lambda success, stdout, stderr: _on_restore_complete(success, stdout, stderr, progress)
+        )
+        
+        def _on_restore_complete(success, stdout, stderr, progress_dlg):
+            progress_dlg.close()
+            
+            if success:
+                QMessageBox.information(
+                    parent_dialog,
+                    "Restore Complete",
+                    f"Successfully restored {len(paths_to_restore)} item(s) to:\n{target_dir}"
+                )
+                self.log(f"Restore completed: {len(paths_to_restore)} items")
+            else:
+                QMessageBox.warning(
+                    parent_dialog,
+                    "Restore Failed",
+                    f"Failed to restore files:\n{stderr[:500]}"
+                )
+                self.log(f"Restore failed: {stderr}")
+        
+        worker.start()
+        parent_dialog._restore_worker = worker
+    
+    def _format_size(self, size_bytes):
+        """Format file size in human-readable format"""
+        if size_bytes == 0:
+            return "0 B"
+        
+        units = ["B", "KB", "MB", "GB", "TB"]
+        unit_index = 0
+        size = float(size_bytes)
+        
+        while size >= 1024 and unit_index < len(units) - 1:
+            size /= 1024
+            unit_index += 1
+        
+        if unit_index == 0:
+            return f"{int(size)} {units[unit_index]}"
+        else:
+            return f"{size:.1f} {units[unit_index]}"
+    
+    def _unmount_snapshot(self, mount_info):
+        """Unmount a mounted repository"""
+        try:
+            mount_dir = mount_info['mount_dir']
+            mount_process = mount_info['mount_process']
+            use_drive_letter = mount_info.get('use_drive_letter', False)
+            repo_name = mount_info.get('repo_name', 'repository')
+            
+            self.log(f"Unmounting '{repo_name}' from {mount_dir}...")
+            
+            # Stop the monitor thread if it exists
+            if 'monitor_thread' in mount_info:
+                monitor_thread = mount_info['monitor_thread']
+                if monitor_thread.isRunning():
+                    monitor_thread.stop()
+                    monitor_thread.wait(2000)  # Wait up to 2 seconds
+            
+            # Terminate the mount process
+            if mount_process and mount_process.poll() is None:
+                mount_process.terminate()
+                try:
+                    mount_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    mount_process.kill()
+            
+            # Clean up mount directory (only if it's a temp directory, not a drive letter)
+            time.sleep(1)  # Give it a moment to unmount
+            if not use_drive_letter:
+                try:
+                    if os.path.exists(mount_dir):
+                        shutil.rmtree(mount_dir)
+                except Exception as e:
+                    self.log(f"Warning: Could not remove mount directory: {e}")
+            
+            # Remove from tracked mounts
+            if hasattr(self, '_mounted_snapshots'):
+                if mount_info in self._mounted_snapshots:
+                    self._mounted_snapshots.remove(mount_info)
+            
+            self.log(f"Repository '{repo_name}' unmounted successfully")
+        
+        except Exception as e:
+            self.log(f"Error unmounting repository: {str(e)}")
     
     # Backup Job Management Methods
     def add_backup_job(self):
@@ -3759,10 +5158,23 @@ class ResticManagerWindow(QMainWindow):
         if job.get("exclude_if_present"):
             args.extend(["--exclude-if-present", job["exclude_if_present"]])
         
+        # Compression
+        compression = job.get("compression", "auto")
+        if compression and compression != "off":
+            args.extend(["--compression", compression])
+        
+        # No cache
+        if job.get("no_cache", False):
+            args.append("--no-cache")
+        
+        # Ignore inode
+        if job.get("ignore_inode", False):
+            args.append("--ignore-inode")
+        
         # Show progress dialog
         self._backup_progress_dialog = QDialog(self)
         self._backup_progress_dialog.setWindowTitle(f"Running Backup Job: {job['name']}")
-        self._backup_progress_dialog.setModal(True)
+        self._backup_progress_dialog.setModal(False)
         self._backup_progress_dialog.setMinimumWidth(500)
         self._backup_progress_dialog.setMinimumHeight(300)
         
@@ -3847,10 +5259,12 @@ class ResticManagerWindow(QMainWindow):
         self._backup_is_cancelled = False
         
         # Start backup
+        backup_timeout = job.get("timeout", 7200)  # Default 2 hours if not set
         self.log(f"Starting backup job: {job['name']}")
         self.log(f"Command: restic {' '.join(args)}")
+        self.log(f"Timeout: {backup_timeout} seconds ({backup_timeout // 60} minutes)")
         
-        self._backup_worker = ResticWorker(self.restic_cmd, args, env, timeout=3600, use_progress=True)
+        self._backup_worker = ResticWorker(self.restic_cmd, args, env, timeout=backup_timeout, use_progress=True)
         self._backup_worker.finished.connect(self._on_backup_completed)
         self._backup_worker.progress_data.connect(self._on_backup_progress)
         self._backup_worker.progress.connect(self._on_backup_output)
@@ -4098,6 +5512,347 @@ class ResticManagerWindow(QMainWindow):
     
     
     # Retention Methods
+    def _on_retention_frequency_changed(self, frequency):
+        """Toggle between day of week and day of month based on frequency"""
+        is_weekly = frequency == "Weekly"
+        is_monthly = frequency == "Monthly"
+        
+        # Show/hide day of week
+        if hasattr(self, 'retention_day_combo'):
+            self.retention_day_combo.setVisible(is_weekly)
+            label = self.retention_day_combo.parent().layout().labelForField(self.retention_day_combo)
+            if label:
+                label.setVisible(is_weekly)
+        
+        # Show/hide day of month
+        if hasattr(self, 'retention_dom_spin'):
+            self.retention_dom_spin.setVisible(is_monthly)
+            label = self.retention_dom_spin.parent().layout().labelForField(self.retention_dom_spin)
+            if label:
+                label.setVisible(is_monthly)
+    
+    def _get_retention_command_args(self):
+        """Build restic forget command arguments from retention settings"""
+        args = []
+        
+        # Add keep policies
+        if self.keep_last_spin.value() > 0:
+            args.extend(["--keep-last", str(self.keep_last_spin.value())])
+        if self.keep_hourly_spin.value() > 0:
+            args.extend(["--keep-hourly", str(self.keep_hourly_spin.value())])
+        if self.keep_daily_spin.value() > 0:
+            args.extend(["--keep-daily", str(self.keep_daily_spin.value())])
+        if self.keep_weekly_spin.value() > 0:
+            args.extend(["--keep-weekly", str(self.keep_weekly_spin.value())])
+        if self.keep_monthly_spin.value() > 0:
+            args.extend(["--keep-monthly", str(self.keep_monthly_spin.value())])
+        if self.keep_yearly_spin.value() > 0:
+            args.extend(["--keep-yearly", str(self.keep_yearly_spin.value())])
+        
+        # Add prune flag
+        args.append("--prune")
+        
+        return args
+    
+    def create_retention_scheduled_task(self):
+        """Create a scheduled task for retention policy"""
+        repo_name = self.retention_repo_combo.currentText()
+        if not repo_name:
+            QMessageBox.warning(self, "No Repository", "Please select a repository")
+            return
+        
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            QMessageBox.warning(self, "Repository Not Found", f"Repository '{repo_name}' not found")
+            return
+        
+        # Validate at least one retention policy is set
+        command_args = self._get_retention_command_args()
+        if len(command_args) == 1:  # Only --prune, no keep policies
+            QMessageBox.warning(
+                self, 
+                "No Retention Policies", 
+                "Please configure at least one retention policy (Keep Last, Daily, Weekly, etc.)"
+            )
+            return
+        
+        # Get schedule settings
+        frequency = self.retention_frequency_combo.currentText()
+        time = self.retention_time_edit.time()
+        day_of_week = self.retention_day_combo.currentText()
+        day_of_month = self.retention_dom_spin.value()
+        
+        # Build task name
+        task_name = f"ResticRetention_{repo_name.replace(' ', '_')}"
+        
+        # Determine platform
+        import platform
+        system = platform.system()
+        
+        if system == "Windows":
+            success = self._create_windows_scheduled_task(
+                task_name, repo, password, command_args, 
+                frequency, time, day_of_week, day_of_month
+            )
+        elif system == "Linux":
+            success = self._create_linux_cron_job(
+                task_name, repo, password, command_args,
+                frequency, time, day_of_week, day_of_month
+            )
+        elif system == "Darwin":  # macOS
+            success = self._create_macos_launchd(
+                task_name, repo, password, command_args,
+                frequency, time, day_of_week, day_of_month
+            )
+        else:
+            QMessageBox.warning(self, "Unsupported Platform", f"Scheduled tasks not supported on {system}")
+            return
+        
+        if success:
+            self.log(f"Created scheduled task: {task_name}")
+    
+    def _create_windows_scheduled_task(self, task_name, repo, password, command_args, frequency, time, day_of_week, day_of_month):
+        """Create Windows Task Scheduler task"""
+        import subprocess
+        
+        # Build restic command
+        restic_cmd = self.restic_cmd
+        full_command = f'"{restic_cmd}" -r "{repo["path"]}" forget {" ".join(command_args)}'
+        
+        # Build PowerShell script content
+        ps_script = f"""# Restic Retention Task - {repo['name']}
+$env:RESTIC_PASSWORD = "{password}"
+{full_command}
+"""
+        
+        # Save PowerShell script to temp location
+        import tempfile
+        import os
+        script_dir = os.path.join(tempfile.gettempdir(), "restic_tasks")
+        os.makedirs(script_dir, exist_ok=True)
+        script_path = os.path.join(script_dir, f"{task_name}.ps1")
+        
+        try:
+            with open(script_path, 'w') as f:
+                f.write(ps_script)
+        except Exception as e:
+            QMessageBox.critical(self, "Script Creation Failed", f"Failed to create PowerShell script:\n{e}")
+            return False
+        
+        # Build schtasks command
+        hour = time.hour()
+        minute = time.minute()
+        start_time = f"{hour:02d}:{minute:02d}"
+        
+        # Build schedule parameters
+        if frequency == "Daily":
+            schedule_params = f'/SC DAILY /ST {start_time}'
+        elif frequency == "Weekly":
+            day_map = {"Sunday": "SUN", "Monday": "MON", "Tuesday": "TUE", 
+                      "Wednesday": "WED", "Thursday": "THU", "Friday": "FRI", "Saturday": "SAT"}
+            schedule_params = f'/SC WEEKLY /D {day_map[day_of_week]} /ST {start_time}'
+        elif frequency == "Monthly":
+            schedule_params = f'/SC MONTHLY /D {day_of_month} /ST {start_time}'
+        else:
+            schedule_params = f'/SC DAILY /ST {start_time}'
+        
+        # Create task using schtasks
+        schtasks_cmd = [
+            'schtasks', '/Create',
+            '/TN', task_name,
+            '/TR', f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"',
+            '/F',  # Force create (overwrite if exists)
+            '/RL', 'HIGHEST',  # Run with highest privileges
+        ] + schedule_params.split()
+        
+        try:
+            result = subprocess.run(schtasks_cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                QMessageBox.information(
+                    self,
+                    "Task Created Successfully",
+                    f"Scheduled task '{task_name}' created successfully!\n\n"
+                    f"Schedule: {frequency} at {start_time}\n"
+                    f"Repository: {repo['name']}\n\n"
+                    f"Script location: {script_path}\n\n"
+                    f"You can view/manage it in Task Scheduler."
+                )
+                return True
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                QMessageBox.critical(
+                    self,
+                    "Task Creation Failed",
+                    f"Failed to create scheduled task:\n\n{error_msg}"
+                )
+                return False
+        except Exception as e:
+            QMessageBox.critical(self, "Task Creation Failed", f"Error creating scheduled task:\n{e}")
+            return False
+    
+    def _create_linux_cron_job(self, task_name, repo, password, command_args, frequency, time, day_of_week, day_of_month):
+        """Create Linux cron job"""
+        import subprocess
+        
+        # Build restic command
+        full_command = f'RESTIC_PASSWORD="{password}" {self.restic_cmd} -r "{repo["path"]}" forget {" ".join(command_args)}'
+        
+        # Build cron schedule
+        hour = time.hour()
+        minute = time.minute()
+        
+        if frequency == "Daily":
+            cron_schedule = f"{minute} {hour} * * *"
+        elif frequency == "Weekly":
+            day_map = {"Sunday": "0", "Monday": "1", "Tuesday": "2", 
+                      "Wednesday": "3", "Thursday": "4", "Friday": "5", "Saturday": "6"}
+            cron_schedule = f"{minute} {hour} * * {day_map[day_of_week]}"
+        elif frequency == "Monthly":
+            cron_schedule = f"{minute} {hour} {day_of_month} * *"
+        else:
+            cron_schedule = f"{minute} {hour} * * *"
+        
+        # Build cron entry with comment
+        cron_entry = f"# {task_name}\n{cron_schedule} {full_command}\n"
+        
+        # Show cron entry to user for manual addition
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Cron Job Configuration")
+        msg.setText("Add the following line to your crontab:\n\n(Run 'crontab -e' in terminal)")
+        msg.setDetailedText(cron_entry)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        
+        # Add copy button
+        copy_btn = msg.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(cron_entry))
+        
+        msg.exec()
+        
+        self.log(f"Cron job details provided for {task_name}")
+        return True
+    
+    def _create_macos_launchd(self, task_name, repo, password, command_args, frequency, time, day_of_week, day_of_month):
+        """Create macOS launchd plist"""
+        # Similar to Linux - provide instructions for manual setup
+        full_command = f'RESTIC_PASSWORD="{password}" {self.restic_cmd} -r "{repo["path"]}" forget {" ".join(command_args)}'
+        
+        hour = time.hour()
+        minute = time.minute()
+        
+        # Build launchd plist
+        plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.restic.{task_name}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>{full_command}</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>{hour}</integer>
+        <key>Minute</key>
+        <integer>{minute}</integer>
+    </dict>
+</dict>
+</plist>
+"""
+        
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("LaunchAgent Configuration")
+        msg.setText(f"Save the following as:\n~/Library/LaunchAgents/com.restic.{task_name}.plist\n\nThen run:\nlaunchctl load ~/Library/LaunchAgents/com.restic.{task_name}.plist")
+        msg.setDetailedText(plist_content)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        
+        copy_btn = msg.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(plist_content))
+        
+        msg.exec()
+        
+        self.log(f"LaunchAgent details provided for {task_name}")
+        return True
+    
+    def open_task_scheduler(self):
+        """Open Task Scheduler GUI"""
+        import platform
+        import subprocess
+        
+        system = platform.system()
+        
+        try:
+            if system == "Windows":
+                subprocess.Popen(['taskschd.msc'])
+                self.log("Opened Task Scheduler")
+            elif system == "Linux":
+                # Try various cron GUIs
+                for cmd in ['gnome-schedule', 'kcron', 'crontab -e']:
+                    try:
+                        if ' ' in cmd:
+                            subprocess.Popen(cmd.split())
+                        else:
+                            subprocess.Popen([cmd])
+                        self.log(f"Opened cron editor: {cmd}")
+                        return
+                    except:
+                        continue
+                QMessageBox.information(self, "No GUI Available", "Please use 'crontab -e' in terminal to manage cron jobs")
+            elif system == "Darwin":
+                QMessageBox.information(self, "No GUI Available", "Please manage LaunchAgents manually in ~/Library/LaunchAgents/")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to open task scheduler:\n{e}")
+    
+    def delete_retention_scheduled_task(self):
+        """Delete scheduled retention task"""
+        repo_name = self.retention_repo_combo.currentText()
+        if not repo_name:
+            QMessageBox.warning(self, "No Repository", "Please select a repository")
+            return
+        
+        task_name = f"ResticRetention_{repo_name.replace(' ', '_')}"
+        
+        reply = QMessageBox.question(
+            self,
+            "Delete Scheduled Task",
+            f"Delete scheduled task '{task_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.No:
+            return
+        
+        import platform
+        import subprocess
+        
+        system = platform.system()
+        
+        try:
+            if system == "Windows":
+                result = subprocess.run(
+                    ['schtasks', '/Delete', '/TN', task_name, '/F'],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    QMessageBox.information(self, "Task Deleted", f"Scheduled task '{task_name}' deleted successfully")
+                    self.log(f"Deleted scheduled task: {task_name}")
+                else:
+                    error_msg = result.stderr if result.stderr else "Task not found"
+                    QMessageBox.warning(self, "Delete Failed", f"Failed to delete task:\n{error_msg}")
+            else:
+                QMessageBox.information(
+                    self, 
+                    "Manual Deletion Required", 
+                    f"Please manually remove the cron job for '{task_name}'\n\nRun: crontab -e"
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to delete task:\n{e}")
+    
     def apply_retention(self, dry_run=True):
         """Apply retention policy"""
         repo_name = self.retention_repo_combo.currentText()
@@ -4156,6 +5911,255 @@ class ResticManagerWindow(QMainWindow):
         
         QMessageBox.information(self, "Success", "Settings saved successfully!")
         self.log("Settings saved")
+    
+    # System Dependencies Methods
+    def check_restic_installation(self):
+        """Check if Restic is installed and accessible"""
+        import platform
+        
+        try:
+            # Verify UI elements exist
+            if not hasattr(self, 'restic_status_label'):
+                self.log("ERROR: restic_status_label widget not found!")
+                return
+            
+            self.log("Starting restic installation check...")
+            self.restic_status_label.setText("Checking...")
+            self.restic_status_label.setStyleSheet("")
+            self.restic_check_btn.setEnabled(False)
+            self.restic_install_btn.setVisible(False)
+            QApplication.processEvents()
+            
+            # Try the configured path first
+            restic_path = self.settings_manager.get("restic_path")
+            
+            self.log(f"Checking restic at: {restic_path}")
+            
+            # Use shell=True on Windows for better PATH resolution
+            use_shell = platform.system() == "Windows"
+            
+            # Use longer timeout and explicit error handling
+            result = subprocess.run(
+                [restic_path, "version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                shell=use_shell,
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+            )
+            
+            self.log(f"Restic check completed: returncode={result.returncode}")
+            
+            if result.returncode == 0 and result.stdout:
+                # Extract version
+                version_line = result.stdout.strip().split('\n')[0]
+                self.restic_status_label.setText(f"✓ Installed: {version_line}")
+                self.restic_status_label.setStyleSheet("color: green; font-weight: bold;")
+                self.restic_install_btn.setVisible(False)
+                self.log(f"Restic check SUCCESS: {version_line}")
+            else:
+                # Command ran but failed
+                error_msg = result.stderr if result.stderr else "Command returned error"
+                self.restic_status_label.setText("✗ Check failed")
+                self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+                self.restic_install_btn.setVisible(True)
+                self.log(f"Restic check FAILED: {error_msg}")
+        
+        except subprocess.TimeoutExpired:
+            self.restic_status_label.setText("✗ Check timed out")
+            self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.restic_install_btn.setVisible(True)
+            self.log("Restic check TIMEOUT after 10 seconds")
+        
+        except FileNotFoundError as e:
+            self.restic_status_label.setText("✗ Not found in PATH")
+            self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.restic_install_btn.setVisible(True)
+            self.log(f"Restic executable NOT FOUND: {restic_path}")
+            self.log(f"FileNotFoundError: {str(e)}")
+            self.log("Try: 1) Installing restic, or 2) Setting full path in Settings (e.g., C:\\\\Program Files\\\\restic\\\\restic.exe)")
+        
+        except Exception as e:
+            self.restic_status_label.setText(f"✗ Error: {str(e)[:30]}")
+            self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.restic_install_btn.setVisible(True)
+            self.log(f"Restic check EXCEPTION: {type(e).__name__}: {str(e)}")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}")
+        
+        finally:
+            self.restic_check_btn.setEnabled(True)
+            QApplication.processEvents()
+            self.log("Restic check completed (finally block)")
+    
+    def install_restic(self):
+        """Install Restic using winget (Windows) or apt (Linux)"""
+        import platform
+        system = platform.system()
+        
+        if system == "Windows":
+            self._install_with_winget("restic")
+        elif system == "Linux":
+            self._install_with_apt("restic")
+        else:
+            QMessageBox.information(
+                self,
+                "Manual Installation Required",
+                f"Automatic installation is not supported on {system}.\n\n"
+                "Please install Restic manually:\n"
+                "macOS: brew install restic\n"
+                "Or download from: https://restic.net/"
+            )
+    
+    
+    def _install_with_winget(self, package_name):
+        """Install a package using Windows Package Manager (winget)"""
+        # Map package names
+        package_map = {
+            "restic": "restic.restic",
+            "WinFsp.WinFsp": "WinFsp.WinFsp"
+        }
+        
+        winget_package = package_map.get(package_name, package_name)
+        
+        reply = QMessageBox.question(
+            self,
+            "Install with winget",
+            f"This will install {package_name} using Windows Package Manager (winget).\n\n"
+            "A PowerShell window will open. You may need to accept UAC prompts.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        try:
+            self.log(f"Starting winget installation of {winget_package}")
+            
+            # Create a simple PowerShell script
+            ps_script = f"""
+Write-Host "Installing {winget_package}..." -ForegroundColor Cyan
+Write-Host ""
+winget install --id {winget_package} --accept-package-agreements --accept-source-agreements
+Write-Host ""
+Write-Host "Installation complete!" -ForegroundColor Green
+Write-Host ""
+Write-Host "Press any key to close this window..."
+$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+"""
+            
+            # Save script to temp file
+            import tempfile
+            import os
+            temp_dir = tempfile.gettempdir()
+            script_path = os.path.join(temp_dir, f"install_{winget_package.replace('.', '_')}.ps1")
+            
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(ps_script)
+            
+            self.log(f"Created install script: {script_path}")
+            
+            # Launch PowerShell with the script
+            subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-ExecutionPolicy", "Bypass",
+                    "-NoProfile",
+                    "-File", script_path
+                ],
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+            
+            QMessageBox.information(
+                self,
+                "Installation Started",
+                f"Installation of {winget_package} has started in a new window.\n\n"
+                "Please accept any UAC prompts and follow the installation.\n\n"
+                "After installation completes, click 'Check' to verify."
+            )
+            
+            self.log(f"Launched winget installation of {winget_package}")
+        
+        except Exception as e:
+            error_msg = str(e)
+            QMessageBox.warning(
+                self,
+                "Installation Failed",
+                f"Failed to start installation:\n{error_msg}\n\n"
+                "Please install manually or check if winget is available.\n\n"
+                "You can also install manually from:\n"
+                f"- Restic: https://restic.net/\n"
+                f"- WinFsp: https://winfsp.dev/"
+            )
+            self.log(f"Failed to install {winget_package}: {error_msg}")
+    
+    def _install_with_apt(self, package_name):
+        """Install a package using apt (Linux)"""
+        reply = QMessageBox.question(
+            self,
+            "Install with apt",
+            f"This will install {package_name} using apt package manager.\n\n"
+            "A terminal window will open. You may need to enter your password.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        try:
+            # Try to find a suitable terminal emulator
+            terminals = [
+                'gnome-terminal',
+                'konsole',
+                'xfce4-terminal',
+                'xterm'
+            ]
+            
+            terminal_cmd = None
+            for term in terminals:
+                try:
+                    subprocess.run(['which', term], capture_output=True, check=True)
+                    terminal_cmd = term
+                    break
+                except:
+                    continue
+            
+            if not terminal_cmd:
+                raise Exception("No suitable terminal emulator found")
+            
+            # Build command based on terminal type
+            if terminal_cmd == 'gnome-terminal':
+                cmd = [terminal_cmd, '--', 'bash', '-c', 
+                       f'sudo apt update && sudo apt install -y {package_name}; echo "\\nInstallation complete. Press Enter to close."; read']
+            elif terminal_cmd == 'konsole':
+                cmd = [terminal_cmd, '-e', 'bash', '-c',
+                       f'sudo apt update && sudo apt install -y {package_name}; echo "\\nInstallation complete. Press Enter to close."; read']
+            else:
+                cmd = [terminal_cmd, '-e', 'bash', '-c',
+                       f'sudo apt update && sudo apt install -y {package_name}; echo "\\nInstallation complete. Press Enter to close."; read']
+            
+            subprocess.Popen(cmd)
+            
+            QMessageBox.information(
+                self,
+                "Installation Started",
+                f"Installation of {package_name} has started in a new terminal.\n\n"
+                "Please follow the prompts and enter your password if requested.\n\n"
+                "After installation completes, click 'Check' to verify."
+            )
+            
+            self.log(f"Started apt installation of {package_name}")
+        
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Installation Failed",
+                f"Failed to start installation:\n{str(e)}\n\n"
+                "Please install manually using:\nsudo apt install {package_name}"
+            )
+            self.log(f"Failed to install {package_name}: {str(e)}")
     
     # License Management Methods
     def refresh_license_status(self):
@@ -5026,8 +7030,8 @@ class ResticManagerWindow(QMainWindow):
                         label.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {colors['name_color']};")
                         
     # Utility Methods
-    def check_restic_installation(self):
-        """Check if Restic is installed and accessible"""
+    def _check_restic_at_startup(self):
+        """Check if Restic is installed and accessible (startup check only)"""
         version = self.restic_cmd.version()
         if version:
             self.log(f"Restic found: {version}")
@@ -5076,6 +7080,94 @@ class ResticManagerWindow(QMainWindow):
     def clear_logs(self):
         """Clear log viewer"""
         self.log_viewer.clear()
+    
+    def closeEvent(self, event):
+        """Handle application close - cleanup mounted repositories and running threads"""
+        # Check if any critical operations are running
+        running_operations = []
+        
+        # Check for running backup
+        if hasattr(self, '_backup_worker') and self._backup_worker.isRunning():
+            running_operations.append("Backup job")
+        
+        # Check for running restore
+        if hasattr(self, '_restore_worker') and self._restore_worker.isRunning():
+            running_operations.append("Restore operation")
+        
+        # Check for running copy
+        if hasattr(self, '_copy_worker') and self._copy_worker.isRunning():
+            running_operations.append("Copy operation")
+        
+        # Warn about running operations
+        if running_operations:
+            reply = QMessageBox.question(
+                self,
+                "Operations In Progress",
+                f"The following operations are still running:\n• " + "\n• ".join(running_operations) + 
+                "\n\nClosing now may leave the repository in a locked state.\n\n"
+                "Do you want to close anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.No:
+                event.ignore()
+                return
+        
+        # Unmount any mounted repositories
+        if hasattr(self, '_mounted_snapshots') and self._mounted_snapshots:
+            reply = QMessageBox.question(
+                self,
+                "Mounted Repositories",
+                f"There are {len(self._mounted_snapshots)} mounted repository/repositories.\n\n"
+                "Do you want to unmount them before closing?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                for mount_info in self._mounted_snapshots.copy():
+                    self._unmount_snapshot(mount_info)
+        
+        # Wait for all worker threads to finish (with timeout)
+        self._cleanup_worker_threads()
+        
+        event.accept()
+    
+    def _cleanup_worker_threads(self):
+        """Clean up all running worker threads before application exit"""
+        worker_attrs = [
+            '_snapshot_worker', '_restore_snapshot_worker', '_browse_files_worker',
+            '_diff_worker', '_forget_worker', '_copy_worker', '_prune_worker',
+            '_unlock_worker', '_stats_worker', '_verify_worker', '_restore_worker',
+            '_backup_worker', '_init_worker', '_test_worker', '_lock_check_worker',
+            '_auto_unlock_worker', '_cancel_unlock_worker'
+        ]
+        
+        threads_to_wait = []
+        
+        for attr in worker_attrs:
+            if hasattr(self, attr):
+                worker = getattr(self, attr)
+                if isinstance(worker, QThread) and worker.isRunning():
+                    threads_to_wait.append(worker)
+        
+        # Also wait for content workers
+        if hasattr(self, '_content_workers'):
+            for worker in self._content_workers:
+                if isinstance(worker, QThread) and worker.isRunning():
+                    threads_to_wait.append(worker)
+        
+        # Wait for all threads with a reasonable timeout
+        if threads_to_wait:
+            for thread in threads_to_wait:
+                # Try to quit gracefully first
+                thread.quit()
+                thread.wait(1000)  # Wait 1 second per thread
+                
+                # If still running, terminate
+                if thread.isRunning():
+                    thread.terminate()
+                    thread.wait(500)  # Wait another 500ms after termination
+
 
 def show_exception_dialog(exc_type, exc_value, exc_traceback):
     """
@@ -5191,12 +7283,27 @@ def run_job_cli(job_name):
         if job.get("exclude_if_present"):
             args.extend(["--exclude-if-present", job["exclude_if_present"]])
         
+        # Compression
+        compression = job.get("compression", "auto")
+        if compression and compression != "off":
+            args.extend(["--compression", compression])
+        
+        # No cache
+        if job.get("no_cache", False):
+            args.append("--no-cache")
+        
+        # Ignore inode
+        if job.get("ignore_inode", False):
+            args.append("--ignore-inode")
+        
         print(f"[Restic Manager CLI] Running backup...")
         print(f"[Restic Manager CLI] Repository: {repo['path']}")
         print(f"[Restic Manager CLI] Paths: {', '.join(job['paths'])}")
         
         # Run backup
-        success, stdout, stderr = restic_cmd.run(args, env, timeout=7200)  # 2 hour timeout
+        backup_timeout = job.get("timeout", 7200)  # Default 2 hours if not set
+        print(f"[Restic Manager CLI] Timeout: {backup_timeout} seconds ({backup_timeout // 60} minutes)")
+        success, stdout, stderr = restic_cmd.run(args, env, timeout=backup_timeout)
         
         # Update last run time in job
         if job.get("schedule"):

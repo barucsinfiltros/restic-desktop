@@ -2,6 +2,64 @@
 
 A PyQt6 GUI application for managing Restic backups with a familiar interface similar to your Network Management Tool.
 
+## What's New in Recent Updates
+
+### Automated Retention Scheduling ✨ NEW
+- 📅 **Task Scheduler Integration**: Create scheduled tasks to automatically clean up old snapshots
+- 🪟 **Windows Task Scheduler**: One-click task creation with `schtasks.exe`
+- 🐧 **Linux Cron**: Auto-generates cron job configuration for easy setup
+- 🍎 **macOS LaunchAgent**: Provides ready-to-use launchd plist files
+- ⏰ **Flexible Scheduling**: Choose Daily, Weekly, or Monthly retention runs
+- 🕐 **Custom Time Selection**: Pick exact time (e.g., 2:00 AM for off-hours cleanup)
+- 📆 **Day Selection**: Specify day of week (Weekly) or day of month (Monthly)
+- ⚙️ **Independent Operation**: Scheduled tasks run even when app is closed
+- 🗑️ **Task Management**: View, create, and delete scheduled tasks from the app
+- 🔧 **Auto-Generated Scripts**: PowerShell scripts (Windows) with embedded restic commands
+- ℹ️ **Best Practice Design**: Separates backup frequency from retention cleanup (run backups often, cleanup weekly)
+
+### Enhanced Snapshot Browsing ✨ NEW
+- 🌳 **Hierarchical Tree View**: Browse snapshot contents in a natural folder structure (QTreeView)
+- 📂 **Expandable Folders**: Navigate directory trees with expand/collapse controls
+- 🔍 **Smart Tree Filtering**: Search auto-expands matching folders and shows parent hierarchy
+- 📊 **Multi-Column Display**: View file names, types, sizes, dates, and permissions at a glance
+- 🎨 **Color-Coded Items**: Folders in blue, sortable columns, alternating row colors
+- ✅ **Multi-Select**: Select multiple files/folders to copy paths at once
+
+### System Dependencies Management ✨ NEW
+- 🔍 **Automatic Dependency Checking**: Check if Restic is installed with one click
+- 📦 **One-Click Installation**: Install Restic directly from the Settings page
+- 🪟 **Windows**: Uses `winget` (Windows Package Manager) for easy installation
+- 🐧 **Linux**: Uses `apt` package manager with terminal guidance
+- ✅ **Status Indicators**: Real-time status showing installed versions or missing packages
+- 🔄 **Quick Verification**: Instantly verify installations after setup
+
+### File Restore & Browse Features ✨ NEW
+- 📂 **Full Restore Functionality**: Restore files from any snapshot to any location
+- 🗂️ **Browse Snapshot Contents**: View all files before restoring in a hierarchical tree view
+- � **Browse Files**: Interactive snapshot browser using JSON API - no mounting required
+- 📊 **Snapshot Selector**: Choose from all available snapshots with date/time/host information
+- 🌳 **Hierarchical File Tree**: Browse repository contents in natural folder structure
+- 📁 **File Details**: View file names, sizes, modification times, and types
+- ✅ **Multi-Select Restore**: Select specific files/folders and restore them with one click
+- ⚡ **Fast & Lightweight**: Uses `restic ls --json` for instant browsing (no FUSE/mount overhead)
+- 🎯 **Path-Specific Restore**: Restore individual files/folders or entire snapshots
+- 🚫 **No External Dependencies**: Works with standard restic installation - no WinFsp or FUSE required
+
+### Performance & UX Improvements
+- ⚡ **Smart Dashboard Caching**: Dashboard loads instantly after first view - no more waiting when switching menus!
+- 🔓 **Non-Modal Backup Progress**: Continue using the app while backups run in the background
+- 🎚️ **Configurable Timeouts**: Set backup timeouts in hours (not seconds!) per job - no more 1-hour limit
+- 📜 **Scrollable Backup Dialog**: All options neatly organized in a scrollable interface
+- 📦 **Copy Snapshots Between Repos**: Fix backup mistakes by moving snapshots to the correct repository
+- 📊 **Comprehensive Repository Stats**: Detailed breakdown showing Original Data Size, Repository Size, Total Saved (dedup+compression), and storage efficiency ratio - no more confusing stats!
+
+### Enhanced Backup Options
+- 🗜️ **Compression Control**: Choose off/auto/max compression per backup job
+- 💾 **No Cache Option**: Disable local cache to save disk space
+- 🔢 **Ignore Inode**: Handle inode changes for specific filesystems
+- ⏱️ **Smart Timeout Management**: Customize timeout for each backup job based on data size
+- 📦 **Pack Size Options**: Select from optimized pack sizes (16MB/32MB/64MB/128MB, default: 16MB)
+
 ## Current Implementation (v1.3.0)
 
 ### ✅ Completed Features
@@ -42,7 +100,10 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - Ready!
 
 - **8 Main Pages**:
-  1. Dashboard - Statistics, repository stats, and recent activity overview
+  1. **Dashboard** - Statistics, repository stats, and recent activity overview
+     - **Smart Caching**: Dashboard loads instantly after first view
+     - **Manual Refresh**: "Refresh Dashboard" button to update stats on demand
+     - No delays when switching between menus
   2. Repositories - Manage backup repositories
   3. Snapshots - Browse, view, restore, and manage snapshots
   4. Restore Files - Restore from backups
@@ -78,14 +139,24 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - Statistics (files, directories, total size)
   - Parent snapshot ID
   - Restic version
-- **Browse Content**: View files within a snapshot
+- **Browse Content**: View files within a snapshot with hierarchical tree view ✨ ENHANCED
+  - **Tree View Structure**: Files and folders displayed in hierarchical tree (QTreeView)
+  - **Expandable/Collapsible Folders**: Navigate directory structure naturally
+  - **Smart Columns**: Name, Type, Size, Modified Date, Permissions
   - Background loading with `restic ls --long`
-  - File tree with paths, permissions, size, modification date
+  - **Tree Controls**:
+    - Expand All / Collapse All buttons for quick navigation
+    - Click folders to expand/collapse individual branches
+    - Alternating row colors for better readability
+    - Sortable columns (click headers to sort)
   - **Advanced Search & Filter**:
-    - Contains / Not Contains modes
-    - AND operator (&) - all terms must match
-    - OR operator (|) - any term can match
-    - Real-time filtering
+    - Real-time tree filtering (shows matching items and their parents)
+    - Auto-expands matching folders when searching
+    - Simple text search (matches folder and file names)
+  - **Multi-Select Support**: Select multiple files/folders with Ctrl/Shift
+  - **Copy Path(s)**: Copy full paths of selected items to clipboard
+  - **Color-Coded**: Folders displayed in blue, files in default color
+  - **Refresh Button**: Reload snapshot contents on demand
 - **Diff Snapshots**: Compare changes between snapshots ✅ FULLY IMPLEMENTED
   - Executes `restic diff` command in background
   - Shows actual diff output (added, modified, removed files)
@@ -93,11 +164,103 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - Compares selected snapshot with previous (older) snapshot
   - Monospaced font for easy reading
   - Correct chronological comparison (oldest to newest)
+- **Copy to Repository**: Move/copy snapshots between repositories ✅ NEW
+  - Copy snapshots that were backed up to the wrong repository
+  - Select destination repository from dropdown
+  - **Configurable timeout** (0-24 hours, 0 = no limit)
+  - Option to delete from source after successful copy (copy-then-delete operation)
+  - **Real-time progress display** shows all output from restic
+  - **Non-modal dialog** - access main GUI while copy runs
+  - Uses `restic copy --repo2` command
+  - Handles separate passwords for source and destination repos
+  - Detailed error messages if copy fails
+  - Perfect for correcting backup mistakes or consolidating backups
 - **Forget/Delete**: Mark snapshots for deletion with confirmation
 - **Prune Repository**: Remove unreferenced data to free disk space
 - **Unlock Repository**: Clear stale locks with confirmation dialog
   - Handles repository locks from interrupted operations
   - Confirmation before unlocking
+
+#### Restore Files ✅ FULLY IMPLEMENTED
+- **Snapshot Selection**: Choose repository and snapshot to restore from
+  - Automatic loading of snapshots with details (ID, date, hostname, paths)
+  - Sorted by most recent first for easy access
+- **Path-Based Restore**: Restore specific files/folders or entire snapshots
+  - Leave path empty to restore all files
+  - Specify a path to restore only that file/folder
+- **Target Directory**: Select where to restore files
+  - Browse button for easy directory selection
+  - Files restored with original directory structure
+- **Browse Snapshot Contents**: View all files in a snapshot before restoring
+  - Displays complete file tree from `restic ls`
+  - Copyable paths to paste into "Path to Restore" field
+- **Browse Files** ✨ NEW FEATURE (replaces mount-based browsing):
+  - **Interactive snapshot browser** - Browse ALL snapshots using restic's JSON API
+  - **No mounting required** - Works without FUSE, WinFsp, or any external dependencies
+  - **Snapshot dropdown**: Select from all available snapshots with full metadata
+    - Shows: Date/Time | Hostname | Backup paths
+    - Most recent snapshots first
+  - **Hierarchical file tree**: Natural folder structure with expand/collapse
+  - **File information display**:
+    - File/folder names
+    - Human-readable sizes (KB, MB, GB)
+    - Modification timestamps
+    - File type indicators (File/Folder)
+  - **Multi-select restore**: Select specific files/folders and restore with one click
+  - **Fast & efficient**: Uses `restic snapshots --json` and `restic ls --json`
+    - No FUSE overhead
+    - Direct JSON parsing for instant results
+    - Much faster than traditional mount for large repositories
+  - **Cross-platform**: Identical experience on Windows, Linux, and macOS
+  - **Refresh capability**: Reload snapshot list or file tree on demand
+  - **Built-in restore**: Select items → Choose target → Restore
+  - **✅ Zero dependencies**: Only requires restic installation
+- **Real-Time Restore Progress**:
+  - Progress bar during restore operations
+  - Detailed log output showing restored files
+  - Success/failure notifications
+  - Error details if restore fails
+- **Restore Confirmation**: Confirms before starting restore to prevent accidents
+
+#### Retention Policy & Automated Scheduling ✅ FULLY IMPLEMENTED
+- **Retention Configuration**: Define snapshot retention rules
+  - Keep Last: Keep the last N snapshots
+  - Keep Hourly: Keep hourly snapshots
+  - Keep Daily: Keep daily snapshots (default: 7)
+  - Keep Weekly: Keep weekly snapshots (default: 4)
+  - Keep Monthly: Keep monthly snapshots (default: 12)
+  - Keep Yearly: Keep yearly snapshots
+- **Manual Execution**: 
+  - **Dry Run (Preview)**: See what would be deleted without making changes
+  - **Apply Policy**: Execute retention policy with `restic forget --prune`
+  - Real-time output showing deleted snapshots and space reclaimed
+- **Automated Scheduling** ✨ NEW:
+  - **Task Scheduler Integration**: Create system-level scheduled tasks
+  - **Windows**: Creates Task Scheduler tasks using `schtasks.exe`
+    - Generates PowerShell script with embedded restic command
+    - Stores scripts in temp directory for persistence
+    - Tasks run with highest privileges for repository access
+  - **Linux**: Generates cron job configuration
+    - Copy-to-clipboard functionality for easy setup
+    - Standard crontab format
+  - **macOS**: Provides launchd plist configuration
+    - Ready-to-use LaunchAgent files
+  - **Schedule Options**:
+    - Frequency: Daily, Weekly, or Monthly
+    - Time: Pick exact time (24-hour format, default: 2:00 AM)
+    - Day of Week: Choose day for weekly runs (default: Sunday)
+    - Day of Month: Select date (1-28) for monthly runs
+  - **Task Management**:
+    - **Create Scheduled Task**: One-click task creation
+    - **View Tasks**: Opens Task Scheduler / cron editor
+    - **Delete Task**: Remove scheduled retention tasks
+  - **Task Naming**: Auto-generated names like `ResticRetention_RepositoryName`
+  - **Independent Operation**: Tasks run even when application is closed
+  - **Best Practice Design**: 
+    - Run backups frequently (hourly/daily)
+    - Run retention cleanup less often (weekly/monthly)
+    - Reduces backup time and system load
+    - Cleanup during off-hours (nights/weekends)
 
 #### Backup Jobs System ✅ FULLY IMPLEMENTED
 - **Persistent Job Storage**: Save backup configurations to settings.json
@@ -111,6 +274,10 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - **Edit Existing Jobs**: Modify saved job configurations
 - **Delete Jobs**: Remove saved jobs with confirmation
 - **Run Jobs**: Execute saved backup jobs with real-time progress
+- **Non-Modal Progress Dialog**: Access main GUI while backups run
+  - Dialog stays on top but doesn't block the main window
+  - Start multiple operations while backup runs
+  - Monitor progress without being locked in
 - **Job List View**: Table showing all saved backup jobs with name, repository, paths, and tags
 
 #### Real-Time Backup Progress ✅ FULLY IMPLEMENTED
@@ -137,22 +304,91 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 #### Advanced Backup Options ✅ FULLY IMPLEMENTED
 - **--exclude-caches**: Checkbox option (default: enabled)
-- **--pack-size**: Configurable pack size (0-1024 MB, 0 = default)
+- **--pack-size**: Pack size dropdown with options: 16MB, 32MB, 64MB, 128MB (default: 16MB)
 - **--one-file-system**: Stay on same filesystem checkbox
 - **--exclude-if-present**: Exclude directories with marker file (e.g., `.nobackup`)
+- **Backup Timeout**: Configurable timeout in hours (0 = no timeout, default: 2 hours)
+  - User-friendly hour-based input (no need to calculate seconds)
+  - Prevents timeout on large backup jobs
+  - Can be customized per backup job
+- **--compression**: Compression level dropdown (off, auto, max)
+  - `off`: No compression
+  - `auto`: Automatic compression (default)
+  - `max`: Maximum compression
+- **--no-cache**: Disable local cache checkbox
+  - Slower but uses less disk space
+  - Useful for systems with limited storage
+- **--ignore-inode**: Ignore inode number changes checkbox
+  - Useful for certain filesystems or backup scenarios
 - Standard exclude patterns support
 - Tags support
 - Multiple path selection
+- **Scrollable Job Dialog**: All backup options in a scrollable interface
+  - No more squished or cut-off options
+  - Buttons always visible at bottom
+  - Clean, organized layout
 
-#### Repository Statistics & Verification ✅ NEW
-- **Dashboard Repository Stats**:
+#### Repository Statistics & Verification ✅ FULLY IMPLEMENTED
+- **Comprehensive Dashboard Repository Stats**:
   - Repository selector dropdown
-  - Refresh Stats button
-  - Display area for stats (template shows: total size, file count, snapshot count, version, compression ratio)
+  - Refresh Stats button for on-demand updates
+  - **Detailed statistics display**:
+    - **Snapshots count**: Total number of snapshots
+    - **Last backup**: Date/time of most recent backup
+    - **Total files**: Number of files across all snapshots
+    - **Storage Breakdown Section**:
+      - **Original Data Size**: Total size before deduplication/compression
+      - **Repository Size**: Actual storage used (after deduplication + compression)
+      - **Total Saved**: Space saved with percentage (includes both deduplication AND compression)
+      - **Storage efficiency ratio**: Shows compression factor (e.g., 0.25x = storing 25% of original)
+    - **Last prune**: Days since last prune operation
+    - **Corruption status**: Link to verify repository integrity
+  - Multi-step background loading for accurate statistics
+  - Clear breakdown prevents confusion between deduplication and compression
+  - Uses `restic stats --mode raw-data` and `--mode restore-size` for accurate calculations
 - **Verify Repository**:
   - Data verification button
   - Confirmation dialog before running check
   - Template ready for `restic check --read-data`
+
+#### Settings & Configuration ✅ FULLY IMPLEMENTED
+- **Application Settings**:
+  - **Restic Path**: Configure path to Restic executable with browse button
+  - **Theme Selection**: Choose from 25 different themes
+  - **Auto Refresh Snapshots**: Toggle automatic snapshot refresh
+  - **Refresh Interval**: Set refresh interval (10-3600 seconds)
+  - Save button to persist all settings
+- **System Dependencies** ✨ NEW:
+  - **Restic Installation Check**:
+    - Automatically detects if Restic is installed
+    - Shows version information if found
+    - One-click check to revalidate installation
+    - **Install button** for missing Restic:
+      - Windows: Uses `winget install restic`
+      - Linux: Uses `sudo apt install restic`
+      - Opens terminal with installation commands
+  - **Cross-Platform Support**:
+    - Windows: winget-based installations with admin prompts
+    - Linux: apt-based installations with terminal and sudo
+    - macOS: Manual installation guidance (Homebrew commands)
+  - **Real-Time Status Updates**:
+    - Green checkmark (✓) for installed software
+    - Red X (✗) for missing software
+    - Version information displayed
+    - Auto-check on page load
+- **License Management**:
+  - View current license status with color coding
+  - Display Machine ID with copy button
+  - Update license key with activation dialog
+  - Refresh license status
+  - **Anti-Tampering Protection**:
+    - Clock rollback detection prevents date manipulation
+    - Cryptographic signature validation
+    - Machine-specific binding
+- **About Section**:
+  - Application version display
+  - Copyright information
+  - Project description
 
 ### 🚧 To Be Implemented
 
@@ -184,8 +420,11 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
    - Cron-like scheduler UI
    - Schedule management for backup jobs
    - Automated backup execution
+   - NOTE: **Retention scheduling is now implemented!** See Retention Policy page for automated cleanup scheduling
 
-6. **Enhanced Dashboard**
+6. **Enhanced Dashboard** (Partially Complete)
+   - ✅ Smart caching for instant loading
+   - ✅ Manual refresh button for on-demand updates
    - Calculate total repositories
    - Count total snapshots across all repos
    - Calculate total backup size
@@ -200,7 +439,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
     - Backup statistics and charts
     - Email notifications
     - Export/import settings
-    - Mount snapshots (if supported on Windows)
+    - Snapshot browsing and file-level restore
 
 ## Directory Structure
 
@@ -293,14 +532,7 @@ On first run, the application requires a valid license key:
    - Check **Show password** if you want to verify it
    - Optionally check **Initialize repository now** for new repos
 4. Click **OK**
-
-Your password is now encrypted and stored securely! 🔒
-
-### Configuring a Backup Job
-
-1. Click **Backup Jobs** in the sidebar
-2. Click **Create Job** button
-3. In the dialog:
+scrollable dialog:
    - Enter a **Job Name** (e.g., "Daily Documents Backup")
    - Select your repository from the dropdown
    - Click **Add Path** to add directories to backup
@@ -308,13 +540,28 @@ Your password is now encrypted and stored securely! 🔒
    - Add exclude patterns (one per line)
    - Configure **Advanced Options**:
      - ✅ Exclude Caches (recommended)
-     - Set Pack Size if needed (0 = default)
+     - **Pack Size** (16MB/32MB/64MB/128MB, default: 16MB)
      - One File System (stay on same drive)
+     - **Backup Timeout** (in hours, 0 = no timeout)
      - Exclude If Present (marker file like .nobackup)
-4. Click **OK** to save the job
-
-### Running a Backup
-
+     - **Compression** (off/auto/max)
+     - **No Cache** (use less disk space)
+     - **Ignore Inode** (for certain filesystems)
+4. Scroll through all options (dialog is fully scrollable)
+5  - Optionally add tags (comma-separated)
+   - Add exclude patterns (one per line)
+   - Configure **Advanced Options**:
+     - ✅ Exclude Caches (recommended)
+     - Set Pack Size if needed (0 = default)
+   **Non-modal progress window** appears (main GUI remains accessible):
+   - Progress bar with percentage
+   - Files and bytes processed
+   - ETA (estimated time remaining)
+   - Current files being backed up
+   - Real-time output from Restic
+5. **Continue working**: Navigate to other pages, check snapshots, etc.
+6. Click **Cancel** to stop the backup (repository will auto-unlock)
+7. Backup respects your configured timeout (no more 1-hour hardcoded limit!
 1. Click **Backup Jobs** in the sidebar
 2. Select a saved job from the list
 3. Click **Run Job** button
@@ -337,13 +584,62 @@ Your password is now encrypted and stored securely! 🔒
      - Use | for OR search (term1 | term2)
      - Toggle Contains/Not Contains filter mode
    - **Diff with Previous** - See what changed
+   - **Copy to Repository** - Move/copy snapshot to another repository
+     - Useful if you backed up to the wrong repository
+     - Choose destination repository
+     - Option to delete from source (move mode)
    - **Forget (Delete)** - Mark for deletion
    - **Prune Repository** - Free disk space
    - **Unlock Repository** - Clear stale locks
 
+### Copying Snapshots Between Repositories
+
+If you accidentally backed up to the wrong repository:
+
+1. Click **Snapshots** in the sidebar
+2. Select the repository containing the misplaced snapshot
+3. Select the snapshot you want to move/copy
+4. Click **Copy to Repository** button
+5. In the dialog:
+   - Review snapshot details (ID, time, paths)
+   - Select the **Destination Repository** from dropdown
+   - **Set Timeout** (default: 6 hours, 0 = no limit for very large snapshots)
+   - Check **Delete from source** if you want to move (copy-then-delete)
+   - Click **OK**
+6. **Progress window** shows real-time output (non-modal, you can use the app)
+7. Wait for the copy to complete (may take hours for large snapshots)
+8. If you chose delete option, confirm deletion after successful copy
+9. The snapshot is now in the correct repository!
+
+**Important Notes:**
+- Set timeout to 0 for very large snapshots to avoid timeout errors
+- The dialog is non-modal so you can continue using the app during copy
+- Real-time output shows exactly what restic is doing
+- The operation is copy-then-delete, not a true atomic move
+
 ### Viewing Repository Stats
 
 1. Click **Dashboard** in the sidebar
+2. **Fast Loading**: Dashboard shows cached data instantly
+3. Under **Repository Statistics**, select a repository
+4. Click **Refresh Stats** to see comprehensive repository information:
+   - Snapshots count
+   - Last backup date
+   - Total files count
+   - **Storage Breakdown**:
+     - Original Data Size (before dedup/compression)
+     - Repository Size (actual space used)
+     - Total Saved (space saved by dedup + compression)
+     - Storage efficiency ratio
+   - Last prune date
+   - Corruption status
+5. Click **Verify Repository** to check data integrity
+6. Use **Refresh Dashboard** button to update all statistics when needed
+
+**Note**: 
+- Stats loading may take a moment as it gathers comprehensive information from multiple restic commands.
+- "Total Saved" includes BOTH deduplication and compression combined (restic doesn't separate them).
+- Storage efficiency shows how efficiently your data is stored (lower is better, e.g., 0.25 = 4x compression).
 2. Under **Repository Statistics**, select a repository
 3. Click **Refresh Stats** to see repository information
 4. Click **Verify Repository** to check data integrity

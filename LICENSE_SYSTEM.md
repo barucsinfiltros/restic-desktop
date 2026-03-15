@@ -22,6 +22,7 @@ The Restic Backup Manager now includes a license key system that ties licenses t
    - Checks machine ID match
    - Verifies cryptographic signature
    - Validates expiration date
+   - **Anti-tampering**: Detects system clock rollback attempts
 
 ## For Developers/Administrators
 
@@ -125,6 +126,31 @@ python license_generator.py "MACHINE_ID" --days 30
 - License has expired
 - Request a new license or renewal
 
+### "System clock tampering detected"
+- System clock was set backwards
+- This prevents users from extending expired licenses by changing the date
+- Set the system clock to the correct time and restart the application
+
+## Anti-Tampering Protection
+
+The license system includes protection against common tampering attempts:
+
+1. **Clock Rollback Detection**:
+   - Tracks the last validation timestamp in `.license_check` file
+   - If system clock is set backwards, license validation fails
+   - Prevents extending expired licenses by changing the system date
+   - Automatically resets when a new license is activated
+
+2. **PyInstaller Compilation** (Recommended):
+   - Compile the application using PyInstaller to protect the source code
+   - Makes it harder to extract the secret key or bypass license checks
+   - Example: `pyinstaller --onefile --noconsole restic_manager.py`
+
+3. **Machine-Specific Keys**:
+   - Each license is cryptographically tied to specific hardware
+   - Cannot be copied to other machines
+   - HMAC-SHA256 signature prevents forgery
+
 ## Security Considerations
 
 1. **Keep `license_generator.py` secure** - This is your key generation tool
@@ -132,6 +158,8 @@ python license_generator.py "MACHINE_ID" --days 30
 3. **Don't commit secret keys to public repos** - Use environment variables if needed
 4. **Machine IDs are not secret** - They're used for identification only
 5. **License keys are machine-specific** - Cannot be shared between machines
+6. **Compile with PyInstaller before distribution** - Protects secret key from extraction
+7. **Clock tampering protection is active** - Prevents date manipulation to extend licenses
 
 ## Advanced: Automation
 

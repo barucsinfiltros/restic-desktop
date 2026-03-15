@@ -29,10 +29,17 @@
             "path": "//192.168.0.50/backups/Music/Production",
             "password": "gAAAAABptG4IJR_yenILymnPwfm9RUb3crkkcbNjb1YrAk7pzrhjXZbExx5gB2H8X8wo9V6QWudzT_5RK-u64QdGaTQGjIjEYQ==",
             "last_checked": "2026-03-13 20:05:28"
+        },
+        {
+            "name": "Production-Midi-Samples",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Music/Production-Midi-Samples",
+            "password": "gAAAAABptov4luq7vYlXo-hqHRu8N4oVldnhs1QqSOVbI6c0Aqpim5Y1N7UI15-vKxrfEWAPGd6M4rOOuQ2ASZxgwKe7eLGUOA==",
+            "last_checked": "2026-03-15 10:37:44"
         }
     ],
     "last_repository": "",
-    "auto_refresh_snapshots": true,
+    "auto_refresh_snapshots": false,
     "snapshot_refresh_interval": 60,
     "log_level": "info",
     "backup_jobs": [
@@ -80,21 +87,50 @@
         },
         {
             "name": "Music Production",
-            "repository": "Data-Music",
+            "repository": "Production",
             "paths": [
-                "E:/001 Shared/Med & Nuendo",
-                "E:/001 Shared/Productions"
+                "E:/001 Shared/Productions",
+                "E:/001 Shared/Med & Nuendo/1 Projects",
+                "E:/001 Shared/Med & Nuendo/Documentation",
+                "E:/001 Shared/Med & Nuendo/Track References",
+                "E:/001 Shared/Med & Nuendo/Tutorial"
             ],
             "tags": [],
             "exclude_patterns": [],
             "exclude_caches": true,
-            "pack_size": 64,
+            "pack_size": 0,
             "one_file_system": false,
+            "timeout": 14400,
             "exclude_if_present": "",
+            "compression": "auto",
+            "no_cache": false,
+            "ignore_inode": false,
             "schedule": {
                 "enabled": false
             },
-            "created": "2026-03-13 16:34:52"
+            "created": "2026-03-15 07:36:27"
+        },
+        {
+            "name": "Production-Midi-Samples",
+            "repository": "Production-Midi-Samples",
+            "paths": [
+                "E:/001 Shared/Med & Nuendo/2 Midi",
+                "E:/001 Shared/Med & Nuendo/3 Sounds"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 16,
+            "one_file_system": false,
+            "timeout": 21600,
+            "exclude_if_present": "",
+            "compression": "auto",
+            "no_cache": false,
+            "ignore_inode": true,
+            "schedule": {
+                "enabled": false
+            },
+            "created": "2026-03-15 10:40:22"
         }
     ]
 }
