@@ -886,16 +886,37 @@ class BackupJobDialog(QDialog):
             self.name_input.setText(existing_job.get("name", ""))
         form_layout.addRow("Job Name:", self.name_input)
         
-        # Repository
-        self.repo_combo = QComboBox()
+        layout.addLayout(form_layout)
+        
+        # Repositories (multiple selection)
+        repos_group = QGroupBox("Target Repositories")
+        repos_layout = QVBoxLayout()
+        repos_group.setLayout(repos_layout)
+        
+        repos_help = QLabel("Select one or more repositories to backup to (for redundancy)")
+        repos_help.setStyleSheet("color: gray; font-style: italic; font-size: 9pt;")
+        repos_layout.addWidget(repos_help)
+        
+        self.repos_list = QListWidget()
+        self.repos_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        #self.repos_list.setMaximumHeight(180)
+        self.repos_list.setFixedHeight(180)
         repositories = settings_manager.get("repositories")
         for repo in repositories:
-            self.repo_combo.addItem(repo["name"])
-        if existing_job:
-            self.repo_combo.setCurrentText(existing_job.get("repository", ""))
-        form_layout.addRow("Repository:", self.repo_combo)
+            item = QListWidgetItem(repo["name"])
+            self.repos_list.addItem(item)
+            # Select previously selected repos
+            if existing_job:
+                # Handle both old single repository format and new multiple format
+                selected_repos = existing_job.get("repositories", [])
+                if not selected_repos and existing_job.get("repository"):
+                    # Old format - single repository
+                    selected_repos = [existing_job.get("repository")]
+                if repo["name"] in selected_repos:
+                    item.setSelected(True)
+        repos_layout.addWidget(self.repos_list)
         
-        layout.addLayout(form_layout)
+        layout.addWidget(repos_group)
         
         # Paths to backup
         paths_group = QGroupBox("Paths to Backup")
@@ -903,7 +924,8 @@ class BackupJobDialog(QDialog):
         paths_group.setLayout(paths_layout)
         
         self.paths_list = QListWidget()
-        self.paths_list.setMaximumHeight(120)
+        #self.paths_list.setMaximumHeight(180)
+        self.paths_list.setFixedHeight(180)
         if existing_job and existing_job.get("paths"):
             for path in existing_job["paths"]:
                 self.paths_list.addItem(path)
@@ -1141,6 +1163,9 @@ class BackupJobDialog(QDialog):
         paths = [self.paths_list.item(i).text() 
                 for i in range(self.paths_list.count())]
         
+        # Get selected repositories
+        selected_repos = [item.text() for item in self.repos_list.selectedItems()]
+        
         # Get tags
         tags_text = self.tags_input.text().strip()
         tags = [tag.strip() for tag in tags_text.split(",") if tag.strip()] if tags_text else []
@@ -1171,7 +1196,7 @@ class BackupJobDialog(QDialog):
         
         data = {
             "name": self.name_input.text().strip(),
-            "repository": self.repo_combo.currentText(),
+            "repositories": selected_repos,  # Changed from single "repository" to list
             "paths": paths,
             "tags": tags,
             "exclude_patterns": exclude_patterns,
@@ -2345,8 +2370,20 @@ class ResticManagerWindow(QMainWindow):
             # Job name
             self.backup_jobs_table.setItem(row, 0, QTableWidgetItem(job.get("name", "")))
             
-            # Repository
-            self.backup_jobs_table.setItem(row, 1, QTableWidgetItem(job.get("repository", "")))
+            # Repository (handle both single and multiple repositories)
+            repositories = job.get("repositories", [])
+            if not repositories:
+                # Backwards compatibility with old single "repository" field
+                repo = job.get("repository", "")
+                repositories = [repo] if repo else []
+            
+            repo_text = ""
+            if repositories:
+                if len(repositories) == 1:
+                    repo_text = repositories[0]
+                else:
+                    repo_text = f"{repositories[0]} +{len(repositories)-1} more"
+            self.backup_jobs_table.setItem(row, 1, QTableWidgetItem(repo_text))
             
             # Paths (show count and first path)
             paths = job.get("paths", [])
@@ -5971,11 +6008,42 @@ class ResticManagerWindow(QMainWindow):
             self.log(f"Deleted backup job and scheduled task: {job['name']}")
     
     def run_backup_job(self, job):
-        """Run a backup job"""
+        """Run a backup job (supports multiple repositories)"""
+        # Get repository/repositories list
+        # Support both old format (single "repository") and new format (multiple "repositories")
+        if "repositories" in job and job["repositories"]:
+            repositories_to_backup = job["repositories"]
+        elif "repository" in job:
+            # Backwards compatibility with single repository
+            repositories_to_backup = [job["repository"]]
+        else:
+            QMessageBox.warning(self, "No Repository", "No repository selected for this backup job.")
+            return
+        
+        if not repositories_to_backup:
+            QMessageBox.warning(self, "No Repository", "No repository selected for this backup job.")
+            return
+        
+        # Initialize state for multi-repo backup
+        self._current_repo_index = 0
+        self._total_repos = len(repositories_to_backup)
+        self._repositories_to_backup = repositories_to_backup
+        self._backup_job = job
+        
+        # Start first repository backup
+        self._run_single_repository_backup(job, repositories_to_backup[0], 0)
+    
+    def _run_single_repository_backup(self, job, repo_name, repo_index):
+        """Run backup for a single repository"""
         # Get repository
-        repo, password = self.get_repository_by_name(job["repository"])
+        repo, password = self.get_repository_by_name(repo_name)
         if not repo:
-            QMessageBox.warning(self, "Repository Not Found", f"Repository '{job['repository']}' not found.")
+            error_msg = f"Repository '{repo_name}' not found."
+            QMessageBox.warning(self, "Repository Not Found", error_msg)
+            self.log(error_msg)
+            
+            # Try next repository if any remain
+            self._try_next_repository()
             return
         
         # Build restic backup command arguments
@@ -6021,96 +6089,124 @@ class ResticManagerWindow(QMainWindow):
         if job.get("ignore_inode", False):
             args.append("--ignore-inode")
         
-        # Show progress dialog
-        self._backup_progress_dialog = QDialog(self)
-        self._backup_progress_dialog.setWindowTitle(f"Running Backup Job: {job['name']}")
-        self._backup_progress_dialog.setModal(False)
-        self._backup_progress_dialog.setMinimumWidth(500)
-        self._backup_progress_dialog.setMinimumHeight(300)
+        # Show progress dialog (create once for first repo, reuse for others)
+        if not hasattr(self, '_backup_progress_dialog') or not self._backup_progress_dialog.isVisible():
+            self._backup_progress_dialog = QDialog(self)
+            self._backup_progress_dialog.setWindowTitle(f"Running Backup Job: {job['name']}")
+            self._backup_progress_dialog.setModal(False)
+            self._backup_progress_dialog.setMinimumWidth(500)
+            self._backup_progress_dialog.setMinimumHeight(350)
+            
+            dialog_layout = QVBoxLayout()
+            self._backup_progress_dialog.setLayout(dialog_layout)
+            
+            # Multi-repo progress indicator
+            multi_repo_label = QLabel()
+            dialog_layout.addWidget(multi_repo_label)
+            self._multi_repo_label = multi_repo_label
+            
+            info_label = QLabel()
+            dialog_layout.addWidget(info_label)
+            self._backup_info_label = info_label
+            
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, 100)
+            progress_bar.setValue(0)
+            dialog_layout.addWidget(progress_bar)
+            self._backup_progress_bar = progress_bar
+            
+            status_label = QLabel("Starting backup...")
+            dialog_layout.addWidget(status_label)
+            self._backup_status_label = status_label
+            
+            # Current file label
+            current_file_label = QLabel("")
+            current_file_label.setWordWrap(True)
+            current_file_label.setMaximumHeight(40)
+            dialog_layout.addWidget(current_file_label)
+            self._backup_current_file_label = current_file_label
+            
+            output_text = QPlainTextEdit()
+            output_text.setReadOnly(True)
+            output_text.setStyleSheet(stylesheet)
+            dialog_layout.addWidget(output_text)
+            self._backup_output_text = output_text
+            
+            # Buttons layout
+            buttons_layout = QHBoxLayout()
+            
+            cancel_btn = QPushButton("Cancel Backup")
+            cancel_btn.setToolTip("Cancel the running backup job. This will stop the backup and unlock the repository.")
+            cancel_btn.setFixedWidth(120)
+            cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel_btn.clicked.connect(lambda: self._cancel_backup())
+            buttons_layout.addWidget(cancel_btn)
+            self._backup_cancel_btn = cancel_btn
+            
+            buttons_layout.addStretch()
+            
+            close_btn = QPushButton("Close")
+            close_btn.setEnabled(False)
+            close_btn.setToolTip("Close this dialog. The backup will continue running in the background.")
+            close_btn.setFixedWidth(120)
+            close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            close_btn.clicked.connect(self._backup_progress_dialog.close)
+            buttons_layout.addWidget(close_btn)
+            self._backup_close_btn = close_btn
+            
+            dialog_layout.addLayout(buttons_layout)
+            
+            # Override close event to warn about active backup
+            def closeEvent(event):
+                if hasattr(self, '_backup_worker') and self._backup_worker.isRunning():
+                    reply = QMessageBox.question(
+                        self._backup_progress_dialog,
+                        "Backup In Progress",
+                        "Backup is still running. Closing this window will not stop the backup.\n\n"
+                        "The backup will continue in the background and locks will remain until completion.\n\n"
+                        "Do you want to close anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.No:
+                        event.ignore()
+                        return
+                event.accept()
+            
+            self._backup_progress_dialog.closeEvent = closeEvent
+            
+            self._backup_progress_dialog.show()
         
-        dialog_layout = QVBoxLayout()
-        self._backup_progress_dialog.setLayout(dialog_layout)
+        # Update dialog for current repository
+        if self._total_repos > 1:
+            self._multi_repo_label.setText(f"📦 Repository {repo_index + 1} of {self._total_repos}")
+            self._multi_repo_label.setStyleSheet("font-weight: bold; color: #2196F3; font-size: 11pt;")
+        else:
+            self._multi_repo_label.setText("")
         
-        info_label = QLabel(f"Backup Job: {job['name']}\nRepository: {job['repository']}\n\nPaths:\n" + "\n".join(f"  • {p}" for p in job["paths"]))
-        dialog_layout.addWidget(info_label)
+        self._backup_info_label.setText(
+            f"Backup Job: {job['name']}\n"
+            f"Repository: {repo_name}\n\n"
+            f"Paths:\n" + "\n".join(f"  • {p}" for p in job["paths"])
+        )
         
-        progress_bar = QProgressBar()
-        progress_bar.setRange(0, 100)
-        progress_bar.setValue(0)
-        dialog_layout.addWidget(progress_bar)
+        self._backup_progress_bar.setValue(0)
+        self._backup_status_label.setText("Starting backup...")
+        self._backup_current_file_label.setText("")
+        self._backup_close_btn.setEnabled(False)
+        self._backup_cancel_btn.setEnabled(True)
         
-        status_label = QLabel("Starting backup...")
-        dialog_layout.addWidget(status_label)
-        
-        # Current file label
-        current_file_label = QLabel("")
-        current_file_label.setWordWrap(True)
-        current_file_label.setMaximumHeight(40)
-        dialog_layout.addWidget(current_file_label)
-        
-        output_text = QPlainTextEdit()
-        output_text.setReadOnly(True)
-        output_text.setStyleSheet(stylesheet)
-        dialog_layout.addWidget(output_text)
-        
-        # Buttons layout
-        buttons_layout = QHBoxLayout()
-        
-        cancel_btn = QPushButton("Cancel Backup")
-        cancel_btn.setToolTip("Cancel the running backup job. This will stop the backup and unlock the repository.")
-        cancel_btn.setFixedWidth(120)
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.clicked.connect(lambda: self._cancel_backup())
-        buttons_layout.addWidget(cancel_btn)
-        
-        buttons_layout.addStretch()
-        
-        close_btn = QPushButton("Close")
-        close_btn.setEnabled(False)
-        close_btn.setToolTip("Close this dialog. The backup will continue running in the background.")
-        close_btn.setFixedWidth(120)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.clicked.connect(self._backup_progress_dialog.close)
-        buttons_layout.addWidget(close_btn)
-        
-        dialog_layout.addLayout(buttons_layout)
-        
-        # Override close event to warn about active backup
-        def closeEvent(event):
-            if hasattr(self, '_backup_worker') and self._backup_worker.isRunning():
-                reply = QMessageBox.question(
-                    self._backup_progress_dialog,
-                    "Backup In Progress",
-                    "Backup is still running. Closing this window will not stop the backup.\n\n"
-                    "The backup will continue in the background and locks will remain until completion.\n\n"
-                    "Do you want to close anyway?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                if reply == QMessageBox.StandardButton.No:
-                    event.ignore()
-                    return
-            event.accept()
-        
-        self._backup_progress_dialog.closeEvent = closeEvent
-        
-        self._backup_progress_dialog.show()
         QApplication.processEvents()
         
-        # Store dialog widgets and repo info for callback
-        self._backup_progress_bar = progress_bar
-        self._backup_status_label = status_label
-        self._backup_current_file_label = current_file_label
-        self._backup_output_text = output_text
-        self._backup_close_btn = close_btn
-        self._backup_cancel_btn = cancel_btn
+        # Store repo info for callback
         self._backup_job_name = job['name']
         self._backup_repo = repo
+        self._backup_repo_name = repo_name
         self._backup_repo_password = password
         self._backup_is_cancelled = False
         
         # Start backup
         backup_timeout = job.get("timeout", 7200)  # Default 2 hours if not set
-        self.log(f"Starting backup job: {job['name']}")
+        self.log(f"Starting backup job: {job['name']} → Repository {repo_index + 1}/{self._total_repos}: {repo_name}") 
         self.log(f"Command: restic {' '.join(args)}")
         self.log(f"Timeout: {backup_timeout} seconds ({backup_timeout // 60} minutes)")
         
@@ -6119,6 +6215,25 @@ class ResticManagerWindow(QMainWindow):
         self._backup_worker.progress_data.connect(self._on_backup_progress)
         self._backup_worker.progress.connect(self._on_backup_output)
         self._backup_worker.start()
+    
+    def _try_next_repository(self):
+        """Try backing up to the next repository in the list"""
+        if not hasattr(self, '_repositories_to_backup') or not hasattr(self, '_backup_job'):
+            return
+        
+        self._current_repo_index += 1
+        
+        if self._current_repo_index < len(self._repositories_to_backup):
+            # More repositories to backup
+            next_repo = self._repositories_to_backup[self._current_repo_index]
+            self._run_single_repository_backup(self._backup_job, next_repo, self._current_repo_index)
+        else:
+            # All repositories completed
+            self.log(f"Backup job '{self._backup_job['name']}' completed for all {self._total_repos} repositories")
+            if hasattr(self, '_backup_close_btn'):
+                self._backup_close_btn.setEnabled(True)
+            if hasattr(self, '_backup_cancel_btn'):
+                self._backup_cancel_btn.setEnabled(False)
     
     def _cancel_backup(self):
         """Cancel the running backup"""
@@ -6282,25 +6397,19 @@ class ResticManagerWindow(QMainWindow):
             self._backup_output_text.appendPlainText("")
             self._backup_output_text.appendPlainText("=" * 60)
             if success:
-                self._backup_output_text.appendPlainText("✓ Backup completed successfully!")
+                self._backup_output_text.appendPlainText(f"✓ Backup to '{self._backup_repo_name}' completed successfully!")
             else:
-                self._backup_output_text.appendPlainText("✗ Backup failed!")
+                self._backup_output_text.appendPlainText(f"✗ Backup to '{self._backup_repo_name}' failed!")
             self._backup_output_text.appendPlainText("=" * 60)
             # Auto-scroll to bottom
             scrollbar = self._backup_output_text.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
         
-        if hasattr(self, '_backup_cancel_btn'):
-            self._backup_cancel_btn.setEnabled(False)
-        
-        if hasattr(self, '_backup_close_btn'):
-            self._backup_close_btn.setEnabled(True)
-        
         if success:
             if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText("✓ Backup completed successfully!")
+                self._backup_status_label.setText(f"✓ Backup to '{self._backup_repo_name}' completed successfully!")
             
-            self.log(f"Backup job '{self._backup_job_name}' completed successfully")
+            self.log(f"Backup job '{self._backup_job_name}' → '{self._backup_repo_name}' completed successfully")
             
             # Auto-unlock if locks exist (check and unlock)
             self._auto_unlock_after_completion()
@@ -6310,14 +6419,18 @@ class ResticManagerWindow(QMainWindow):
                 QTimer.singleShot(1000, self.load_snapshots)
         else:
             if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText("✗ Backup failed!")
+                self._backup_status_label.setText(f"✗ Backup to '{self._backup_repo_name}' failed!")
             
             error_msg = stderr if stderr else "Unknown error"
-            self.log(f"Backup job '{self._backup_job_name}' failed: {error_msg}")
+            self.log(f"Backup job '{self._backup_job_name}' → '{self._backup_repo_name}' failed: {error_msg}")
             
             # Also try to unlock on failure in case lock is stuck
             if "locked" in error_msg.lower():
                 self._auto_unlock_after_completion()
+        
+        # Try next repository if any remain (for multi-repo backups)
+        # Use QTimer to give UI a chance to update before starting next backup
+        QTimer.singleShot(500, self._try_next_repository)
     
     def _auto_unlock_after_completion(self):
         """Automatically check and unlock repository if locks exist"""

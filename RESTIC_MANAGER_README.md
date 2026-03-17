@@ -53,6 +53,17 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 📦 **Copy Snapshots Between Repos**: Fix backup mistakes by moving snapshots to the correct repository
 - 📊 **Comprehensive Repository Stats**: Detailed breakdown showing Original Data Size, Repository Size, Total Saved (dedup+compression), and storage efficiency ratio - no more confusing stats!
 
+### Multi-Repository Backup Support ✨ NEW
+- 🔄 **Backup to Multiple Repositories**: Select multiple target repositories for a single backup job
+- 🛡️ **Redundancy & Safety**: Follow the 3-2-1 backup rule (3 copies, 2 different media, 1 offsite)
+- 📦 **Sequential Execution**: Backs up to each repository one after another
+- 📊 **Multi-Repo Progress**: Progress dialog shows "Repository X of Y" during execution
+- 🔁 **Fault Tolerance**: If one repository fails, backup continues to the next
+- ✅ **Flexible Selection**: Choose 1 or more repositories via multi-select list
+- 📋 **Smart Display**: Job list shows "Repo1 +2 more" for jobs with multiple targets
+- 🔙 **Backwards Compatible**: Seamlessly works with old single-repository jobs
+- 💾 **Unified Configuration**: All repository backups use the same paths, tags, and options
+
 ### Enhanced Backup Options
 - 🗜️ **Compression Control**: Choose off/auto/max compression per backup job
 - 💾 **No Cache Option**: Disable local cache to save disk space
@@ -266,19 +277,29 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - **Persistent Job Storage**: Save backup configurations to settings.json
 - **Create New Jobs**: Full job configuration dialog
   - Job name
-  - Repository selection
+  - **Multi-Repository Selection** ✨ NEW: Select one or more target repositories for redundancy
+    - Multi-select list widget for choosing repositories
+    - Helpful hint text: "Select one or more repositories to backup to (for redundancy)"
+    - Visual indication of selected repositories
   - Multiple paths selection
   - Tags (comma-separated)
   - Exclude patterns (one per line)
   - Advanced options (see below)
 - **Edit Existing Jobs**: Modify saved job configurations
+  - Fully supports multi-repository jobs
+  - Backwards compatible with old single-repository format
 - **Delete Jobs**: Remove saved jobs with confirmation
 - **Run Jobs**: Execute saved backup jobs with real-time progress
+  - **Multi-Repository Execution** ✨ NEW: Sequential backup to all selected repositories
+    - Progress dialog shows "Repository X of Y" during multi-repo backups
+    - Continues to next repository even if one fails
+    - All repositories use same backup paths, tags, excludes, and options
 - **Non-Modal Progress Dialog**: Access main GUI while backups run
   - Dialog stays on top but doesn't block the main window
   - Start multiple operations while backup runs
   - Monitor progress without being locked in
 - **Job List View**: Table showing all saved backup jobs with name, repository, paths, and tags
+  - **Smart Repository Display** ✨ NEW: Shows single repo name or "Repo1 +2 more" for multiple
 
 #### Real-Time Backup Progress ✅ FULLY IMPLEMENTED
 - **Progress Dialog** during backup operations:
