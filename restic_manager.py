@@ -2775,24 +2775,43 @@ class ResticManagerWindow(QMainWindow):
         self.restic_path_input.setFixedWidth(400)
         
         browse_restic_btn = QPushButton("Browse")
-        browse_restic_btn.setFixedWidth(120)
+        browse_restic_btn.setFixedWidth(100)
         browse_restic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_restic_btn.clicked.connect(self.browse_restic_path)
+        
+        test_restic_btn = QPushButton("Test")
+        test_restic_btn.setFixedWidth(100)
+        test_restic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        test_restic_btn.clicked.connect(self.test_restic_path)
+        test_restic_btn.setToolTip("Test if restic can be executed from this path")
         
         restic_path_layout = QHBoxLayout()
         restic_path_layout.addWidget(self.restic_path_input)
         restic_path_layout.addWidget(browse_restic_btn)
+        restic_path_layout.addWidget(test_restic_btn)
         restic_path_layout.addStretch()
         form_layout.addRow("Restic Path:", restic_path_layout)
         
         # Theme
         self.theme_combo = QComboBox()
         self.theme_combo.addItems([
-            "light", "dark", "dark-cyan", "dark-navy", "dark-green", "light-green",
-            "dark-purple", "solarized-dark", "light-blue", "monokai-dark",
-            "dark-indigo", "dark-magenta", "sunset-orange", "forest-moss", "cool-grey",
-            "pure-black", "midnight-blue", "cyberpunk-neon", "github-dark", "vscode-dark",
-            "material-dark", "dracula", "nord-dark", "amoled-black", "matrix-green"
+            # Light themes
+            "light", "light-green", "light-blue",
+            # Classic dark themes
+            "dark", "dark-cyan", "dark-navy", "dark-green", "dark-purple", 
+            "dark-indigo", "dark-magenta",
+            # Special/Retro themes
+            "solarized-dark", "monokai-dark", "dracula", "nord-dark",
+            # Modern popular themes (2024-2026)
+            "tokyo-night", "catppuccin-mocha", "gruvbox-dark", "one-dark",
+            "rose-pine", "everforest", "kanagawa", "night-owl", "palenight",
+            "arctic", "horizon", "moonlight",
+            # IDE-inspired
+            "github-dark", "vscode-dark", "material-dark",
+            # Unique/Fun themes
+            "cyberpunk-neon", "matrix-green", "sunset-orange", 
+            # Minimal themes
+            "forest-moss", "cool-grey", "pure-black", "midnight-blue", "amoled-black"
         ])
         current_theme = self.settings_manager.get("theme")
         self.theme_combo.setCurrentText(current_theme)
@@ -7132,6 +7151,44 @@ $env:RESTIC_PASSWORD = "{password}"
         if file_path:
             self.restic_path_input.setText(file_path)
     
+    def test_restic_path(self):
+        """Test if the restic executable is accessible and working"""
+        restic_path = self.restic_path_input.text().strip()
+        if not restic_path:
+            QMessageBox.warning(self, "No Path", "Please enter a restic path first")
+            return
+        
+        # Create temporary ResticCommand with the test path
+        test_cmd = ResticCommand(restic_path=restic_path, debug=False)
+        
+        # Try to get version
+        version = test_cmd.version()
+        
+        if version:
+            QMessageBox.information(
+                self, 
+                "Restic Found",
+                f"✅ Restic executable is working!\n\n"
+                f"Path: {restic_path}\n"
+                f"Version: {version}\n\n"
+                f"You can now save settings to use this path."
+            )
+            self.log(f"Restic test successful: {version}")
+        else:
+            QMessageBox.warning(
+                self,
+                "Restic Not Found",
+                f"❌ Failed to execute restic from this path.\n\n"
+                f"Path: {restic_path}\n\n"
+                f"Please check:\n"
+                f"• The path is correct\n"
+                f"• The file exists and is executable\n"
+                f"• Restic is installed\n\n"
+                f"For Windows: Try 'restic' if it's in your PATH,\n"
+                f"or provide the full path like 'C:\\Program Files\\restic\\restic.exe'"
+            )
+            self.log(f"Restic test failed for path: {restic_path}")
+    
     def browse_temp_restore_path(self):
         """Browse for temporary restore directory"""
         directory = QFileDialog.getExistingDirectory(
@@ -7157,7 +7214,7 @@ $env:RESTIC_PASSWORD = "{password}"
         # Update Restic command
         self.restic_cmd = ResticCommand(
             restic_path=self.settings_manager.get("restic_path"),
-            debug=True
+            debug=DEBUG_MODE
         )
         
         QMessageBox.information(self, "Success", "Settings saved successfully!")
@@ -8347,6 +8404,343 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             QFrame {
                 background-color: #000000;
                 border: 1px solid #001100;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+        
+        # Modern popular themes (2024-2026)
+        elif theme == "tokyo-night":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #1a1b26;
+                color: #c0caf5;
+            }
+            QPushButton {
+                background-color: #24283b;
+                color: #c0caf5;
+                border: 1px solid #414868;
+            }
+            QPushButton:hover {
+                background-color: #292e42;
+                border: 1px solid #7aa2f7;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #3d59a1;
+                border: 2px solid #7aa2f7;
+                color: #ffffff;
+            }
+            QPushButton:pressed {
+                background-color: #1f2335;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "catppuccin-mocha":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #1e1e2e;
+                color: #cdd6f4;
+            }
+            QPushButton {
+                background-color: #313244;
+                color: #cdd6f4;
+                border: 1px solid #45475a;
+            }
+            QPushButton:hover {
+                background-color: #45475a;
+                border: 1px solid #89b4fa;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #89b4fa;
+                border: 2px solid #b4befe;
+                color: #1e1e2e;
+            }
+            QPushButton:pressed {
+                background-color: #181825;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "gruvbox-dark":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #282828;
+                color: #ebdbb2;
+            }
+            QPushButton {
+                background-color: #3c3836;
+                color: #ebdbb2;
+                border: 1px solid #504945;
+            }
+            QPushButton:hover {
+                background-color: #504945;
+                border: 1px solid #d79921;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #d65d0e;
+                border: 2px solid #fe8019;
+                color: #fbf1c7;
+            }
+            QPushButton:pressed {
+                background-color: #1d2021;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "one-dark":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #282c34;
+                color: #abb2bf;
+            }
+            QPushButton {
+                background-color: #3e4451;
+                color: #abb2bf;
+                border: 1px solid #4b5263;
+            }
+            QPushButton:hover {
+                background-color: #4b5263;
+                border: 1px solid #61afef;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #61afef;
+                border: 2px solid #528bff;
+                color: #282c34;
+            }
+            QPushButton:pressed {
+                background-color: #21252b;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "rose-pine":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #191724;
+                color: #e0def4;
+            }
+            QPushButton {
+                background-color: #1f1d2e;
+                color: #e0def4;
+                border: 1px solid #26233a;
+            }
+            QPushButton:hover {
+                background-color: #26233a;
+                border: 1px solid #c4a7e7;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #c4a7e7;
+                border: 2px solid #ebbcba;
+                color: #191724;
+            }
+            QPushButton:pressed {
+                background-color: #151320;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "everforest":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #2d353b;
+                color: #d3c6aa;
+            }
+            QPushButton {
+                background-color: #343f44;
+                color: #d3c6aa;
+                border: 1px solid #475258;
+            }
+            QPushButton:hover {
+                background-color: #475258;
+                border: 1px solid #a7c080;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #a7c080;
+                border: 2px solid #dbbc7f;
+                color: #2d353b;
+            }
+            QPushButton:pressed {
+                background-color: #272e33;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "kanagawa":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #1f1f28;
+                color: #dcd7ba;
+            }
+            QPushButton {
+                background-color: #2a2a37;
+                color: #dcd7ba;
+                border: 1px solid #363646;
+            }
+            QPushButton:hover {
+                background-color: #363646;
+                border: 1px solid #7e9cd8;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #7e9cd8;
+                border: 2px solid #7fb4ca;
+                color: #1f1f28;
+            }
+            QPushButton:pressed {
+                background-color: #16161d;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "night-owl":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #011627;
+                color: #d6deeb;
+            }
+            QPushButton {
+                background-color: #0b2942;
+                color: #d6deeb;
+                border: 1px solid #1d3b53;
+            }
+            QPushButton:hover {
+                background-color: #1d3b53;
+                border: 1px solid #82aaff;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #82aaff;
+                border: 2px solid #c792ea;
+                color: #011627;
+            }
+            QPushButton:pressed {
+                background-color: #01111d;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "palenight":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #292d3e;
+                color: #bfc7d5;
+            }
+            QPushButton {
+                background-color: #333747;
+                color: #bfc7d5;
+                border: 1px solid #444267;
+            }
+            QPushButton:hover {
+                background-color: #444267;
+                border: 1px solid #82aaff;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #82aaff;
+                border: 2px solid #c792ea;
+                color: #292d3e;
+            }
+            QPushButton:pressed {
+                background-color: #1f2233;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "arctic":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #2e3440;
+                color: #d8dee9;
+            }
+            QPushButton {
+                background-color: #3b4252;
+                color: #d8dee9;
+                border: 1px solid #4c566a;
+            }
+            QPushButton:hover {
+                background-color: #4c566a;
+                border: 1px solid #88c0d0;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #88c0d0;
+                border: 2px solid #8fbcbb;
+                color: #2e3440;
+            }
+            QPushButton:pressed {
+                background-color: #2a3040;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "horizon":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #1c1e26;
+                color: #e0e0e0;
+            }
+            QPushButton {
+                background-color: #232530;
+                color: #e0e0e0;
+                border: 1px solid #2e303e;
+            }
+            QPushButton:hover {
+                background-color: #2e303e;
+                border: 1px solid #fab795;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #f43e5c;
+                border: 2px solid #fab795;
+                color: #ffffff;
+            }
+            QPushButton:pressed {
+                background-color: #16161c;
+            }
+            """
+            self.app.setStyleSheet(stylesheet)
+
+        elif theme == "moonlight":
+            stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+            stylesheet += """
+            QWidget {
+                background-color: #212337;
+                color: #c8d3f5;
+            }
+            QPushButton {
+                background-color: #2f334d;
+                color: #c8d3f5;
+                border: 1px solid #3e4269;
+            }
+            QPushButton:hover {
+                background-color: #3e4269;
+                border: 1px solid #82aaff;
+                color: #ffffff;
+            }
+            QPushButton:checked {
+                background-color: #82aaff;
+                border: 2px solid #c099ff;
+                color: #212337;
+            }
+            QPushButton:pressed {
+                background-color: #1b1e2e;
             }
             """
             self.app.setStyleSheet(stylesheet)

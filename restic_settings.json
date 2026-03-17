@@ -1,5 +1,5 @@
 {
-    "theme": "midnight-blue",
+    "theme": "tokyo-night",
     "restic_path": "C:/python_scripts/restic_mngr/restic/windows/restic.exe",
     "repositories": [
         {
