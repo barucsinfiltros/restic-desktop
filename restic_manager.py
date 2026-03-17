@@ -2008,7 +2008,7 @@ class ResticManagerWindow(QMainWindow):
         self.stacked_widget.addWidget(page)
     
     def refresh_dashboard(self):
-        """Refresh dashboard statistics"""
+        """Refresh dashboard statistics (runs in background to avoid UI freeze)"""
         # Show loading indicator
         if hasattr(self, 'stats_labels'):
             for label in self.stats_labels.values():
@@ -2017,65 +2017,94 @@ class ResticManagerWindow(QMainWindow):
         # Process events to update UI
         QApplication.processEvents()
         
+        # Run dashboard refresh in background worker to prevent UI freeze
+        self._start_dashboard_refresh_worker()
+    
+    def _start_dashboard_refresh_worker(self):
+        """Start background worker to refresh dashboard stats"""
         repositories = self.settings_manager.get("repositories")
         
-        # Update total repositories
-        self.stats_labels["total_repos"].setText(str(len(repositories)))
+        # Update total repositories immediately (no need for worker)
+        if hasattr(self, 'stats_labels'):
+            self.stats_labels["total_repos"].setText(str(len(repositories)))
         
-        # Calculate total snapshots and size from all repositories
-        total_snapshots = 0
-        total_size = 0
+        # If no repositories, just clear stats
+        if not repositories:
+            if hasattr(self, 'stats_labels'):
+                self.stats_labels["total_snapshots"].setText("0")
+                self.stats_labels["total_size"].setText("—")
+                self.stats_labels["last_backup"].setText("Never")
+            return
         
-        for repo in repositories:
-            repo_name = repo.get("name", "")
-            repo_path = repo.get("path", "")
-            password = ""
+        # Start worker to gather stats from all repositories
+        # This runs in background to avoid freezing UI
+        from threading import Thread
+        
+        def gather_stats():
+            total_snapshots = 0
+            total_size = 0
+            last_backup = "Never"
             
-            if repo.get("password"):
+            for repo in repositories:
+                repo_name = repo.get("name", "")
+                repo_path = repo.get("path", "")
+                password = ""
+                
+                if repo.get("password"):
+                    try:
+                        password = self.settings_manager.password_manager.decrypt(repo["password"])
+                    except:
+                        continue
+                
+                # Get snapshot count
+                env = {"RESTIC_PASSWORD": password} if password else {}
+                args = ["-r", repo_path, "snapshots", "--json"]
+                
                 try:
-                    password = self.settings_manager.password_manager.decrypt(repo["password"])
+                    success, stdout, stderr = self.restic_cmd.run(args, env, timeout=30)
+                    if success and stdout:
+                        try:
+                            snapshots = json.loads(stdout)
+                            if isinstance(snapshots, list):
+                                total_snapshots += len(snapshots)
+                                # Check for most recent snapshot time
+                                if snapshots:
+                                    for snapshot in snapshots:
+                                        snapshot_time = snapshot.get("time", "")
+                                        if snapshot_time:
+                                            if last_backup == "Never" or snapshot_time > last_backup:
+                                                last_backup = snapshot_time
+                        except json.JSONDecodeError:
+                            pass
                 except:
-                    continue
+                    pass
+                
+                # Get repository size
+                args = ["-r", repo_path, "stats", "--mode", "raw-data", "--json"]
+                try:
+                    success, stdout, stderr = self.restic_cmd.run(args, env, timeout=30)
+                    if success and stdout:
+                        try:
+                            stats = json.loads(stdout)
+                            total_size += stats.get("total_size", 0)
+                        except json.JSONDecodeError:
+                            pass
+                except:
+                    pass
             
-            # Get snapshot count
-            env = {"RESTIC_PASSWORD": password} if password else {}
-            args = ["-r", repo_path, "snapshots", "--json"]
-            
-            try:
-                success, stdout, stderr = self.restic_cmd.run(args, env)
-                if success and stdout:
-                    try:
-                        snapshots = json.loads(stdout)
-                        if isinstance(snapshots, list):
-                            total_snapshots += len(snapshots)
-                    except json.JSONDecodeError:
-                        pass
-            except:
-                pass
-            
-            # Get repository size
-            args = ["-r", repo_path, "stats", "--json"]
-            try:
-                success, stdout, stderr = self.restic_cmd.run(args, env)
-                if success and stdout:
-                    try:
-                        stats = json.loads(stdout)
-                        total_size += stats.get("total_size", 0)
-                    except json.JSONDecodeError:
-                        pass
-            except:
-                pass
+            # Update UI on main thread using QTimer
+            QTimer.singleShot(0, lambda: self._update_dashboard_ui(total_snapshots, total_size, last_backup))
         
-        self.stats_labels["total_snapshots"].setText(str(total_snapshots))
-        self.stats_labels["total_size"].setText(self.format_bytes(total_size) if total_size > 0 else "—")
-        
-        # Last backup (check most recent repository last_checked)
-        last_backup = "Never"
-        if repositories:
-            last_checked_times = [repo.get("last_checked", "") for repo in repositories if repo.get("last_checked")]
-            if last_checked_times:
-                last_backup = max(last_checked_times)
-        self.stats_labels["last_backup"].setText(last_backup)
+        # Start background thread
+        thread = Thread(target=gather_stats, daemon=True)
+        thread.start()
+    
+    def _update_dashboard_ui(self, total_snapshots, total_size, last_backup):
+        """Update dashboard UI with gathered stats (called from background thread)"""
+        if hasattr(self, 'stats_labels'):
+            self.stats_labels["total_snapshots"].setText(str(total_snapshots))
+            self.stats_labels["total_size"].setText(self.format_bytes(total_size) if total_size > 0 else "—")
+            self.stats_labels["last_backup"].setText(last_backup if last_backup != "Never" else "Never")
     
     def create_repositories_page(self):
         """Create repositories management page"""
@@ -2091,6 +2120,8 @@ class ResticManagerWindow(QMainWindow):
         title_layout.addStretch()
         
         add_btn = QPushButton("Add Repository")
+        add_btn.setFixedWidth(120)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(self.add_repository)
         title_layout.addWidget(add_btn)
         
@@ -2136,6 +2167,8 @@ class ResticManagerWindow(QMainWindow):
         title_layout.addWidget(self.snapshot_repo_combo)
         
         refresh_btn = QPushButton("Refresh")
+        refresh_btn.setFixedWidth(80)
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.clicked.connect(self.load_snapshots)
         title_layout.addWidget(refresh_btn)
         
@@ -2742,6 +2775,8 @@ class ResticManagerWindow(QMainWindow):
         self.restic_path_input.setFixedWidth(400)
         
         browse_restic_btn = QPushButton("Browse")
+        browse_restic_btn.setFixedWidth(120)
+        browse_restic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_restic_btn.clicked.connect(self.browse_restic_path)
         
         restic_path_layout = QHBoxLayout()
@@ -2786,6 +2821,8 @@ class ResticManagerWindow(QMainWindow):
         self.temp_restore_path_input.setFixedWidth(400)
         
         browse_temp_restore_btn = QPushButton("Browse")
+        browse_temp_restore_btn.setFixedWidth(120)
+        browse_temp_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_temp_restore_btn.clicked.connect(self.browse_temp_restore_path)
         
         temp_restore_layout = QHBoxLayout()
@@ -2973,22 +3010,41 @@ class ResticManagerWindow(QMainWindow):
             should_initialize = repo_data.pop("initialize", False)
             
             if should_initialize:
-                # Show progress dialog
+                # Show progress dialog (non-modal so UI doesn't freeze)
                 self._add_repo_progress = QDialog(self)
                 self._add_repo_progress.setWindowTitle("Initializing Repository")
-                self._add_repo_progress.setModal(True)
-                self._add_repo_progress.setMinimumWidth(400)
+                self._add_repo_progress.setModal(False)  # Non-modal to prevent UI freeze
+                self._add_repo_progress.setMinimumWidth(500)
+                self._add_repo_progress.setMinimumHeight(300)
                 
                 progress_layout = QVBoxLayout()
                 self._add_repo_progress.setLayout(progress_layout)
                 
-                progress_label = QLabel(f"Initializing repository '{repo_data['name']}'...\n\nPlease wait...")
+                progress_label = QLabel(
+                    f"Initializing repository '{repo_data['name']}'...\n\n"
+                    f"Please wait while the repository is being created."
+                )
                 progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 progress_layout.addWidget(progress_label)
                 
                 progress_bar = QProgressBar()
                 progress_bar.setRange(0, 0)  # Indeterminate progress
                 progress_layout.addWidget(progress_bar)
+                
+                # Add output text area to show real-time progress
+                output_text = QPlainTextEdit()
+                output_text.setReadOnly(True)
+                output_text.setPlaceholderText("Waiting for initialization to start...")
+                output_text.setMaximumHeight(150)
+                progress_layout.addWidget(output_text)
+                
+                # Store reference to output text
+                self._init_output_text = output_text
+                
+                # Add close button
+                close_btn = QPushButton("Close (initialization continues in background)")
+                close_btn.clicked.connect(self._add_repo_progress.accept)
+                progress_layout.addWidget(close_btn)
                 
                 self._add_repo_progress.show()
                 QApplication.processEvents()
@@ -3001,7 +3057,12 @@ class ResticManagerWindow(QMainWindow):
                 env = {"RESTIC_PASSWORD": password} if password else {}
                 args = ["-r", repo_data["path"], "init"]
                 
-                self._init_worker = ResticWorker(self.restic_cmd, args, env, timeout=60)
+                # Log to output
+                output_text.appendPlainText(f"Starting initialization...\nRepository: {repo_data['path']}\n")
+                QApplication.processEvents()
+                
+                self._init_worker = ResticWorker(self.restic_cmd, args, env, timeout=60, use_progress=True)
+                self._init_worker.progress.connect(self._on_init_progress)
                 self._init_worker.finished.connect(self._on_repository_initialized)
                 self._init_worker.start()
                 
@@ -3017,15 +3078,33 @@ class ResticManagerWindow(QMainWindow):
                 self.log(f"Added repository: {repo_data['name']}")
                 QMessageBox.information(self, "Success", f"Repository '{repo_data['name']}' added successfully!")
     
+    def _on_init_progress(self, line):
+        """Handle progress output during repository initialization"""
+        if hasattr(self, '_init_output_text'):
+            self._init_output_text.appendPlainText(line)
+            # Auto-scroll to bottom
+            scrollbar = self._init_output_text.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+            QApplication.processEvents()  # Keep UI responsive
+    
     def _on_repository_initialized(self, success, stdout, stderr):
         """Callback when repository initialization completes"""
-        # Close progress dialog
-        if hasattr(self, '_add_repo_progress'):
-            try:
-                self._add_repo_progress.close()
-                self._add_repo_progress.deleteLater()
-            except:
-                pass
+        # Append final output to text area
+        if hasattr(self, '_init_output_text'):
+            if success:
+                self._init_output_text.appendPlainText("\n=== Initialization Complete ===")
+                if stdout:
+                    self._init_output_text.appendPlainText(stdout)
+            else:
+                self._init_output_text.appendPlainText("\n=== Initialization Failed ===")
+                if stderr:
+                    self._init_output_text.appendPlainText(f"Error: {stderr}")
+                if stdout:
+                    self._init_output_text.appendPlainText(stdout)
+            QApplication.processEvents()
+        
+        # Close progress dialog after a brief moment
+        QTimer.singleShot(1000, self._close_init_dialog)  # Give user 1 second to see final output
         
         repo_data = self._pending_repo_data
         
@@ -3064,6 +3143,15 @@ class ResticManagerWindow(QMainWindow):
             )
             self.log(f"Failed to initialize repository {repo_data['name']}: {error_msg}")
     
+    def _close_init_dialog(self):
+        """Close the initialization progress dialog"""
+        if hasattr(self, '_add_repo_progress'):
+            try:
+                self._add_repo_progress.close()
+                self._add_repo_progress.deleteLater()
+            except:
+                pass
+    
     def refresh_repository_list(self):
         """Refresh the repository list table"""
         repositories = self.settings_manager.get("repositories")
@@ -3082,10 +3170,14 @@ class ResticManagerWindow(QMainWindow):
             btn_widget.setLayout(btn_layout)
             
             edit_btn = QPushButton("Edit")
+            edit_btn.setFixedWidth(60)
+            edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             edit_btn.clicked.connect(lambda checked, idx=i: self.edit_repository(idx))
             btn_layout.addWidget(edit_btn)
             
             delete_btn = QPushButton("Delete")
+            delete_btn.setFixedWidth(60)
+            delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             delete_btn.clicked.connect(lambda checked, idx=i: self.delete_repository(idx))
             btn_layout.addWidget(delete_btn)
             
@@ -3138,8 +3230,8 @@ class ResticManagerWindow(QMainWindow):
             combo.addItems(repo_names)
             combo.blockSignals(False)
         
-        # Refresh dashboard after updating combos
-        self.refresh_dashboard()
+        # Don't auto-refresh dashboard to prevent UI freeze
+        # Users can manually click "Refresh Stats" button when needed
     
     def get_repository_by_name(self, repo_name):
         """Get repository by name with decrypted password"""

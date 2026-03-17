@@ -51,6 +51,13 @@
             "path": "//192.168.0.50/backups/Music/Production-Presets",
             "password": "gAAAAABpuOiOeoQQ2J0acm4SdzQoofsSJo4YwRtNkVxbYmgwGS2XP9nWjV9li4SXN0r26y1qQfS1pB1sfvLaf4f6121cmnUvIvZ4PJRCulgIqU8EJWDFalrwEa6_-yoWxjKcF5QmjosY",
             "last_checked": "2026-03-17 05:37:18"
+        },
+        {
+            "name": "Production-VST",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Music/Production-VST",
+            "password": "gAAAAABpuX4pb7_qm7pStbhr6f3YFwP5CGmJngmiClbqMeji547A6-ObsK_ylppbWmU6TTMF2touZ3gWU6XW24ECoWSkuUhDfUYJr5kgAJ1UmsUoiqhhoaXiGZGTuGbg-mnthUU-xkPx",
+            "last_checked": "2026-03-17 16:15:37"
         }
     ],
     "last_repository": "",
@@ -188,6 +195,29 @@
                 "enabled": false
             },
             "created": "2026-03-17 05:38:21"
+        },
+        {
+            "name": "Production-VST",
+            "repositories": [
+                "Production-VST"
+            ],
+            "paths": [
+                "Y:/2 Plugins"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 32,
+            "one_file_system": false,
+            "timeout": 0,
+            "exclude_if_present": "",
+            "compression": "auto",
+            "no_cache": false,
+            "ignore_inode": false,
+            "schedule": {
+                "enabled": false
+            },
+            "created": "2026-03-17 16:19:36"
         }
     ],
     "temp_restore_path": "C:\\temp\\restic_restore"
