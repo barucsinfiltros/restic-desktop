@@ -19,6 +19,8 @@ import shutil
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import random
+import string
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -30,7 +32,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
     QGroupBox, QGridLayout, QProgressBar, QListWidget, QListWidgetItem,
     QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit,
-    QProgressDialog, QTreeWidget, QTreeWidgetItem
+    QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog
 )
 from PyQt6.QtGui import QColor, QFont, QTextCursor, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
@@ -38,7 +40,7 @@ from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
 import qdarkstyle
 from qdarkstyle.light.palette import LightPalette
 
-VERSION = "v1.3.0"
+VERSION = "v1.6.2"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 
@@ -77,6 +79,21 @@ stylesheet = (
         }
     """
 )
+
+def generate_password(length: Optional[int] = 32) -> str:
+    punctuations_list = ["!", "@", "#", "%", "&", "_", "*"]
+    letters_and_digits = string.ascii_letters + string.digits
+    punctuations = '!@#%&_*'
+    characters = letters_and_digits + punctuations
+    password = ''.join(random.choice(characters) for _ in range(length))
+
+    if any(char in password for char in punctuations_list):
+        return password
+    else:
+        # If no punctuation is found, add one randomly to the password
+        password += random.choice(punctuations)
+        return password
+    
 # Password encryption key (derived from machine-specific data)
 def get_encryption_key():
     """Generate encryption key from machine-specific system ID (cross-platform)"""
@@ -678,6 +695,8 @@ class RepositoryDialog(QDialog):
             self.path_input.setText(existing_repo.get("path", ""))
         path_layout.addWidget(self.path_input)
         browse_btn = QPushButton("Browse")
+        browse_btn.setFixedWidth(120)
+        browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_btn.clicked.connect(self.browse_path)
         path_layout.addWidget(browse_btn)
         form_layout.addRow("Path/URL:", path_layout)
@@ -685,10 +704,18 @@ class RepositoryDialog(QDialog):
         # Password
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        generate_password_btn = QPushButton("Generate")
+        generate_password_btn.setFixedWidth(120)
+        generate_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        generate_password_btn.clicked.connect(lambda: self.password_input.setText(generate_password()))
         if existing_repo and existing_repo.get("password"):
             decrypted = self.password_manager.decrypt(existing_repo.get("password"))
             self.password_input.setText(decrypted)
-        form_layout.addRow("Password:", self.password_input)
+        
+        password_layout = QHBoxLayout()
+        password_layout.addWidget(self.password_input)
+        password_layout.addWidget(generate_password_btn)
+        form_layout.addRow("Password:", password_layout)
         
         # Show password checkbox
         self.show_password_check = QCheckBox("Show password")
@@ -1301,7 +1328,8 @@ class ResticSettingsManager:
             "last_repository": "",
             "auto_refresh_snapshots": True,
             "snapshot_refresh_interval": 60,  # seconds
-            "log_level": "info"
+            "log_level": "info",
+            "temp_restore_path": "C:\\temp\\restic_restore"  # Temporary location for restore to original
         }
         self.settings = self.load_settings()
     
@@ -1843,6 +1871,11 @@ class ResticManagerWindow(QMainWindow):
             if hasattr(self, 'snapshot_repo_combo') and self.snapshot_repo_combo.currentText():
                 # Only load if not already loaded or needs refresh
                 self.load_snapshots()
+        
+        # Load snapshots when switching to Restore page (if repository selected)
+        if page_index == 3:  # Restore page
+            if hasattr(self, 'restore_repo_combo') and self.restore_repo_combo.currentText():
+                self.load_snapshots_for_restore()
     
     def create_dashboard_page(self):
         """Create dashboard overview page"""
@@ -2073,8 +2106,6 @@ class ResticManagerWindow(QMainWindow):
         refresh_btn.clicked.connect(self.load_snapshots)
         title_layout.addWidget(refresh_btn)
         
-        layout.addLayout(title_layout)
-        
         # Snapshots table
         self.snapshots_table = QTableWidget()
         self.snapshots_table.setColumnCount(6)
@@ -2085,7 +2116,6 @@ class ResticManagerWindow(QMainWindow):
         self.snapshots_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.snapshots_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.snapshots_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        layout.addWidget(self.snapshots_table)
         
         # Snapshot details
         details_group = QGroupBox("Snapshot Details")
@@ -2094,56 +2124,61 @@ class ResticManagerWindow(QMainWindow):
         
         self.snapshot_details = QTextEdit()
         self.snapshot_details.setReadOnly(True)
-        self.snapshot_details.setFont(QFont("Courier", 9))
+        self.snapshot_details.setFont(QFont("Courier", 10))
         self.snapshot_details.setStyleSheet(stylesheet)
         
         details_layout.addWidget(self.snapshot_details)
-        
-        layout.addWidget(details_group)
-        
-        # Snapshot actions
-        actions_layout = QHBoxLayout()
-        actions_layout.addStretch()
         
         browse_content_btn = QPushButton("Browse Content")
         browse_content_btn.setFixedWidth(150)
         browse_content_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_content_btn.clicked.connect(self.browse_snapshot_content)
-        actions_layout.addWidget(browse_content_btn)
         
         diff_btn = QPushButton("Diff with Previous")
         diff_btn.setFixedWidth(150)
         diff_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         diff_btn.clicked.connect(self.diff_snapshots)
-        actions_layout.addWidget(diff_btn)
         
         copy_btn = QPushButton("Copy to Repository")
         copy_btn.setFixedWidth(150)
         copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_btn.setToolTip("Copy this snapshot to another repository")
         copy_btn.clicked.connect(self.copy_snapshot_to_repository)
-        actions_layout.addWidget(copy_btn)
         
         forget_btn = QPushButton("Forget (Delete)")
         forget_btn.setFixedWidth(150)
         forget_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         forget_btn.clicked.connect(self.forget_snapshot)
-        actions_layout.addWidget(forget_btn)
         
         prune_btn = QPushButton("Prune Repository")
         prune_btn.setFixedWidth(150)
         prune_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         prune_btn.clicked.connect(self.prune_repository)
-        actions_layout.addWidget(prune_btn)
         
         unlock_btn = QPushButton("Unlock Repository")
         unlock_btn.setFixedWidth(150)
         unlock_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         unlock_btn.clicked.connect(self.unlock_repository)
-        actions_layout.addWidget(unlock_btn)
         
+        # Snapshot actions
+        actions_layout = QHBoxLayout()
         actions_layout.addStretch()
+        actions_layout.addWidget(browse_content_btn)
+        actions_layout.addWidget(diff_btn)
+        actions_layout.addWidget(copy_btn)
+        actions_layout.addWidget(forget_btn)
+        actions_layout.addWidget(prune_btn)
+        actions_layout.addWidget(unlock_btn)
+        actions_layout.addStretch()
+        
+        
+        layout.addLayout(title_layout)
+        layout.addWidget(self.snapshots_table)
+        layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
         layout.addLayout(actions_layout)
+        layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+        layout.addWidget(details_group)
+        
         
         self.snapshots_table.itemSelectionChanged.connect(self.show_snapshot_details)
         
@@ -2158,7 +2193,6 @@ class ResticManagerWindow(QMainWindow):
         # Title
         title = QLabel("Restore Files")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        layout.addWidget(title)
         
         # Restore form
         form_group = QGroupBox("Restore Configuration")
@@ -2168,13 +2202,12 @@ class ResticManagerWindow(QMainWindow):
         # Repository selection
         self.restore_repo_combo = QComboBox()
         self.restore_repo_combo.setFixedWidth(400)
-        form_layout.addRow("Repository:", self.restore_repo_combo)
         
         # Snapshot selection
         self.restore_snapshot_combo = QComboBox()
         self.restore_snapshot_combo.setFixedWidth(400)
         self.restore_repo_combo.currentTextChanged.connect(self.load_snapshots_for_restore)
-        form_layout.addRow("Snapshot:", self.restore_snapshot_combo)
+        
         
         # Path to restore
         path_layout = QHBoxLayout()
@@ -2186,7 +2219,15 @@ class ResticManagerWindow(QMainWindow):
         browse_btn.setFixedWidth(150)
         browse_btn.clicked.connect(self.browse_snapshot_files)
         path_layout.addWidget(browse_btn)
-        form_layout.addRow("Path to Restore:", path_layout)
+        
+        
+        # Restore to original location checkbox
+        self.restore_to_original_check = QCheckBox("Restore to original location")
+        self.restore_to_original_check.setToolTip("When checked, files will be restored to their original paths from the snapshot")
+        self.restore_to_original_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.restore_to_original_check.stateChanged.connect(self._on_restore_to_original_changed)
+        
+        
         
         # Target directory
         target_layout = QHBoxLayout()
@@ -2195,13 +2236,21 @@ class ResticManagerWindow(QMainWindow):
         self.restore_target_input.setFixedWidth(400)
         target_layout.addWidget(self.restore_target_input)
         
-        target_browse_btn = QPushButton("Browse")
-        target_browse_btn.setFixedWidth(150)
-        target_browse_btn.clicked.connect(self.browse_restore_target)
-        target_layout.addWidget(target_browse_btn)
+        self.target_browse_btn = QPushButton("Browse")
+        self.target_browse_btn.setFixedWidth(150)
+        self.target_browse_btn.clicked.connect(self.browse_restore_target)
+        target_layout.addWidget(self.target_browse_btn)
+        
+        
+        
+        form_layout.addRow("Repository:", self.restore_repo_combo)
+        form_layout.addRow("Snapshot:", self.restore_snapshot_combo)
+        form_layout.addRow("Path to Restore:", path_layout)
+        form_layout.addItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+        form_layout.addRow("", self.restore_to_original_check)
         form_layout.addRow("Restore To:", target_layout)
         
-        layout.addWidget(form_group)
+        
         
         # Restore buttons
         restore_btn = QPushButton("Start Restore")
@@ -2222,12 +2271,12 @@ class ResticManagerWindow(QMainWindow):
         restore_layout.addWidget(restore_btn)
         restore_layout.addStretch()
         
-        layout.addLayout(restore_layout)
+        
         
         # Progress
         self.restore_progress = QProgressBar()
         self.restore_progress.setVisible(False)
-        layout.addWidget(self.restore_progress)
+        
         
         # Log output
         log_group = QGroupBox("Restore Log")
@@ -2238,6 +2287,10 @@ class ResticManagerWindow(QMainWindow):
         self.restore_log.setReadOnly(True)
         log_layout.addWidget(self.restore_log)
         
+        layout.addWidget(title)
+        layout.addWidget(form_group)
+        layout.addLayout(restore_layout)
+        layout.addWidget(self.restore_progress)
         layout.addWidget(log_group)
         
         self.stacked_widget.addWidget(page)
@@ -2360,41 +2413,95 @@ class ResticManagerWindow(QMainWindow):
         
         # Repository
         self.retention_repo_combo = QComboBox()
-        form_layout.addRow("Repository:", self.retention_repo_combo)
+        self.retention_repo_combo.setFixedWidth(300)
+        
         
         # Keep policies
         self.keep_last_spin = QSpinBox()
+        self.keep_last_spin.setToolTip("Number of most recent snapshots to keep (overrides all other rules)")
+        self.keep_last_spin.setFixedWidth(50)
+        self.keep_last_spin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.keep_last_spin.setMinimum(0)
         self.keep_last_spin.setMaximum(1000)
-        form_layout.addRow("Keep Last:", self.keep_last_spin)
+        
         
         self.keep_hourly_spin = QSpinBox()
+        self.keep_hourly_spin.setToolTip("Number of hourly snapshots to keep")
+        self.keep_hourly_spin.setFixedWidth(50)
+        self.keep_hourly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.keep_hourly_spin.setMinimum(0)
         self.keep_hourly_spin.setMaximum(1000)
-        form_layout.addRow("Keep Hourly:", self.keep_hourly_spin)
+        
         
         self.keep_daily_spin = QSpinBox()
+        self.keep_daily_spin.setToolTip("Number of daily snapshots to keep")
+        self.keep_daily_spin.setFixedWidth(50)
+        self.keep_daily_spin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.keep_daily_spin.setMinimum(0)
         self.keep_daily_spin.setMaximum(365)
         self.keep_daily_spin.setValue(7)
-        form_layout.addRow("Keep Daily:", self.keep_daily_spin)
+        
         
         self.keep_weekly_spin = QSpinBox()
+        self.keep_weekly_spin.setToolTip("Number of weekly snapshots to keep")
+        self.keep_weekly_spin.setFixedWidth(50)
+        self.keep_weekly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.keep_weekly_spin.setMinimum(0)
         self.keep_weekly_spin.setMaximum(520)
         self.keep_weekly_spin.setValue(4)
-        form_layout.addRow("Keep Weekly:", self.keep_weekly_spin)
+        
         
         self.keep_monthly_spin = QSpinBox()
+        self.keep_monthly_spin.setToolTip("Number of monthly snapshots to keep")
+        self.keep_monthly_spin.setFixedWidth(50)
+        self.keep_monthly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.keep_monthly_spin.setMinimum(0)
         self.keep_monthly_spin.setMaximum(120)
         self.keep_monthly_spin.setValue(12)
-        form_layout.addRow("Keep Monthly:", self.keep_monthly_spin)
+        
         
         self.keep_yearly_spin = QSpinBox()
+        self.keep_yearly_spin.setToolTip("Number of yearly snapshots to keep")
+        self.keep_yearly_spin.setFixedWidth(50)
+        self.keep_yearly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.keep_yearly_spin.setMinimum(0)
         self.keep_yearly_spin.setMaximum(100)
-        form_layout.addRow("Keep Yearly:", self.keep_yearly_spin)
+        
+        keep_layout_one = QHBoxLayout()
+        keep_layout_one.addWidget(QLabel("Keep Last:"))
+        keep_layout_one.addSpacing(17)
+        keep_layout_one.addWidget(self.keep_last_spin)
+        keep_layout_one.addSpacing(20)
+        keep_layout_one.addWidget(QLabel("Keep Hourly:"))
+        keep_layout_one.addSpacing(9)
+        keep_layout_one.addWidget(self.keep_hourly_spin)
+        keep_layout_one.addSpacing(20)
+        keep_layout_one.addWidget(QLabel("Keep Daily:"))
+        keep_layout_one.addSpacing(5)
+        keep_layout_one.addWidget(self.keep_daily_spin)
+        keep_layout_one.addStretch()
+        
+        keep_layout_two = QHBoxLayout()#
+        keep_layout_two.addWidget(QLabel("Keep Weekly:"))
+        keep_layout_two.addWidget(self.keep_weekly_spin)
+        keep_layout_two.addSpacing(20)
+        keep_layout_two.addWidget(QLabel("Keep Monthly:"))
+        keep_layout_two.addWidget(self.keep_monthly_spin)
+        keep_layout_two.addSpacing(20)
+        keep_layout_two.addWidget(QLabel("Keep Yearly:"))
+        keep_layout_two.addWidget(self.keep_yearly_spin)
+        keep_layout_two.addStretch()
+        
+        
+        form_layout.addRow("Repository:", self.retention_repo_combo)
+        form_layout.addRow(keep_layout_one)
+        form_layout.addRow(keep_layout_two)
+        # form_layout.addRow("Keep Last:", self.keep_last_spin)
+        # form_layout.addRow("Keep Hourly:", self.keep_hourly_spin)
+        # form_layout.addRow("Keep Daily:", self.keep_daily_spin)
+        # form_layout.addRow("Keep Weekly:", self.keep_weekly_spin)
+        # form_layout.addRow("Keep Monthly:", self.keep_monthly_spin)
+        # form_layout.addRow("Keep Yearly:", self.keep_yearly_spin)
         
         layout.addWidget(form_group)
         
@@ -2403,36 +2510,58 @@ class ResticManagerWindow(QMainWindow):
         schedule_layout = QVBoxLayout()
         schedule_group.setLayout(schedule_layout)
         
-        schedule_form = QFormLayout()
-        
         # Frequency
         self.retention_frequency_combo = QComboBox()
         self.retention_frequency_combo.addItems(["Daily", "Weekly", "Monthly"])
         self.retention_frequency_combo.setCurrentText("Weekly")
+        self.retention_frequency_combo.setToolTip("Frequency for running the retention policy automatically")
+        self.retention_frequency_combo.setFixedWidth(150)
+        self.retention_frequency_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         self.retention_frequency_combo.currentTextChanged.connect(self._on_retention_frequency_changed)
-        schedule_form.addRow("Frequency:", self.retention_frequency_combo)
+        
         
         # Time
         self.retention_time_edit = QTimeEdit()
+        self.retention_time_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.retention_time_edit.setToolTip("Time of day to run the retention policy")
+        self.retention_time_edit.setFixedWidth(70)
         self.retention_time_edit.setTime(QTime(2, 0))  # Default 2:00 AM
         self.retention_time_edit.setDisplayFormat("HH:mm")
-        schedule_form.addRow("Time:", self.retention_time_edit)
+        
         
         # Day of week (for weekly)
         self.retention_day_combo = QComboBox()
+        self.retention_day_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.retention_day_combo.setToolTip("Day of the week to run the retention policy")
+        self.retention_day_combo.setFixedWidth(150)
         self.retention_day_combo.addItems(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
         self.retention_day_combo.setCurrentText("Sunday")
-        schedule_form.addRow("Day of Week:", self.retention_day_combo)
+        
         
         # Day of month (for monthly)
         self.retention_dom_spin = QSpinBox()
+        self.retention_dom_spin.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.retention_dom_spin.setToolTip("Day of the month to run the retention policy (1-28)")
+        self.retention_dom_spin.setFixedWidth(150)
         self.retention_dom_spin.setMinimum(1)
         self.retention_dom_spin.setMaximum(28)  # Safe for all months
         self.retention_dom_spin.setValue(1)
         self.retention_dom_spin.setSuffix(" of month")
-        schedule_form.addRow("Day of Month:", self.retention_dom_spin)
+        
         self.retention_dom_spin.setVisible(False)
-        schedule_form.labelForField(self.retention_dom_spin).setVisible(False)
+        
+        schedule_form = QFormLayout()
+        schedule_form.addRow("Time:", self.retention_time_edit)
+        schedule_form.addRow("Frequency:", self.retention_frequency_combo)
+        schedule_form.addRow("Day of Week:", self.retention_day_combo)
+        schedule_form.addRow("Day of Month:", self.retention_dom_spin)
+        # Store reference to form layout for label access
+        self._retention_schedule_form = schedule_form
+        
+        # Hide day of month label initially
+        dom_label = schedule_form.labelForField(self.retention_dom_spin)
+        if dom_label:
+            dom_label.setVisible(False)
         
         schedule_layout.addLayout(schedule_form)
         
@@ -2440,19 +2569,29 @@ class ResticManagerWindow(QMainWindow):
         task_btn_layout = QHBoxLayout()
         
         create_task_btn = QPushButton("Create Scheduled Task")
+        create_task_btn.setFixedWidth(150)
+        create_task_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         create_task_btn.setToolTip("Create a Windows Task Scheduler task to run retention automatically")
         create_task_btn.clicked.connect(self.create_retention_scheduled_task)
-        task_btn_layout.addWidget(create_task_btn)
         
         view_tasks_btn = QPushButton("View Tasks")
+        view_tasks_btn.setFixedWidth(150)
+        view_tasks_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         view_tasks_btn.setToolTip("Open Task Scheduler to view scheduled tasks")
         view_tasks_btn.clicked.connect(self.open_task_scheduler)
-        task_btn_layout.addWidget(view_tasks_btn)
         
         delete_task_btn = QPushButton("Delete Task")
+        delete_task_btn.setFixedWidth(150)
+        delete_task_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_task_btn.setToolTip("Delete the scheduled retention task for this repository")
         delete_task_btn.clicked.connect(self.delete_retention_scheduled_task)
+        
+        #task_btn_layout.addStretch()
+        task_btn_layout.addSpacing(86)
+        task_btn_layout.addWidget(create_task_btn)
+        task_btn_layout.addWidget(view_tasks_btn)
         task_btn_layout.addWidget(delete_task_btn)
+        task_btn_layout.addStretch()
         
         schedule_layout.addLayout(task_btn_layout)
         
@@ -2460,7 +2599,11 @@ class ResticManagerWindow(QMainWindow):
         info_label = QLabel("ℹ️ Creates a system task that runs retention independently of this application")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: #888; font-size: 10px; padding: 5px;")
-        schedule_layout.addWidget(info_label)
+        
+        info_label_layout = QHBoxLayout()
+        info_label_layout.addSpacing(86)  # Align with buttons
+        info_label_layout.addWidget(info_label)
+        schedule_layout.addLayout(info_label_layout)
         
         layout.addWidget(schedule_group)
         
@@ -2469,15 +2612,24 @@ class ResticManagerWindow(QMainWindow):
         manual_layout = QVBoxLayout()
         manual_group.setLayout(manual_layout)
         
-        btn_layout = QHBoxLayout()
+        
         
         dry_run_btn = QPushButton("Dry Run (Preview)")
+        dry_run_btn.setFixedWidth(150)
+        dry_run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         dry_run_btn.clicked.connect(lambda: self.apply_retention(dry_run=True))
-        btn_layout.addWidget(dry_run_btn)
+        
         
         apply_btn = QPushButton("Apply Policy")
+        apply_btn.setFixedWidth(150)
+        apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         apply_btn.clicked.connect(lambda: self.apply_retention(dry_run=False))
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addSpacing(86)  # Align with other buttons
+        btn_layout.addWidget(dry_run_btn)
         btn_layout.addWidget(apply_btn)
+        btn_layout.addStretch()
         
         manual_layout.addLayout(btn_layout)
         layout.addWidget(manual_group)
@@ -2531,7 +2683,7 @@ class ResticManagerWindow(QMainWindow):
         # Title
         title = QLabel("Settings")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        layout.addWidget(title)
+        
         
         # Settings form
         form_group = QGroupBox("Application Settings")
@@ -2539,13 +2691,18 @@ class ResticManagerWindow(QMainWindow):
         form_group.setLayout(form_layout)
         
         # Restic path
-        restic_path_layout = QHBoxLayout()
+        
         self.restic_path_input = QLineEdit()
         self.restic_path_input.setText(self.settings_manager.get("restic_path"))
-        restic_path_layout.addWidget(self.restic_path_input)
+        self.restic_path_input.setFixedWidth(400)
+        
         browse_restic_btn = QPushButton("Browse")
         browse_restic_btn.clicked.connect(self.browse_restic_path)
+        
+        restic_path_layout = QHBoxLayout()
+        restic_path_layout.addWidget(self.restic_path_input)
         restic_path_layout.addWidget(browse_restic_btn)
+        restic_path_layout.addStretch()
         form_layout.addRow("Restic Path:", restic_path_layout)
         
         # Theme
@@ -2559,6 +2716,7 @@ class ResticManagerWindow(QMainWindow):
         ])
         current_theme = self.settings_manager.get("theme")
         self.theme_combo.setCurrentText(current_theme)
+        self.theme_combo.setFixedWidth(150)
         self.theme_combo.currentTextChanged.connect(self.change_theme)
         form_layout.addRow("Theme:", self.theme_combo)
         
@@ -2573,22 +2731,56 @@ class ResticManagerWindow(QMainWindow):
         self.refresh_interval_spin.setMaximum(3600)
         self.refresh_interval_spin.setValue(self.settings_manager.get("snapshot_refresh_interval"))
         self.refresh_interval_spin.setSuffix(" seconds")
+        self.refresh_interval_spin.setFixedWidth(120)
         form_layout.addRow("Refresh Interval:", self.refresh_interval_spin)
         
-        layout.addWidget(form_group)
+        # Temporary restore location
+        self.temp_restore_path_input = QLineEdit()
+        temp_restore_default = self.settings_manager.get("temp_restore_path")
+        self.temp_restore_path_input.setText(temp_restore_default)
+        self.temp_restore_path_input.setFixedWidth(400)
         
-        # Save button
+        browse_temp_restore_btn = QPushButton("Browse")
+        browse_temp_restore_btn.clicked.connect(self.browse_temp_restore_path)
+        
+        temp_restore_layout = QHBoxLayout()
+        temp_restore_layout.addWidget(self.temp_restore_path_input)
+        temp_restore_layout.addWidget(browse_temp_restore_btn)
+        temp_restore_layout.addStretch()
+        form_layout.addRow("Temp Restore Path:", temp_restore_layout)
+        
+        # Help text for temp restore path
+        temp_restore_help = QLabel("Used for 'Restore to original location' feature (files are moved automatically)")
+        temp_restore_help.setStyleSheet("color: gray; font-style: italic; font-size: 9pt;")
+        temp_restore_help.setWordWrap(True)
+        form_layout.addRow("", temp_restore_help)
+        
+        
+        
+        # Buttons layout (Save, Backup, Restore)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addStretch()
+        
         save_btn = QPushButton("Save Settings")
         save_btn.setFixedWidth(150)
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        save_btn_layout = QHBoxLayout()
-        save_btn_layout.addStretch()
-        save_btn_layout.addWidget(save_btn)
-        save_btn_layout.addStretch()
-        
         save_btn.clicked.connect(self.save_settings)
-        layout.addLayout(save_btn_layout)
+        buttons_layout.addWidget(save_btn)
+        
+        backup_btn = QPushButton("Backup Settings")
+        backup_btn.setFixedWidth(150)
+        backup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        backup_btn.clicked.connect(self.backup_settings)
+        buttons_layout.addWidget(backup_btn)
+        
+        restore_btn = QPushButton("Restore Settings")
+        restore_btn.setFixedWidth(150)
+        restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        restore_btn.clicked.connect(self.restore_settings)
+        buttons_layout.addWidget(restore_btn)
+        
+        buttons_layout.addStretch()
+        
         
         # System Dependencies Section
         deps_group = QGroupBox("System Dependencies")
@@ -2601,28 +2793,33 @@ class ResticManagerWindow(QMainWindow):
         deps_layout.addWidget(info_label)
         
         # Restic status
-        restic_status_layout = QHBoxLayout()
-        restic_status_layout.addWidget(QLabel("Restic:"))
+
         self.restic_status_label = QLabel("Click 'Check' to verify installation")
         self.restic_status_label.setMinimumWidth(200)
         self.restic_status_label.setStyleSheet("color: gray; font-style: italic;")
-        restic_status_layout.addWidget(self.restic_status_label)
-        restic_status_layout.addStretch()
+
         
         self.restic_check_btn = QPushButton("Check")
         self.restic_check_btn.setFixedWidth(100)
         self.restic_check_btn.clicked.connect(self.check_restic_installation)
-        restic_status_layout.addWidget(self.restic_check_btn)
+        
         
         self.restic_install_btn = QPushButton("Install")
         self.restic_install_btn.setFixedWidth(100)
         self.restic_install_btn.clicked.connect(self.install_restic)
         self.restic_install_btn.setVisible(False)
+        
+        restic_status_layout = QHBoxLayout()
+        restic_status_layout.addWidget(QLabel("Restic:"))
+        restic_status_layout.addWidget(self.restic_status_label)
+        restic_status_layout.addStretch()
+        restic_status_layout.addWidget(self.restic_check_btn)
         restic_status_layout.addWidget(self.restic_install_btn)
+
         
         deps_layout.addLayout(restic_status_layout)
         
-        layout.addWidget(deps_group)
+        
         
         # Don't auto-check on page load - let users click "Check" manually
         # Auto-checking can cause UI hangs if restic is not properly configured
@@ -2630,17 +2827,15 @@ class ResticManagerWindow(QMainWindow):
         
         # License Management Section
         license_group = QGroupBox("License Information")
-        license_layout = QVBoxLayout()
-        license_group.setLayout(license_layout)
+
         
         # License status
         self.license_status_label = QLabel()
         self.license_status_label.setWordWrap(True)
-        license_layout.addWidget(self.license_status_label)
+        
         
         # Machine ID display
-        machine_id_layout = QHBoxLayout()
-        machine_id_layout.addWidget(QLabel("Machine ID:"))
+
         self.machine_id_display = QLineEdit()
         self.machine_id_display.setFixedWidth(400)
         self.machine_id_display.setReadOnly(True)
@@ -2650,38 +2845,53 @@ class ResticManagerWindow(QMainWindow):
         machine_id_display_layout.addWidget(self.machine_id_display)
         machine_id_display_layout.addStretch()
         
-        machine_id_layout.addLayout(machine_id_display_layout)
+        
         
         copy_machine_id_btn = QPushButton("Copy")
         copy_machine_id_btn.setFixedWidth(80)
         copy_machine_id_btn.clicked.connect(self.copy_machine_id)
+
+        machine_id_layout = QHBoxLayout()
+        machine_id_layout.addWidget(QLabel("Machine ID:"))
+        machine_id_layout.addLayout(machine_id_display_layout)
         machine_id_layout.addWidget(copy_machine_id_btn)
-        license_layout.addLayout(machine_id_layout)
+        machine_id_layout.addStretch()
+        
         
         # License action buttons
-        license_btn_layout = QHBoxLayout()
+        
         
         update_license_btn = QPushButton("Update License Key")
         update_license_btn.setFixedWidth(180)
         update_license_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         
         update_license_btn.clicked.connect(self.update_license_key)
-        license_btn_layout.addWidget(update_license_btn)
+        
         
         refresh_license_btn = QPushButton("Refresh Status")
         refresh_license_btn.setFixedWidth(180)
         refresh_license_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_license_btn.clicked.connect(self.refresh_license_status)
-        license_btn_layout.addWidget(refresh_license_btn)
         
+        license_btn_layout = QHBoxLayout()
+        license_btn_layout.addSpacing(81)  # Align with other buttons
+        license_btn_layout.addWidget(update_license_btn)
+        license_btn_layout.addSpacing(33)
+        license_btn_layout.addWidget(refresh_license_btn)
+        license_btn_layout.addStretch()
+        
+        license_layout = QVBoxLayout()
+        license_group.setLayout(license_layout)
+        license_layout.addWidget(self.license_status_label)
+        license_layout.addLayout(machine_id_layout)
         license_layout.addLayout(license_btn_layout)
         
-        layout.addWidget(license_group)
+        
         
         # Initialize license display
         self.refresh_license_status()
         
-        layout.addStretch()
+        
         
         # Version info
         version_group = QGroupBox("About")
@@ -2696,6 +2906,13 @@ class ResticManagerWindow(QMainWindow):
         version_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version_layout.addWidget(version_info)
         
+        layout.addWidget(title)
+        layout.addWidget(form_group)
+        layout.addLayout(buttons_layout)
+        layout.addWidget(deps_group)
+        layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+        layout.addWidget(license_group)
+        layout.addStretch()
         layout.addWidget(version_group)
         
         self.stacked_widget.addWidget(page)
@@ -3144,10 +3361,49 @@ class ResticManagerWindow(QMainWindow):
         layout = QVBoxLayout()
         dialog.setLayout(layout)
         
+        # Snapshot info table
+        info_table = QTableWidget()
+        info_table.setRowCount(1)
+        info_table.setColumnCount(4)
+        info_table.setHorizontalHeaderLabels(["Snapshot ID", "Time", "Host", "Paths"])
+        info_table.verticalHeader().setVisible(False)
+        info_table.setMaximumHeight(80)
+        info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        
+        # Populate snapshot info
+        snapshot_time = snapshot_data.get("time", "Unknown") if snapshot_data else "Unknown"
+        snapshot_host = snapshot_data.get("hostname", "Unknown") if snapshot_data else "Unknown"
+        snapshot_paths = ", ".join(snapshot_data.get("paths", [])) if snapshot_data and snapshot_data.get("paths") else "Unknown"
+        
+        info_table.setItem(0, 0, QTableWidgetItem(snapshot_id))
+        info_table.setItem(0, 1, QTableWidgetItem(snapshot_time))
+        info_table.setItem(0, 2, QTableWidgetItem(snapshot_host))
+        info_table.setItem(0, 3, QTableWidgetItem(snapshot_paths))
+        
+        info_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        info_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        info_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        info_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        
+        layout.addWidget(info_table)
+        
         # Header
         header_layout = QHBoxLayout()
-        header_layout.addWidget(QLabel(f"<b>Browsing snapshot:</b> {snapshot_id}"))
+        header_layout.addWidget(QLabel("<b>File Browser</b>"))
         header_layout.addStretch()
+        
+        # Add size format selector
+        size_format_label = QLabel("Size:")
+        header_layout.addWidget(size_format_label)
+        
+        size_format_combo = QComboBox()
+        size_format_combo.addItems(["Bytes", "KB", "MB", "GB", "Auto"])
+        size_format_combo.setCurrentText("Auto")
+        size_format_combo.setFixedWidth(80)
+        size_format_combo.setToolTip("Choose how file sizes are displayed")
+        header_layout.addWidget(size_format_combo)
+        
+        header_layout.addSpacing(10)
         
         # Add expand/collapse buttons
         expand_all_btn = QPushButton("Expand All")
@@ -3249,6 +3505,30 @@ class ResticManagerWindow(QMainWindow):
         expand_all_btn.clicked.connect(file_tree.expandAll)
         collapse_all_btn.clicked.connect(file_tree.collapseAll)
         
+        # Function to update all file sizes in the tree
+        def update_tree_sizes():
+            """Update all size displays in the tree according to selected format"""
+            format_mode = size_format_combo.currentText()
+            
+            def update_item_size(item):
+                """Recursively update item and children sizes"""
+                # Update this item's size
+                raw_size = item.data(2, Qt.ItemDataRole.UserRole + 1)
+                if raw_size:
+                    formatted = self.format_size(raw_size, format_mode)
+                    item.setText(2, formatted)
+                
+                # Update children
+                for i in range(item.childCount()):
+                    update_item_size(item.child(i))
+            
+            # Update all root items
+            for i in range(file_tree.topLevelItemCount()):
+                update_item_size(file_tree.topLevelItem(i))
+        
+        # Connect size format combo
+        size_format_combo.currentTextChanged.connect(lambda: update_tree_sizes())
+        
         # Store filter function reference
         dialog._filter_files = filter_tree
         
@@ -3319,51 +3599,117 @@ class ResticManagerWindow(QMainWindow):
             lines = stdout.strip().split('\n')
             
             if lines:
-                # Build tree structure
-                root_items = {}
-                file_count = 0
+                # First pass: collect all paths and find common date prefix to skip
+                all_paths = []
+                path_data = []  # Store (path, permissions, size, date, time) tuples
                 
                 for line in lines:
                     if not line.strip():
                         continue
                     
                     # Parse restic ls --long output
-                    # Format: permissions size date time /path/to/file
-                    parts = line.split()
-                    if len(parts) < 4:
+                    # Format: <permissions> <links> <size> <date> <time> <path>
+                    # The path always starts with "/" - find it and extract from there
+                    
+                    # Find the path by looking for the first '/' character
+                    path_start = line.find('/')
+                    if path_start == -1:
                         continue
                     
-                    permissions = parts[0]
-                    size = parts[1] if len(parts) > 1 else ""
-                    date = parts[2] if len(parts) > 2 else ""
-                    time_str = parts[3] if len(parts) > 3 else ""
-                    path = " ".join(parts[4:]) if len(parts) > 4 else ""
+                    # Extract the fields before the path and the path itself
+                    fields_part = line[:path_start].strip()
+                    path = line[path_start:]  # Starts with /
+                    
+                    # Split the fields part into components
+                    # Restic ls --long format can vary:
+                    # Format 1: permissions links size date time (5 fields)
+                    # Format 2: permissions links user group size date time (7 fields)
+                    # We need to detect which format and parse accordingly
+                    
+                    fields = fields_part.split()
+                    if len(fields) < 5:
+                        # Not enough fields, skip this line
+                        continue
+                    
+                    # The date is always in YYYY-MM-DD format, use this to find it
+                    date_index = -1
+                    for i, field in enumerate(fields):
+                        if len(field) == 10 and field.count('-') == 2:
+                            # Looks like a date (YYYY-MM-DD)
+                            try:
+                                # Verify it's a valid date format
+                                parts = field.split('-')
+                                if len(parts[0]) == 4 and parts[0].isdigit():
+                                    date_index = i
+                                    break
+                            except:
+                                pass
+                    
+                    if date_index < 2:
+                        # Date not found in a valid position, skip
+                        continue
+                    
+                    # Now we know where the date is, we can extract the other fields
+                    permissions = fields[0]
+                    size = fields[date_index - 1]  # Size is just before the date
+                    date = fields[date_index]
+                    time_str = fields[date_index + 1] if date_index + 1 < len(fields) else ""
+                    
+                    # Clean up time string (remove microseconds if present)
+                    if time_str and '.' in time_str:
+                        time_str = time_str.split('.')[0]
                     
                     if not path:
                         continue
                     
                     # Remove leading slash
                     path = path.lstrip('/')
-                    
+                    all_paths.append(path)
+                    path_data.append((path, permissions, size, date, time_str))
+                
+                # Detect and remove common date/timestamp prefix
+                date_prefix_levels = self._detect_date_prefix(all_paths)
+                
+                # Build tree structure
+                root_items = {}
+                file_count = 0
+                original_path_map = {}  # Map stripped path to original full path
+                
+                for path, permissions, size, date, time_str in path_data:
                     # Determine if directory
                     is_dir = permissions.startswith('d')
+                    
+                    # Store original path
+                    original_path = path
                     
                     # Split path into components
                     path_parts = path.split('/')
                     
+                    # Skip date prefix levels
+                    if date_prefix_levels > 0 and len(path_parts) > date_prefix_levels:
+                        path_parts = path_parts[date_prefix_levels:]
+                        # If nothing left after skipping, continue
+                        if not path_parts:
+                            continue
+                    
                     # Build tree structure
                     current_path = ""
+                    current_original_path_parts = original_path.split('/')
                     parent = None
                     
                     for i, part in enumerate(path_parts):
                         if not part:
                             continue
                         
-                        # Build full path up to this point
+                        # Build full path up to this point (stripped version)
                         if current_path:
                             current_path += "/" + part
                         else:
                             current_path = part
+                        
+                        # Build corresponding original path
+                        original_index = date_prefix_levels + i
+                        original_path_up_to_here = "/".join(current_original_path_parts[:original_index + 1])
                         
                         # Check if this item already exists
                         if current_path not in root_items:
@@ -3378,12 +3724,17 @@ class ResticManagerWindow(QMainWindow):
                             
                             # Add size, date, permissions for files
                             if is_last:
-                                item.setText(2, size if not is_dir else "")
+                                # Store raw size in UserRole+1, formatted size in column 2
+                                item.setData(2, Qt.ItemDataRole.UserRole + 1, size)  # Raw size in bytes
+                                item.setText(2, self.format_size(size, "Auto") if not is_dir else "")
+                                # Format modified date/time nicely
                                 item.setText(3, f"{date} {time_str}")
+                                item.setData(3, Qt.ItemDataRole.UserRole, f"{date} {time_str}")  # Store for sorting
                                 item.setText(4, permissions)
                                 if not is_dir:
                                     file_count += 1
                             else:
+                                item.setData(2, Qt.ItemDataRole.UserRole + 1, "0")
                                 item.setText(2, "")
                                 item.setText(3, "")
                                 item.setText(4, "")
@@ -3392,8 +3743,8 @@ class ResticManagerWindow(QMainWindow):
                             if item_type == "Folder":
                                 item.setForeground(0, QColor("#4A9EFF"))
                             
-                            # Store full path as data
-                            item.setData(0, Qt.ItemDataRole.UserRole, "/" + current_path)
+                            # Store original full path as data (for copying)
+                            item.setData(0, Qt.ItemDataRole.UserRole, "/" + original_path_up_to_here)
                             
                             # Add to parent or root
                             if parent:
@@ -3412,11 +3763,18 @@ class ResticManagerWindow(QMainWindow):
                 if dialog:
                     dialog._all_files = [line for line in lines if line.strip()]
                     dialog._file_tree_items = root_items
+                    dialog._date_prefix_levels = date_prefix_levels
+                
+                # Auto-expand single-child folders to skip unnecessary nesting
+                self._auto_expand_single_children(file_tree)
                 
                 if status_label:
-                    status_label.setText(f"Loaded {file_count} files in {len(root_items)} total items")
+                    status_msg = f"Loaded {file_count} files in {len(root_items)} total items"
+                    if date_prefix_levels > 0:
+                        status_msg += f" (skipped {date_prefix_levels} date folder level{'s' if date_prefix_levels > 1 else ''})"
+                    status_label.setText(status_msg)
                 
-                self.log(f"Loaded {file_count} files from snapshot")
+                self.log(f"Loaded {file_count} files from snapshot (skipped {date_prefix_levels} date folder levels)")
             else:
                 # No files
                 item = QTreeWidgetItem()
@@ -3432,6 +3790,115 @@ class ResticManagerWindow(QMainWindow):
             if status_label:
                 status_label.setText("Error loading files")
             self.log(f"Error loading snapshot content: {error_msg}")
+    
+    def _detect_date_prefix(self, paths):
+        """
+        Detect how many leading path levels are date/timestamp folders to skip
+        
+        Date folders typically look like:
+        - 2026-03-13 11:10:22
+        - 2025-05-01 04:54:48
+        - YYYY-MM-DD HH:MM:SS pattern
+        
+        Returns the number of path levels to skip
+        """
+        if not paths:
+            return 0
+        
+        import re
+        
+        # Pattern to match date/timestamp folders
+        # Matches: YYYY-MM-DD, YYYY-MM-DD HH:MM:SS, timestamps, etc.
+        date_patterns = [
+            r'^\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+            r'^\d{2}:\d{2}:\d{2}',  # HH:MM:SS
+            r'^\d{4}$',              # Year only (YYYY)
+            r'^\d{2}-\d{2}-\d{2}',  # YY-MM-DD
+        ]
+        
+        def is_date_component(component):
+            """Check if a path component looks like a date/time"""
+            for pattern in date_patterns:
+                if re.match(pattern, component):
+                    return True
+            return False
+        
+        # Sample first 100 paths to find common date prefix
+        sample_paths = paths[:100] if len(paths) > 100 else paths
+        
+        # Find minimum depth across all paths
+        min_depth = min(len(p.split('/')) for p in sample_paths if p)
+        
+        if min_depth == 0:
+            return 0
+        
+        # Check each level to see if it's consistently a date folder
+        skip_levels = 0
+        
+        for level in range(min_depth):
+            components_at_level = set()
+            date_count = 0
+            total_count = 0
+            
+            for path in sample_paths:
+                parts = path.split('/')
+                if len(parts) > level:
+                    component = parts[level]
+                    components_at_level.add(component)
+                    total_count += 1
+                    if is_date_component(component):
+                        date_count += 1
+            
+            # If most components at this level are dates, skip it
+            # Also check if there are multiple different date values (indicates date folders)
+            if total_count > 0:
+                date_ratio = date_count / total_count
+                # Skip if >80% look like dates, or if there are many different date values
+                if date_ratio > 0.8 or (date_count > 0 and len(components_at_level) > 5):
+                    skip_levels = level + 1
+                else:
+                    # Stop at first non-date level
+                    break
+        
+        return skip_levels
+    
+    def _auto_expand_single_children(self, tree_widget, max_depth=10):
+        """
+        Auto-expand folders that only have one child to skip unnecessary nesting
+        This helps bypass date folders, drive letters, etc. to show meaningful content faster
+        
+        Args:
+            tree_widget: The QTreeWidget to process
+            max_depth: Maximum depth to auto-expand (prevents infinite expansion)
+        """
+        def expand_single_child_recursively(item, depth=0):
+            """Recursively expand items that have exactly one child"""
+            if depth >= max_depth:
+                return
+            
+            # Only expand folders
+            if item.text(1) != "Folder":
+                return
+            
+            # If this item has exactly one child and it's a folder, expand it
+            if item.childCount() == 1:
+                child = item.child(0)
+                item.setExpanded(True)
+                # Recursively expand the child if it also has a single child
+                expand_single_child_recursively(child, depth + 1)
+            # If multiple children, stop expanding but still process them
+            # to handle nested single-child chains
+            elif item.childCount() > 1:
+                # For each child, if it's a single-child chain, expand it too
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    if child.childCount() == 1 and child.text(1) == "Folder":
+                        expand_single_child_recursively(child, depth + 1)
+        
+        # Process all top-level items
+        for i in range(tree_widget.topLevelItemCount()):
+            item = tree_widget.topLevelItem(i)
+            expand_single_child_recursively(item)
     
     def _copy_selected_tree_paths(self, file_tree):
         """Copy selected file paths from tree to clipboard"""
@@ -3462,12 +3929,11 @@ class ResticManagerWindow(QMainWindow):
         paths = []
         for item in selected_items:
             text = item.text()
-            # The format from 'ls --long' is typically: <permissions> <size> <date> <time> <path>
-            # Extract just the path (last part)
-            parts = text.split()
-            if len(parts) >= 5:
-                # Join everything after the time as the path (handles paths with spaces)
-                path = ' '.join(parts[4:])
+            # The format from 'ls --long' is typically: <permissions> <size> <timestamp> <path>
+            # The path always starts with '/' - find it
+            path_start = text.find('/')
+            if path_start != -1:
+                path = text[path_start:]
                 paths.append(path)
             else:
                 paths.append(text)
@@ -3806,6 +4272,8 @@ class ResticManagerWindow(QMainWindow):
             # Cancel button
             cancel_btn = QPushButton("Cancel")
             cancel_btn.setEnabled(False)  # Disable for now - copy can't be easily cancelled
+            cancel_btn.setCursor(Qt.CursorShape.ForbiddenCursor)
+            cancel_btn.setFixedWidth(120)
             cancel_btn.setToolTip("Copy operation cannot be cancelled once started")
             progress_layout.addWidget(cancel_btn)
             
@@ -4462,11 +4930,11 @@ class ResticManagerWindow(QMainWindow):
     
     # Restore Methods
     def browse_snapshot_files(self):
-        """Browse files in selected snapshot"""
+        """Browse files in selected snapshot (uses tree view like browse_snapshot_content)"""
         repo_name = self.restore_repo_combo.currentText()
         snapshot_text = self.restore_snapshot_combo.currentText()
         
-        if not repo_name or snapshot_text == "Select a snapshot":
+        if not repo_name or snapshot_text == "Select a snapshot" or not snapshot_text:
             QMessageBox.warning(self, "Selection Required", "Please select a repository and snapshot first")
             return
         
@@ -4479,54 +4947,279 @@ class ResticManagerWindow(QMainWindow):
         if not repo:
             return
         
-        # List files in snapshot
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "ls", snapshot_id]
+        # Parse snapshot info from combo text
+        try:
+            parts = snapshot_text.split(" - ")
+            snapshot_time = parts[1] if len(parts) > 1 else "Unknown"
+            snapshot_host = parts[2] if len(parts) > 2 else "Unknown"
+            snapshot_paths = parts[3] if len(parts) > 3 else "Unknown"
+        except:
+            snapshot_time = snapshot_host = snapshot_paths = "Unknown"
         
-        # Show loading dialog
-        progress = QProgressDialog("Loading snapshot contents...", "Cancel", 0, 0, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.show()
+        # Build snapshot data
+        snapshot_data = {
+            "id": snapshot_id,
+            "short_id": snapshot_id[:8] if len(snapshot_id) > 8 else snapshot_id,
+            "time": snapshot_time,
+            "hostname": snapshot_host,
+            "paths": [snapshot_paths]
+        }
         
-        # Store worker reference to prevent garbage collection
-        self._browse_files_worker = ResticWorker(self.restic_cmd, args, env)
-        self._browse_files_worker.finished.connect(lambda success, stdout, stderr: self._on_snapshot_files_loaded(success, stdout, stderr, progress))
-        self._browse_files_worker.start()
+        # Show dialog with file tree (reuse the browse_snapshot_content dialog logic)
+        self._show_snapshot_browser_for_restore(snapshot_id, snapshot_data, repo, password, repo_name)
     
-    def _on_snapshot_files_loaded(self, success, stdout, stderr, progress):
-        """Callback when snapshot file list is loaded"""
-        progress.close()
-        
-        if not success:
-            QMessageBox.warning(self, "Error", f"Failed to load snapshot contents:\n{stderr}")
-            return
-        
-        # Show file browser dialog
+    def _show_snapshot_browser_for_restore(self, snapshot_id, snapshot_data, repo, password, repo_name):
+        """Show snapshot browser dialog for restore page"""
+        # Create dialog
         dialog = QDialog(self)
-        dialog.setWindowTitle("Snapshot File Browser")
-        dialog.resize(600, 500)
+        dialog.setWindowTitle(f"Browse Snapshot - {snapshot_id[:8]}")
+        dialog.setMinimumSize(900, 650)
         
         layout = QVBoxLayout()
-        
-        # File list
-        file_list = QPlainTextEdit()
-        file_list.setReadOnly(True)
-        file_list.setPlainText(stdout)
-        layout.addWidget(file_list)
-        
-        # Info label
-        info_label = QLabel("Tip: Copy a file path and paste it into the 'Path to Restore' field")
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        # Close button
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.accept)
-        layout.addWidget(close_btn)
-        
         dialog.setLayout(layout)
+        
+        # Snapshot info table
+        info_table = QTableWidget()
+        info_table.setRowCount(1)
+        info_table.setColumnCount(4)
+        info_table.setHorizontalHeaderLabels(["Snapshot ID", "Time", "Host", "Paths"])
+        info_table.verticalHeader().setVisible(False)
+        info_table.setMaximumHeight(80)
+        info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        
+        # Populate snapshot info
+        snapshot_time = snapshot_data.get("time", "Unknown")
+        snapshot_host = snapshot_data.get("hostname", "Unknown")
+        snapshot_paths = ", ".join(snapshot_data.get("paths", []))
+        
+        info_table.setItem(0, 0, QTableWidgetItem(snapshot_id[:8]))
+        info_table.setItem(0, 1, QTableWidgetItem(snapshot_time))
+        info_table.setItem(0, 2, QTableWidgetItem(snapshot_host))
+        info_table.setItem(0, 3, QTableWidgetItem(snapshot_paths))
+        
+        info_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        info_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        info_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        info_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        
+        layout.addWidget(info_table)
+        
+        # Header
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(QLabel("<b>File Browser</b>"))
+        header_layout.addStretch()
+        
+        # Add size format selector
+        size_format_label = QLabel("Size:")
+        header_layout.addWidget(size_format_label)
+        
+        size_format_combo = QComboBox()
+        size_format_combo.addItems(["Bytes", "KB", "MB", "GB", "Auto"])
+        size_format_combo.setCurrentText("Auto")
+        size_format_combo.setFixedWidth(80)
+        size_format_combo.setToolTip("Choose how file sizes are displayed")
+        header_layout.addWidget(size_format_combo)
+        
+        header_layout.addSpacing(10)
+        
+        # Add expand/collapse buttons
+        expand_all_btn = QPushButton("Expand All")
+        expand_all_btn.setFixedWidth(100)
+        header_layout.addWidget(expand_all_btn)
+        
+        collapse_all_btn = QPushButton("Collapse All")
+        collapse_all_btn.setFixedWidth(100)
+        header_layout.addWidget(collapse_all_btn)
+        
+        # Add refresh button
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setFixedWidth(100)
+        header_layout.addWidget(refresh_btn)
+        
+        layout.addLayout(header_layout)
+        
+        # Search controls
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search:"))
+        
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Search files/folders...")
+        search_input.setFixedWidth(450)
+        search_input.setToolTip("Enter text to filter the tree view")
+        search_layout.addWidget(search_input)
+        
+        search_layout.addStretch()
+        layout.addLayout(search_layout)
+        
+        # File tree view
+        file_tree = QTreeWidget()
+        file_tree.setHeaderLabels(["Name", "Type", "Size", "Modified", "Permissions"])
+        file_tree.setColumnWidth(0, 400)
+        file_tree.setColumnWidth(1, 80)
+        file_tree.setColumnWidth(2, 100)
+        file_tree.setColumnWidth(3, 150)
+        file_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        file_tree.setSortingEnabled(True)
+        file_tree.setAlternatingRowColors(True)
+        layout.addWidget(file_tree)
+        
+        # Status label
+        status_label = QLabel("Loading files...")
+        layout.addWidget(status_label)
+        
+        # Store all files for filtering
+        dialog._all_files = []
+        dialog._file_tree_items = {}  # Map path -> QTreeWidgetItem
+        
+        # Filter function
+        def filter_tree():
+            """Filter tree view based on search text"""
+            search_text = search_input.text().strip().lower()
+            
+            def check_item_matches(item, text):
+                """Check if item or any child matches search text"""
+                if not text:
+                    return True
+                
+                # Check item text
+                item_text = item.text(0).lower()
+                if text in item_text:
+                    return True
+                
+                # Check children
+                for i in range(item.childCount()):
+                    if check_item_matches(item.child(i), text):
+                        return True
+                
+                return False
+            
+            # Filter all root items
+            visible_count = 0
+            for i in range(file_tree.topLevelItemCount()):
+                item = file_tree.topLevelItem(i)
+                matches = check_item_matches(item, search_text)
+                item.setHidden(not matches)
+                if matches:
+                    visible_count += 1
+                    # Expand to show matching children
+                    if search_text:
+                        item.setExpanded(True)
+            
+            # Update status
+            if search_text:
+                status_label.setText(f"Showing {visible_count} matching items")
+            else:
+                status_label.setText(f"Loaded {len(dialog._all_files)} files and folders")
+        
+        # Connect search
+        search_input.textChanged.connect(filter_tree)
+        
+        # Connect expand/collapse buttons
+        expand_all_btn.clicked.connect(file_tree.expandAll)
+        collapse_all_btn.clicked.connect(file_tree.collapseAll)
+        
+        # Function to update all file sizes in the tree
+        def update_tree_sizes():
+            """Update all size displays in the tree according to selected format"""
+            format_mode = size_format_combo.currentText()
+            
+            def update_item_size(item):
+                """Recursively update item and children sizes"""
+                # Update this item's size
+                raw_size = item.data(2, Qt.ItemDataRole.UserRole + 1)
+                if raw_size:
+                    formatted = self.format_size(raw_size, format_mode)
+                    item.setText(2, formatted)
+                
+                # Update children
+                for i in range(item.childCount()):
+                    update_item_size(item.child(i))
+            
+            # Update all root items
+            for i in range(file_tree.topLevelItemCount()):
+                update_item_size(file_tree.topLevelItem(i))
+        
+        # Connect size format combo
+        size_format_combo.currentTextChanged.connect(lambda: update_tree_sizes())
+        
+        # Store filter function reference
+        dialog._filter_files = filter_tree
+        
+        # Connect refresh button
+        refresh_btn.clicked.connect(lambda: self._load_snapshot_content(file_tree, snapshot_id, repo, password, status_label, dialog))
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        
+        copy_path_btn = QPushButton("Copy Selected Path(s)")
+        copy_path_btn.setToolTip("Copy the full paths of selected files/folders to clipboard (or set in restore input if single selection)")
+        copy_path_btn.setFixedWidth(150)
+        copy_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_path_btn.clicked.connect(lambda: self._copy_paths_to_restore_input(file_tree))
+        btn_layout.addWidget(copy_path_btn)
+        
+        btn_layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.setFixedWidth(120)
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(close_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        # Store references for the worker callback
+        dialog._file_list = file_tree
+        dialog._status_label = status_label
+        dialog._repo = repo
+        dialog._password = password
+        dialog._full_id = snapshot_id
+        
+        # Load snapshot content
+        self._load_snapshot_content(file_tree, snapshot_id, repo, password, status_label, dialog)
+        
+        self.log(f"Browsing content of snapshot {snapshot_id[:8]}")
         dialog.exec()
+    
+    def _copy_paths_to_restore_input(self, file_tree):
+        """Copy selected file paths from tree to restore path input"""
+        selected_items = file_tree.selectedItems()
+        if not selected_items:
+            return
+        
+        # Get paths from selected items
+        paths = []
+        for item in selected_items:
+            path = item.data(0, Qt.ItemDataRole.UserRole)
+            if path:
+                paths.append(path)
+        
+        if paths:
+            # If single file, put in restore path input
+            # If multiple, copy to clipboard
+            if len(paths) == 1:
+                self.restore_path_input.setText(paths[0])
+                self.log(f"Path set in restore input: {paths[0]}")
+                QMessageBox.information(None, "Path Set", f"Path has been set in the restore input field")
+            else:
+                clipboard_text = "\n".join(paths)
+                QApplication.clipboard().setText(clipboard_text)
+                self.log(f"Copied {len(paths)} path(s) to clipboard")
+                QMessageBox.information(None, "Copied", f"Copied {len(paths)} path(s) to clipboard")
+    
+    def _on_restore_to_original_changed(self, state):
+        """Handle restore to original location checkbox state change"""
+        is_checked = bool(state)
+        
+        # Enable/disable target input and browse button
+        self.restore_target_input.setEnabled(not is_checked)
+        self.target_browse_btn.setEnabled(not is_checked)
+        
+        # Update placeholder text
+        if is_checked:
+            self.restore_target_input.setPlaceholderText("Files will be restored to their original locations")
+            self.restore_target_input.clear()
+        else:
+            self.restore_target_input.setPlaceholderText("Select target directory for restore")
     
     def browse_restore_target(self):
         """Browse for restore target directory"""
@@ -4540,16 +5233,62 @@ class ResticManagerWindow(QMainWindow):
         """Start file restore operation"""
         repo_name = self.restore_repo_combo.currentText()
         snapshot_text = self.restore_snapshot_combo.currentText()
-        target = self.restore_target_input.text()
         restore_path = self.restore_path_input.text().strip()
+        restore_to_original = self.restore_to_original_check.isChecked()
         
         if not repo_name or snapshot_text == "Select a snapshot" or not snapshot_text:
             QMessageBox.warning(self, "Incomplete", "Please select a repository and snapshot")
             return
         
-        if not target:
-            QMessageBox.warning(self, "Incomplete", "Please select a target directory")
-            return
+        # Determine target directory
+        if restore_to_original:
+            # Use temporary restore location, then move files to original
+            temp_restore_path = self.settings_manager.get("temp_restore_path")
+            target = temp_restore_path
+            self.log(f"Using temporary restore location: {target}")
+        else:
+            target = self.restore_target_input.text()
+            if not target:
+                QMessageBox.warning(self, "Incomplete", "Please select a target directory or check 'Restore to original location'")
+                return
+        
+        # Check available disk space on target location
+        import shutil
+        try:
+            # Get disk usage statistics for the target path
+            # If path doesn't exist, check its parent or drive
+            check_path = target
+            import os
+            while not os.path.exists(check_path) and check_path:
+                parent = os.path.dirname(check_path)
+                if parent == check_path:  # Reached root
+                    break
+                check_path = parent
+            
+            if not check_path:
+                # Fallback to checking the drive letter on Windows
+                import platform
+                if platform.system() == "Windows" and len(target) > 2:
+                    check_path = target[:3]  # e.g., "C:\"
+                else:
+                    check_path = "/"
+            
+            total, used, free = shutil.disk_usage(check_path)
+            free_gb = free / (1024**3)
+            
+            # Warn if less than 1GB free
+            if free_gb < 1:
+                reply = QMessageBox.warning(self, "Low Disk Space",
+                    f"Warning: Only {free_gb:.2f} GB free space available on target location.\n\n"
+                    f"Target: {target}\n\n"
+                    "Continue with restore anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+            else:
+                self.log(f"Available space on target: {free_gb:.2f} GB")
+        except Exception as e:
+            self.log(f"Warning: Could not check disk space: {e}")
         
         # Get snapshot ID
         snapshot_id = self.restore_snapshot_combo.currentData()
@@ -4563,10 +5302,17 @@ class ResticManagerWindow(QMainWindow):
             return
         
         # Confirm restore
-        if restore_path:
-            msg = f"Restore '{restore_path}' from snapshot {snapshot_id} to:\n{target}?"
+        if restore_to_original:
+            location_msg = "ORIGINAL LOCATIONS (this will overwrite existing files!)"
+            warning_emoji = "⚠️ "
         else:
-            msg = f"Restore ALL FILES from snapshot {snapshot_id} to:\n{target}?\n\nThis may take a long time!"
+            location_msg = target
+            warning_emoji = ""
+        
+        if restore_path:
+            msg = f"{warning_emoji}Restore '{restore_path}' from snapshot {snapshot_id} to:\n{location_msg}?"
+        else:
+            msg = f"{warning_emoji}Restore ALL FILES from snapshot {snapshot_id} to:\n{location_msg}?\n\nThis may take a long time!"
         
         reply = QMessageBox.question(self, "Confirm Restore", msg,
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -4582,28 +5328,132 @@ class ResticManagerWindow(QMainWindow):
         env = {"RESTIC_PASSWORD": password} if password else {}
         args = ["-r", repo["path"], "restore", snapshot_id, "--target", target]
         
+        # Use --include filter when a specific path is selected
         if restore_path:
-            args.extend(["--include", restore_path])
+            # Clean up the path - remove leading/trailing slashes and whitespace
+            restore_path_clean = restore_path.strip().lstrip('/')
+            
+            # Use the exact path as stored in the snapshot
+            args.extend(["--include", restore_path_clean])
+            
+            self.log(f"Restore path filter (include): {restore_path_clean}")
         
-        self.log(f"Starting restore from {repo_name}/{snapshot_id} to {target}")
+        self.log(f"Full restore command: restic {' '.join(args)}")
+        
+        # Log restore information
+        if restore_to_original:
+            self.log(f"Starting restore from {repo_name}/{snapshot_id} to temp location (will move to original)")
+        else:
+            self.log(f"Starting restore from {repo_name}/{snapshot_id} to {target}")
+        
         if restore_path:
             self.log(f"Restoring path: {restore_path}")
         else:
-            self.log("Restoring all files...")
+            self.log("Restoring all files from snapshot...")
         
-        # Start restore worker
-        self._restore_worker = ResticWorker(self.restic_cmd, args, env)
-        self._restore_worker.output_received.connect(lambda text: self.restore_log.appendPlainText(text))
+        # Store restore metadata for completion callback
+        self._restore_metadata = {
+            "restore_to_original": restore_to_original,
+            "restore_path": restore_path,
+            "temp_target": target
+        }
+        
+        # Start restore worker with progress monitoring
+        self._restore_worker = ResticWorker(self.restic_cmd, args, env, timeout=3600, use_progress=True)
+        self._restore_worker.progress.connect(lambda text: self.restore_log.appendPlainText(text))
+        self._restore_worker.progress_data.connect(self._on_restore_progress)
         self._restore_worker.finished.connect(self._on_restore_complete)
         self._restore_worker.start()
+    
+    def _on_restore_progress(self, progress_info):
+        """Update restore progress bar"""
+        percent = progress_info.get("percent", 0)
+        self.restore_progress.setRange(0, 100)
+        self.restore_progress.setValue(int(percent))
     
     def _on_restore_complete(self, success, stdout, stderr):
         """Callback when restore is complete"""
         self.restore_progress.setVisible(False)
         
         if success:
-            self.log("Restore completed successfully!")
-            QMessageBox.information(self, "Restore Complete", "Files have been restored successfully!")
+            # Show the actual restic output to verify files were restored
+            if stdout:
+                self.log(f"Restic output: {stdout}")
+            if stderr:
+                self.log(f"Restic stderr: {stderr}")
+            
+            # Check if we need to move files to original location
+            if hasattr(self, '_restore_metadata') and self._restore_metadata.get('restore_to_original'):
+                temp_target = self._restore_metadata['temp_target']
+                restore_path = self._restore_metadata.get('restore_path', '')
+                
+                self.log("Moving files from temp location to original locations...")
+                
+                try:
+                    import shutil
+                    import os
+                    moved_files = []
+                    
+                    # Walk through temp directory to find restored files
+                    for root, dirs, files in os.walk(temp_target):
+                        for filename in files:
+                            src_file = os.path.join(root, filename)
+                            
+                            # Calculate relative path from temp_target
+                            rel_path = os.path.relpath(src_file, temp_target)
+                            
+                            # Convert to original path (e.g., D\temp\file.zip -> D:\temp\file.zip)
+                            # On Windows, the first part is the drive letter
+                            import platform
+                            if platform.system() == "Windows":
+                                parts = rel_path.split(os.sep)
+                                if len(parts) > 0 and len(parts[0]) == 1 and parts[0].isalpha():
+                                    # First part is drive letter
+                                    drive = parts[0] + ":\\"
+                                    dest_path = os.path.join(drive, *parts[1:])
+                                else:
+                                    # Couldn't parse drive, skip
+                                    self.log(f"Warning: Could not parse drive from path: {rel_path}")
+                                    continue
+                            else:
+                                # Unix/Linux - just use the path as-is
+                                dest_path = os.path.join("/", rel_path)
+                            
+                            # Create destination directory if needed
+                            dest_dir = os.path.dirname(dest_path)
+                            os.makedirs(dest_dir, exist_ok=True)
+                            
+                            # Move file
+                            shutil.move(src_file, dest_path)
+                            moved_files.append(dest_path)
+                            self.log(f"Moved: {dest_path}")
+                    
+                    # Clean up temp directory
+                    try:
+                        shutil.rmtree(temp_target)
+                        self.log(f"Cleaned up temp directory: {temp_target}")
+                    except Exception as e:
+                        self.log(f"Warning: Could not remove temp directory: {e}")
+                    
+                    if moved_files:
+                        self.log(f"Successfully moved {len(moved_files)} file(s) to original location(s)")
+                        QMessageBox.information(self, "Restore Complete", 
+                            f"Successfully restored {len(moved_files)} file(s) to original locations!\n\n" +
+                            "\n".join(moved_files[:5]) + 
+                            (f"\n... and {len(moved_files) - 5} more" if len(moved_files) > 5 else ""))
+                    else:
+                        self.log("Warning: No files were moved (restore may have failed)")
+                        QMessageBox.warning(self, "Restore Issue", "Restore completed but no files were found to move.")
+                    
+                except Exception as e:
+                    self.log(f"Error moving files to original locations: {e}")
+                    QMessageBox.warning(self, "Move Error", 
+                        f"Files were restored to temp location but could not be moved:\n{e}\n\n" +
+                        f"Files are in: {temp_target}")
+            else:
+                # Normal restore (not to original location)
+                self.log("Restore completed successfully!")
+                QMessageBox.information(self, "Restore Complete", f"Files have been restored successfully!\n\n{stderr if stderr else stdout}")
         else:
             self.log(f"Restore failed: {stderr}")
             QMessageBox.warning(self, "Restore Failed", f"Restore operation failed:\n{stderr}")
@@ -5518,16 +6368,16 @@ class ResticManagerWindow(QMainWindow):
         is_monthly = frequency == "Monthly"
         
         # Show/hide day of week
-        if hasattr(self, 'retention_day_combo'):
+        if hasattr(self, 'retention_day_combo') and hasattr(self, '_retention_schedule_form'):
             self.retention_day_combo.setVisible(is_weekly)
-            label = self.retention_day_combo.parent().layout().labelForField(self.retention_day_combo)
+            label = self._retention_schedule_form.labelForField(self.retention_day_combo)
             if label:
                 label.setVisible(is_weekly)
         
         # Show/hide day of month
-        if hasattr(self, 'retention_dom_spin'):
+        if hasattr(self, 'retention_dom_spin') and hasattr(self, '_retention_schedule_form'):
             self.retention_dom_spin.setVisible(is_monthly)
-            label = self.retention_dom_spin.parent().layout().labelForField(self.retention_dom_spin)
+            label = self._retention_schedule_form.labelForField(self.retention_dom_spin)
             if label:
                 label.setVisible(is_monthly)
     
@@ -5890,6 +6740,14 @@ $env:RESTIC_PASSWORD = "{password}"
         if file_path:
             self.restic_path_input.setText(file_path)
     
+    def browse_temp_restore_path(self):
+        """Browse for temporary restore directory"""
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Temporary Restore Directory"
+        )
+        if directory:
+            self.temp_restore_path_input.setText(directory)
+    
     def change_theme(self, theme):
         """Change application theme"""
         self.apply_theme(theme)
@@ -5900,6 +6758,7 @@ $env:RESTIC_PASSWORD = "{password}"
         self.settings_manager.set("theme", self.theme_combo.currentText())
         self.settings_manager.set("auto_refresh_snapshots", self.auto_refresh_check.isChecked())
         self.settings_manager.set("snapshot_refresh_interval", self.refresh_interval_spin.value())
+        self.settings_manager.set("temp_restore_path", self.temp_restore_path_input.text())
         
         self.settings_manager.save_settings()
         
@@ -5911,6 +6770,139 @@ $env:RESTIC_PASSWORD = "{password}"
         
         QMessageBox.information(self, "Success", "Settings saved successfully!")
         self.log("Settings saved")
+    
+    def backup_settings(self):
+        """Backup settings to an encrypted file"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Backup Settings", 
+            f"restic_settings_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.encrypted",
+            "Encrypted Files (*.encrypted);;All Files (*.*)"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            # Get current settings as JSON
+            settings_json = json.dumps(self.settings_manager.settings, indent=4)
+            
+            # Encrypt the settings using Fernet
+            from cryptography.fernet import Fernet
+            import base64
+            import hashlib
+            
+            # Ask for encryption password
+            password, ok = QInputDialog.getText(
+                self, "Encryption Password", 
+                "Enter a password to encrypt the backup:",
+                QLineEdit.EchoMode.Password
+            )
+            
+            if not ok or not password:
+                return
+            
+            # Confirm password
+            password_confirm, ok = QInputDialog.getText(
+                self, "Confirm Password", 
+                "Confirm the encryption password:",
+                QLineEdit.EchoMode.Password
+            )
+            
+            if not ok or password != password_confirm:
+                QMessageBox.warning(self, "Password Mismatch", "Passwords do not match!")
+                return
+            
+            # Derive key from password
+            key = base64.urlsafe_b64encode(hashlib.sha256(password.encode()).digest())
+            cipher = Fernet(key)
+            
+            # Encrypt the settings
+            encrypted_data = cipher.encrypt(settings_json.encode())
+            
+            # Save to file
+            with open(file_path, 'wb') as f:
+                f.write(encrypted_data)
+            
+            QMessageBox.information(self, "Backup Complete", 
+                f"Settings backed up successfully to:\n{file_path}")
+            self.log(f"Settings backed up to {file_path}")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Backup Failed", f"Failed to backup settings:\n{e}")
+            self.log(f"Settings backup failed: {e}")
+    
+    def restore_settings(self):
+        """Restore settings from an encrypted backup file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Restore Settings",
+            "",
+            "Encrypted Files (*.encrypted);;All Files (*.*)"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            # Read encrypted file
+            with open(file_path, 'rb') as f:
+                encrypted_data = f.read()
+            
+            # Ask for decryption password
+            password, ok = QInputDialog.getText(
+                self, "Decryption Password", 
+                "Enter the password to decrypt the backup:",
+                QLineEdit.EchoMode.Password
+            )
+            
+            if not ok or not password:
+                return
+            
+            # Decrypt the settings
+            from cryptography.fernet import Fernet
+            import base64
+            import hashlib
+            
+            key = base64.urlsafe_b64encode(hashlib.sha256(password.encode()).digest())
+            cipher = Fernet(key)
+            
+            try:
+                decrypted_data = cipher.decrypt(encrypted_data)
+                settings_json = decrypted_data.decode()
+                restored_settings = json.loads(settings_json)
+            except Exception as e:
+                QMessageBox.warning(self, "Decryption Failed", 
+                    "Failed to decrypt backup. Incorrect password or corrupted file.")
+                return
+            
+            # Confirm restore
+            reply = QMessageBox.question(
+                self, "Confirm Restore",
+                "This will replace all current settings with the backup.\n\n"
+                "The application will restart after restore.\n\n"
+                "Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            
+            # Restore the settings
+            self.settings_manager.settings = restored_settings
+            self.settings_manager.save_settings()
+            
+            QMessageBox.information(self, "Restore Complete", 
+                "Settings restored successfully!\n\n"
+                "The application will now restart.")
+            self.log(f"Settings restored from {file_path}")
+            
+            # Restart application
+            import sys
+            QApplication.quit()
+            os.execl(sys.executable, sys.executable, *sys.argv)
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Restore Failed", f"Failed to restore settings:\n{e}")
+            self.log(f"Settings restore failed: {e}")
     
     # System Dependencies Methods
     def check_restic_installation(self):
@@ -7076,6 +8068,35 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
                 return f"{bytes_value:.2f} {unit}"
             bytes_value /= 1024.0
         return f"{bytes_value:.2f} PB"
+    
+    def format_size(self, size_bytes, format_mode="Auto"):
+        """Format file size according to the specified mode
+        
+        Args:
+            size_bytes: Size in bytes (int or str)
+            format_mode: One of "Bytes", "KB", "MB", "GB", "Auto"
+        
+        Returns:
+            Formatted size string
+        """
+        try:
+            size = int(size_bytes)
+        except (ValueError, TypeError):
+            return ""
+        
+        if size == 0:
+            return ""
+        
+        if format_mode == "Bytes":
+            return f"{size:,}"
+        elif format_mode == "KB":
+            return f"{size / 1024:.2f}"
+        elif format_mode == "MB":
+            return f"{size / (1024 ** 2):.2f}"
+        elif format_mode == "GB":
+            return f"{size / (1024 ** 3):.2f}"
+        else:  # Auto
+            return self.format_bytes(size)
     
     def clear_logs(self):
         """Clear log viewer"""

@@ -1,13 +1,14 @@
 {
     "theme": "amoled-black",
-    "restic_path": "restic",
+    "restic_path": "C:/python_scripts/restic_mngr/restic/windows/restic.exe",
     "repositories": [
         {
             "name": "Data-Music",
             "type": "local",
             "path": "//192.168.0.50/backups/Data/Music",
             "password": "gAAAAABptG3z8nn8JVxADIRx--QdnkdOzts3bLWhvEStjQcuBsNDFEZEIwsyBpuQqjHvNOivBansaVjhtTsRCZ-Zpi732OQ01w==",
-            "last_checked": "2026-03-13 20:05:07"
+            "last_checked": "2026-03-13 20:05:07",
+            "last_prune": "2026-03-16T12:38:25.823289"
         },
         {
             "name": "Data-Pictures",
@@ -36,6 +37,20 @@
             "path": "//192.168.0.50/backups/Music/Production-Midi-Samples",
             "password": "gAAAAABptov4luq7vYlXo-hqHRu8N4oVldnhs1QqSOVbI6c0Aqpim5Y1N7UI15-vKxrfEWAPGd6M4rOOuQ2ASZxgwKe7eLGUOA==",
             "last_checked": "2026-03-15 10:37:44"
+        },
+        {
+            "name": "Production-Other-APPs",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Music/Other Music APP",
+            "password": "gAAAAABpuOcGD55tW9Ityk0qnmk_34u3UJx8A9rGsYZ3KzE04n0HpAxvznu9NX9uZ9dks0QYtEOPIiLcdNaBKOsENzQrrmoTMpvZ4Z3ghuIyJY9623BC7tq4VcSA7gXzew3TTwhbhb6n",
+            "last_checked": "2026-03-17 05:30:46"
+        },
+        {
+            "name": "Production-Presets",
+            "type": "local",
+            "path": "//192.168.0.50/backups/Music/Production-Presets",
+            "password": "gAAAAABpuOiOeoQQ2J0acm4SdzQoofsSJo4YwRtNkVxbYmgwGS2XP9nWjV9li4SXN0r26y1qQfS1pB1sfvLaf4f6121cmnUvIvZ4PJRCulgIqU8EJWDFalrwEa6_-yoWxjKcF5QmjosY",
+            "last_checked": "2026-03-17 05:37:18"
         }
     ],
     "last_repository": "",
@@ -131,6 +146,49 @@
                 "enabled": false
             },
             "created": "2026-03-15 10:40:22"
+        },
+        {
+            "name": "Production-Other-APPs",
+            "repository": "Production-Other-APPs",
+            "paths": [
+                "Y:/3 -DAWs"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 16,
+            "one_file_system": false,
+            "timeout": 0,
+            "exclude_if_present": "",
+            "compression": "auto",
+            "no_cache": false,
+            "ignore_inode": false,
+            "schedule": {
+                "enabled": false
+            },
+            "created": "2026-03-17 05:33:01"
+        },
+        {
+            "name": "Production-Presets",
+            "repository": "Production-Presets",
+            "paths": [
+                "Y:/1 Presets"
+            ],
+            "tags": [],
+            "exclude_patterns": [],
+            "exclude_caches": true,
+            "pack_size": 16,
+            "one_file_system": false,
+            "timeout": 0,
+            "exclude_if_present": "",
+            "compression": "auto",
+            "no_cache": false,
+            "ignore_inode": false,
+            "schedule": {
+                "enabled": false
+            },
+            "created": "2026-03-17 05:38:21"
         }
-    ]
+    ],
+    "temp_restore_path": "C:\\temp\\restic_restore"
 }
