@@ -53,6 +53,24 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 📦 **Copy Snapshots Between Repos**: Fix backup mistakes by moving snapshots to the correct repository
 - 📊 **Comprehensive Repository Stats**: Detailed breakdown showing Original Data Size, Repository Size, Total Saved (dedup+compression), and storage efficiency ratio - no more confusing stats!
 
+### Advanced Repository Verification & Maintenance ✨ NEW
+- 🔍 **Flexible Verification Levels**: Choose the right check for your needs
+  - **Quick Check** (metadata only): Fast verification of repository structure - minutes
+  - **Partial Data Check** (10% sample): Reads 10% of data packs to detect corruption - recommended for regular maintenance
+  - **Full Data Check** (all data): Reads and verifies every byte - thorough but can take hours
+- 🔧 **Rebuild Index**: One-click index reconstruction when needed
+  - Safe operation that never deletes data
+  - Rebuilds repository index from scratch
+  - Automatically recommended when verification detects index issues
+  - Useful after errors, crashes, or corruption
+- 🎯 **Smart Detection**: Automatically detects when index rebuild is needed
+  - Parsing restic output for index warnings
+  - Offers to rebuild immediately when issues detected
+  - Logs recommendations for future reference
+- ⚡ **Optimized Timeouts**: Different timeouts for each verification level
+  - Quick: 30 minutes, Partial: 1 hour, Full: 2 hours
+  - Prevents premature timeout on large repositories
+
 ### Multi-Repository Backup Support ✨ NEW
 - 🔄 **Backup to Multiple Repositories**: Select multiple target repositories for a single backup job
 - 🛡️ **Redundancy & Safety**: Follow the 3-2-1 backup rule (3 copies, 2 different media, 1 offsite)

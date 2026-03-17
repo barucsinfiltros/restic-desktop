@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
     QGroupBox, QGridLayout, QProgressBar, QListWidget, QListWidgetItem,
     QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit,
-    QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog
+    QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog, QRadioButton
 )
 from PyQt6.QtGui import QColor, QFont, QTextCursor, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
@@ -1973,6 +1973,14 @@ class ResticManagerWindow(QMainWindow):
         verify_btn.clicked.connect(self.verify_repository)
         
         repo_stats_header.addWidget(verify_btn)
+        
+        rebuild_index_btn = QPushButton("Rebuild Index")
+        rebuild_index_btn.setFixedWidth(150)
+        rebuild_index_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        rebuild_index_btn.clicked.connect(self.rebuild_index)
+        rebuild_index_btn.setToolTip("Rebuild the repository index (useful after errors or corruption)")
+        repo_stats_header.addWidget(rebuild_index_btn)
+        
         repo_stats_header.addStretch()
         repo_stats_layout.addLayout(repo_stats_header)
         
@@ -4822,7 +4830,177 @@ class ResticManagerWindow(QMainWindow):
         pass
     
     def verify_repository(self):
-        """Verify repository integrity"""
+        """Verify repository integrity with options"""
+        repo_name = self.dashboard_repo_combo.currentText()
+        if not repo_name:
+            QMessageBox.warning(self, "No Repository", "Please select a repository first")
+            return
+        
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            QMessageBox.warning(self, "Error", f"Repository '{repo_name}' not found")
+            return
+        
+        # Show options dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Verify Repository")
+        dialog.setMinimumWidth(500)
+        
+        layout = QVBoxLayout()
+        dialog.setLayout(layout)
+        
+        info_label = QLabel(f"<b>Repository:</b> {repo_name}<br><br>Choose verification level:")
+        layout.addWidget(info_label)
+        
+        # Radio buttons for verification level
+        check_group = QGroupBox("Verification Level")
+        check_layout = QVBoxLayout()
+        
+        quick_radio = QRadioButton("Quick Check (metadata only - fastest)")
+        quick_radio.setChecked(True)
+        quick_radio.setToolTip("Check repository structure and metadata only")
+        check_layout.addWidget(quick_radio)
+        
+        partial_radio = QRadioButton("Partial Data Check (reads 10% of data packs)")
+        partial_radio.setToolTip("Reads a random 10% subset of data to detect corruption")
+        check_layout.addWidget(partial_radio)
+        
+        full_radio = QRadioButton("Full Data Check (reads all data - very slow)")
+        full_radio.setToolTip("Reads and verifies all data in repository - may take hours")
+        check_layout.addWidget(full_radio)
+        
+        check_group.setLayout(check_layout)
+        layout.addWidget(check_group)
+        
+        # Warning for full check
+        warning_label = QLabel(
+            "⚠ <b>Note:</b> Full data check can take many hours for large repositories.\n"
+            "Partial data check (10%) is recommended for regular maintenance."
+        )
+        warning_label.setStyleSheet("color: orange;")
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+        
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Determine check type
+            if partial_radio.isChecked():
+                check_type = "partial"
+                check_label = "Partial Data Check (10%)"
+                timeout = 3600  # 1 hour
+            elif full_radio.isChecked():
+                check_type = "full"
+                check_label = "Full Data Check"
+                timeout = 7200  # 2 hours
+            else:
+                check_type = "quick"
+                check_label = "Quick Check"
+                timeout = 1800  # 30 minutes
+            
+            self.log(f"Running {check_label} on repository {repo_name}...")
+            
+            # Store repo info for callback
+            self._verify_repo_name = repo_name
+            self._verify_check_type = check_type
+            
+            # Show progress dialog with close button
+            self._verify_progress = QDialog(self)
+            self._verify_progress.setWindowTitle(f"Verifying Repository - {check_label}")
+            self._verify_progress.setModal(False)
+            
+            progress_layout = QVBoxLayout()
+            self._verify_progress.setLayout(progress_layout)
+            
+            progress_label = QLabel(
+                f"Running {check_label} on {repo_name}...\n\n"
+                f"This may take several minutes.\n\n"
+                f"You can continue using the application."
+            )
+            progress_layout.addWidget(progress_label)
+            
+            # Add close button
+            close_btn = QPushButton("Close (operation continues in background)")
+            close_btn.clicked.connect(self._verify_progress.accept)
+            progress_layout.addWidget(close_btn)
+            
+            self._verify_progress.show()
+            
+            # Build command based on check type
+            env = {"RESTIC_PASSWORD": password} if password else {}
+            args = ["-r", repo["path"], "check"]
+            
+            if check_type == "partial":
+                args.extend(["--read-data-subset=10%"])
+            elif check_type == "full":
+                args.extend(["--read-data"])
+            # Quick check has no additional args
+            
+            self._verify_worker = ResticWorker(self.restic_cmd, args, env, timeout=timeout)
+            self._verify_worker.finished.connect(self._on_verify_complete)
+            self._verify_worker.start()
+    
+    def _on_verify_complete(self, success, stdout, stderr):
+        """Callback when verification completes"""
+        repo_name = self._verify_repo_name
+        check_type = getattr(self, '_verify_check_type', 'quick')
+        
+        # Close progress dialog if still open
+        if hasattr(self, '_verify_progress'):
+            try:
+                self._verify_progress.close()
+                self._verify_progress.deleteLater()
+            except:
+                pass
+        
+        # Check if output suggests rebuilding index
+        output_combined = (stdout or "") + (stderr or "")
+        should_rebuild_index = (
+            "rebuild-index" in output_combined.lower() or 
+            "index rebuild" in output_combined.lower() or
+            "index is not complete" in output_combined.lower()
+        )
+        
+        if success:
+            check_label = {"quick": "Quick Check", "partial": "Partial Data Check", "full": "Full Data Check"}.get(check_type, "Check")
+            message = f"Repository '{repo_name}' verified successfully!\n\n{check_label} completed.\n\n{stdout[:400]}"
+            
+            if should_rebuild_index:
+                message += "\n\n⚠ Index rebuild recommended. Click 'Rebuild Index' button."
+            
+            QMessageBox.information(self, "Verification Complete", message)
+            self.log(f"Repository {repo_name} verified successfully ({check_type})")
+            
+            if should_rebuild_index:
+                self.log(f"Warning: Index rebuild recommended for {repo_name}")
+        else:
+            error_msg = stderr if stderr else "Unknown error"
+            
+            if should_rebuild_index:
+                reply = QMessageBox.question(
+                    self,
+                    "Verification Failed - Index Issues Detected",
+                    f"Repository verification failed with index issues:\n\n{error_msg[:400]}\n\n"
+                    "The index may need to be rebuilt. Rebuild now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.rebuild_index()
+            else:
+                QMessageBox.warning(self, "Verification Failed",
+                                   f"Repository verification failed:\n\n{error_msg[:500]}")
+            
+            self.log(f"Repository {repo_name} verification failed: {error_msg}")
+    
+    def rebuild_index(self):
+        """Rebuild repository index"""
         repo_name = self.dashboard_repo_combo.currentText()
         if not repo_name:
             QMessageBox.warning(self, "No Repository", "Please select a repository first")
@@ -4834,67 +5012,76 @@ class ResticManagerWindow(QMainWindow):
             return
         
         reply = QMessageBox.question(
-            self, "Verify Repository",
-            f"Verify integrity of repository '{repo_name}'?\n\n"
-            "This will check all data and may take a long time.\n\n"
+            self, "Rebuild Index",
+            f"Rebuild index for repository '{repo_name}'?\n\n"
+            "This recreates the repository index from scratch.\n"
+            "Useful after errors, corruption, or when recommended by verify.\n\n"
+            "This operation is safe and won't delete any data.\n\n"
             "Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.log(f"Verifying repository {repo_name}...")
+            self.log(f"Rebuilding index for repository {repo_name}...")
             
             # Store repo info for callback
-            self._verify_repo_name = repo_name
+            self._rebuild_index_repo_name = repo_name
             
-            # Show progress dialog with close button
-            self._verify_progress = QDialog(self)
-            self._verify_progress.setWindowTitle("Verifying Repository")
-            self._verify_progress.setModal(False)
+            # Show progress dialog
+            self._rebuild_index_progress = QDialog(self)
+            self._rebuild_index_progress.setWindowTitle("Rebuilding Index")
+            self._rebuild_index_progress.setModal(False)
             
             layout = QVBoxLayout()
-            self._verify_progress.setLayout(layout)
+            self._rebuild_index_progress.setLayout(layout)
             
-            label = QLabel(f"Verifying {repo_name}...\n\nThis may take several minutes.\n\nYou can continue using the application.")
+            label = QLabel(
+                f"Rebuilding index for {repo_name}...\n\n"
+                f"This may take several minutes.\n\n"
+                f"You can continue using the application."
+            )
             layout.addWidget(label)
             
             # Add close button
             close_btn = QPushButton("Close (operation continues in background)")
-            close_btn.clicked.connect(self._verify_progress.accept)
+            close_btn.clicked.connect(self._rebuild_index_progress.accept)
             layout.addWidget(close_btn)
             
-            self._verify_progress.show()
+            self._rebuild_index_progress.show()
             
-            # Execute restic check command in background thread with longer timeout (30 minutes)
+            # Execute restic rebuild-index command
             env = {"RESTIC_PASSWORD": password} if password else {}
-            args = ["-r", repo["path"], "check"]
+            args = ["-r", repo["path"], "rebuild-index"]
             
-            self._verify_worker = ResticWorker(self.restic_cmd, args, env, timeout=1800)  # 30 minutes
-            self._verify_worker.finished.connect(self._on_verify_complete)
-            self._verify_worker.start()
+            self._rebuild_index_worker = ResticWorker(self.restic_cmd, args, env, timeout=1800)  # 30 minutes
+            self._rebuild_index_worker.finished.connect(self._on_rebuild_index_complete)
+            self._rebuild_index_worker.start()
     
-    def _on_verify_complete(self, success, stdout, stderr):
-        """Callback when verification completes"""
-        repo_name = self._verify_repo_name
+    def _on_rebuild_index_complete(self, success, stdout, stderr):
+        """Callback when index rebuild completes"""
+        repo_name = self._rebuild_index_repo_name
         
         # Close progress dialog if still open
-        if hasattr(self, '_verify_progress'):
+        if hasattr(self, '_rebuild_index_progress'):
             try:
-                self._verify_progress.close()
-                self._verify_progress.deleteLater()
+                self._rebuild_index_progress.close()
+                self._rebuild_index_progress.deleteLater()
             except:
                 pass
         
         if success:
-            QMessageBox.information(self, "Verification Complete",
-                                  f"Repository '{repo_name}' verified successfully!\n\n{stdout[:500]}")
-            self.log(f"Repository {repo_name} verified successfully")
+            QMessageBox.information(
+                self, "Index Rebuilt",
+                f"Repository index for '{repo_name}' rebuilt successfully!\n\n{stdout[:500]}"
+            )
+            self.log(f"Repository index rebuilt successfully for {repo_name}")
         else:
             error_msg = stderr if stderr else "Unknown error"
-            QMessageBox.warning(self, "Verification Failed",
-                               f"Repository verification failed:\n\n{error_msg[:500]}")
-            self.log(f"Repository {repo_name} verification failed: {error_msg}")
-            self.log(f"Repository {repo_name} verification failed: {error_msg}")
+            QMessageBox.warning(
+                self, "Rebuild Failed",
+                f"Failed to rebuild repository index:\n\n{error_msg[:500]}"
+            )
+            self.log(f"Repository index rebuild failed for {repo_name}: {error_msg}")
     
     def load_snapshots_for_restore(self):
         """Load snapshots into restore dropdown"""
