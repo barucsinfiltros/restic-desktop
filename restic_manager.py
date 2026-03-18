@@ -40,7 +40,7 @@ from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
 import qdarkstyle
 from qdarkstyle.light.palette import LightPalette
 
-VERSION = "v1.6.2"
+VERSION = "v1.6.5"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 
@@ -1063,6 +1063,10 @@ class BackupJobDialog(QDialog):
         
         # Frequency
         self.frequency_combo = QComboBox()
+        self.frequency_combo.setToolTip("How often to run the backup job")
+        self.frequency_combo.setFixedWidth(150)
+        self.frequency_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        
         self.frequency_combo.addItems(["Daily", "Weekly", "Monthly"])
         if existing_job and existing_job.get("schedule"):
             freq = existing_job["schedule"].get("frequency", "daily")
@@ -1071,6 +1075,10 @@ class BackupJobDialog(QDialog):
         
         # Time
         self.time_edit = QTimeEdit()
+        self.time_edit.setToolTip("Time to run the backup job")
+        self.time_edit.setFixedWidth(150)
+        self.time_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        
         self.time_edit.setDisplayFormat("HH:mm")
         if existing_job and existing_job.get("schedule") and existing_job["schedule"].get("time"):
             from datetime import datetime
@@ -1092,7 +1100,8 @@ class BackupJobDialog(QDialog):
         for day in days:
             cb = QCheckBox(day)
             if day in selected_days or not selected_days:  # Default all checked if none specified
-                cb.setChecked(not selected_days)  # Check all by default only if no existing selection
+                #cb.setChecked(not selected_days)  # Check all by default only if no existing selection
+                cb.setChecked(False if not selected_days else True)  # Uncheck if there are specific selected days
             if day in selected_days:
                 cb.setChecked(True)
             self.day_checkboxes[day] = cb
@@ -1109,6 +1118,15 @@ class BackupJobDialog(QDialog):
         else:
             self.run_if_missed_check.setChecked(True)
         schedule_settings_layout.addRow(self.run_if_missed_check)
+        
+        # Pause after completion
+        self.pause_after_completion_check = QCheckBox("Pause after completion (wait for keypress)")
+        self.pause_after_completion_check.setToolTip("Keep the window open after backup completes so you can review the results")
+        if existing_job and existing_job.get("schedule"):
+            self.pause_after_completion_check.setChecked(existing_job["schedule"].get("pause_after_completion", False))
+        else:
+            self.pause_after_completion_check.setChecked(False)
+        schedule_settings_layout.addRow(self.pause_after_completion_check)
         
         schedule_layout.addRow(self.schedule_settings_widget)
         
@@ -1186,6 +1204,7 @@ class BackupJobDialog(QDialog):
                 "time": self.time_edit.time().toString("HH:mm"),
                 "days": selected_days,
                 "run_if_missed": self.run_if_missed_check.isChecked(),
+                "pause_after_completion": self.pause_after_completion_check.isChecked(),
                 "last_run": None
             }
         else:
@@ -1382,7 +1401,8 @@ class ResticSettingsManager:
 class SchedulerManager:
     """Cross-platform scheduler manager for Windows Task Scheduler and Linux/macOS cron"""
     
-    def __init__(self):
+    def __init__(self, settings_manager):
+        self.settings_manager = settings_manager
         self.is_windows = sys.platform == "win32"
         self.is_linux = sys.platform.startswith("linux")
         self.is_macos = sys.platform == "darwin"
@@ -1428,11 +1448,6 @@ class SchedulerManager:
         """Create a Windows scheduled task"""
         try:
             schedule = job_data.get("schedule")
-            script_path = os.path.abspath(sys.argv[0])
-            python_exe = sys.executable
-            
-            # Build command to run job
-            command = f'"{python_exe}" "{script_path}" --run-job "{job_name}"'
             
             # Build task name (sanitize for Task Scheduler)
             task_name = f"ResticBackup_{job_name.replace(' ', '_')}"
@@ -1440,12 +1455,188 @@ class SchedulerManager:
             # Delete existing task if it exists
             self._delete_windows_task(task_name)
             
+            # Generate PowerShell script with restic command
+            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
+            os.makedirs(script_dir, exist_ok=True)
+            script_file = os.path.join(script_dir, f"{task_name}.ps1")
+            
+            # Get repository name (support both old and new format)
+            repo_name = None
+            if "repositories" in job_data and job_data["repositories"]:
+                # New format - use first repository
+                repo_name = job_data["repositories"][0]
+            elif "repository" in job_data:
+                # Old format - single repository
+                repo_name = job_data["repository"]
+            else:
+                return False, "No repository configured for this backup job"
+            
+            # Get repository details
+            repositories = self.settings_manager.get("repositories")
+            repo = next((r for r in repositories if r["name"] == repo_name), None)
+            if not repo:
+                return False, f"Repository '{repo_name}' not found"
+            
+            # Decrypt password
+            password = ""
+            if repo.get("password"):
+                password = self.settings_manager.password_manager.decrypt(repo["password"])
+            
+            # Get restic path
+            restic_path = self.settings_manager.get("restic_path")
+            
+            # Build restic command arguments
+            restic_args = ["-r", repo["path"], "backup"]
+            
+            # Add paths
+            restic_args.extend(job_data["paths"])
+            
+            # Add tags
+            if job_data.get("tags"):
+                for tag in job_data["tags"]:
+                    restic_args.extend(["--tag", tag])
+            
+            # Add exclude patterns
+            if job_data.get("exclude_patterns"):
+                for pattern in job_data["exclude_patterns"]:
+                    restic_args.extend(["--exclude", pattern])
+            
+            # Add options
+            if job_data.get("exclude_caches", True):
+                restic_args.append("--exclude-caches")
+            
+            if job_data.get("pack_size", 0) > 0:
+                restic_args.extend(["--pack-size", str(job_data["pack_size"])])
+            
+            if job_data.get("one_file_system", False):
+                restic_args.append("--one-file-system")
+            
+            if job_data.get("exclude_if_present"):
+                restic_args.extend(["--exclude-if-present", job_data["exclude_if_present"]])
+            
+            # Compression
+            compression = job_data.get("compression", "auto")
+            if compression and compression != "off":
+                restic_args.extend(["--compression", compression])
+            
+            # No cache
+            if job_data.get("no_cache", False):
+                restic_args.append("--no-cache")
+            
+            # Ignore inode
+            if job_data.get("ignore_inode", False):
+                restic_args.append("--ignore-inode")
+            
+            # Build PowerShell script content
+            note = ""
+            if "repositories" in job_data and len(job_data["repositories"]) > 1:
+                note = f"\n# Note: This job has {len(job_data['repositories'])} repositories configured, but scheduled tasks only backup to the first one."
+            
+            # Create encrypted password file using Windows DPAPI
+            password_file = os.path.join(script_dir, f"{task_name}.password")
+            if password:
+                # Use PowerShell to encrypt the password with DPAPI
+                ps_encrypt_cmd = f'''
+$password = ConvertTo-SecureString -String "{password}" -AsPlainText -Force
+$password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Encoding utf8
+'''
+                try:
+                    result = subprocess.run(
+                        ["powershell.exe", "-Command", ps_encrypt_cmd],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace'
+                    )
+                    if result.returncode != 0:
+                        return False, f"Failed to encrypt password: {result.stderr}"
+                except Exception as e:
+                    return False, f"Error encrypting password: {str(e)}"
+            
+            ps_script = f"""# Restic Backup Script for job: {job_name}
+# Generated by Restic Manager
+# Repository: {repo['path']}{note}
+
+# Set error action preference
+$ErrorActionPreference = "Stop"
+
+# Load and decrypt repository password from encrypted file
+$passwordFile = "{password_file}"
+if (Test-Path $passwordFile) {{
+    $securePassword = Get-Content $passwordFile | ConvertTo-SecureString
+    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+    $env:RESTIC_PASSWORD = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+}} else {{
+    Write-Host "Error: Password file not found: $passwordFile"
+    exit 1
+}}
+
+# Run restic backup
+$resticPath = "{restic_path}"
+$arguments = @(
+"""
+            
+            # Add each argument on a new line
+            for arg in restic_args:
+                # Escape quotes in argument
+                escaped_arg = arg.replace('"', '`"')
+                ps_script += f'    "{escaped_arg}",\n'
+            
+            # Remove trailing comma and newline, close the array
+            ps_script = ps_script.rstrip(',\n') + '\n)\n\n'
+            
+            # Add pause after completion if enabled
+            pause_code = ""
+            if schedule.get("pause_after_completion", False):
+                pause_code = "\n    Write-Host ''\n    Write-Host 'Press any key to continue...'\n    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')\n"
+            
+            ps_script += """# Execute restic
+Write-Host "Starting backup job: {job_name}"
+Write-Host "Repository: {repo_path}"
+Write-Host "Restic command: $resticPath $($arguments -join ' ')"
+
+try {{
+    & $resticPath $arguments
+    $exitCode = $LASTEXITCODE
+    
+    if ($exitCode -eq 0) {{
+        Write-Host "Backup completed successfully"{pause_code}
+        exit 0
+    }} else {{
+        Write-Host "Backup failed with exit code: $exitCode"{pause_code}
+        exit $exitCode
+    }}
+}} catch {{
+    Write-Host "Error running backup: $_"{pause_code}
+    exit 1
+}} finally {{
+    # Clear password from environment
+    Remove-Item env:RESTIC_PASSWORD -ErrorAction SilentlyContinue
+}}
+""".format(job_name=job_name, repo_path=repo['path'], pause_code=pause_code)
+            
+            # Write PowerShell script to file
+            with open(script_file, 'w', encoding='utf-8') as f:
+                f.write(ps_script)
+            
+            # Build command to run PowerShell script
+            command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_file}"'
+            
             # Build schedule trigger based on frequency
             frequency = schedule.get("frequency", "daily")
             time_str = schedule.get("time", "02:00")
             
+            # Build schtasks command
+            schtasks_cmd = [
+                "schtasks", "/CREATE",
+                "/TN", task_name,
+                "/TR", command,
+            ]
+            
+            # Add schedule type parameters
             if frequency == "daily":
-                schedule_type = "/SC DAILY"
+                schtasks_cmd.extend(["/SC", "DAILY"])
             elif frequency == "weekly":
                 days = schedule.get("days", [])
                 if not days:
@@ -1454,25 +1645,14 @@ class SchedulerManager:
                 day_map = {"Mon": "MON", "Tue": "TUE", "Wed": "WED", "Thu": "THU", 
                           "Fri": "FRI", "Sat": "SAT", "Sun": "SUN"}
                 schtasks_days = ",".join([day_map.get(d, d) for d in days])
-                schedule_type = f'/SC WEEKLY /D {schtasks_days}'
+                schtasks_cmd.extend(["/SC", "WEEKLY", "/D", schtasks_days])
             elif frequency == "monthly":
-                schedule_type = "/SC MONTHLY"
+                schtasks_cmd.extend(["/SC", "MONTHLY"])
             else:
-                schedule_type = "/SC DAILY"
+                schtasks_cmd.extend(["/SC", "DAILY"])
             
-            # Build schtasks command
-            schtasks_cmd = [
-                "schtasks", "/CREATE",
-                "/TN", task_name,
-                "/TR", command,
-                schedule_type,
-                "/ST", time_str,
-                "/F"  # Force create, overwrite if exists
-            ]
-            
-            # Add "run if missed" setting
-            if schedule.get("run_if_missed", True):
-                schtasks_cmd.extend(["/Z"])  # Run after missed schedule
+            # Add time and force parameters
+            schtasks_cmd.extend(["/ST", time_str, "/F"])
             
             # Execute schtasks command
             result = subprocess.run(
@@ -1484,7 +1664,8 @@ class SchedulerManager:
             )
             
             if result.returncode == 0:
-                return True, f"Scheduled task '{task_name}' created successfully (Windows Task Scheduler)"
+                password_note = " (password encrypted with DPAPI)" if password else ""
+                return True, f"Scheduled task '{task_name}' created successfully{password_note}"
             else:
                 return False, f"Failed to create task: {result.stderr}"
         
@@ -1508,6 +1689,25 @@ class SchedulerManager:
                 encoding='utf-8',
                 errors='replace'
             )
+            
+            # Delete PowerShell script file if it exists
+            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
+            script_file = os.path.join(script_dir, f"{task_name}.ps1")
+            password_file = os.path.join(script_dir, f"{task_name}.password")
+            
+            if os.path.exists(script_file):
+                try:
+                    os.remove(script_file)
+                except Exception:
+                    # Silently ignore if we can't delete the script file
+                    pass
+            
+            if os.path.exists(password_file):
+                try:
+                    os.remove(password_file)
+                except Exception:
+                    # Silently ignore if we can't delete the password file
+                    pass
             
             # Task deletion succeeds even if task doesn't exist
             return True, f"Task '{task_name}' deleted"
@@ -1730,7 +1930,7 @@ class ResticManagerWindow(QMainWindow):
         
         self._update_splash("Initializing settings...")
         self.settings_manager = ResticSettingsManager()
-        self.scheduler_manager = SchedulerManager()
+        self.scheduler_manager = SchedulerManager(self.settings_manager)
         self.restic_cmd = ResticCommand(
             restic_path=self.settings_manager.get("restic_path"),
             debug=DEBUG_MODE

@@ -95,17 +95,26 @@
         },
         {
             "name": "Test",
-            "repository": "Data-Test",
+            "repositories": [
+                "Data-Test"
+            ],
             "paths": [
                 "D:/temp/testBackup"
             ],
             "tags": [],
             "exclude_patterns": [],
             "exclude_caches": true,
-            "pack_size": 0,
+            "pack_size": 16,
             "one_file_system": false,
+            "timeout": 7200,
             "exclude_if_present": "",
-            "created": "2026-03-13 15:54:18"
+            "compression": "auto",
+            "no_cache": false,
+            "ignore_inode": false,
+            "schedule": {
+                "enabled": false
+            },
+            "created": "2026-03-18 10:01:09"
         },
         {
             "name": "Music Production",

@@ -4,6 +4,22 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 ## What's New in Recent Updates
 
+### Automated Backup Scheduling ✨ NEW
+- 📅 **Task Scheduler Integration**: Create scheduled tasks to automatically run backup jobs
+- 🪟 **Windows Task Scheduler**: One-click scheduled backup creation with `schtasks.exe`
+- ⏰ **Flexible Scheduling**: Choose Daily, Weekly, or Monthly backup runs
+- 🕐 **Custom Time Selection**: Pick exact time for backups (e.g., 2:00 AM for off-hours)
+- 📆 **Day Selection**: Specify which days to run (Weekly) or day of month (Monthly)
+- ⚙️ **Independent Operation**: Scheduled tasks run restic directly - no Python/GUI needed
+- 🔒 **Secure Password Storage**: Uses Windows DPAPI to encrypt repository passwords
+- 📜 **Auto-Generated Scripts**: PowerShell scripts with complete restic commands
+- 🔐 **User-Specific Encryption**: Password files can only be decrypted by the Windows user who created them
+- ⏸️ **Pause After Completion**: Optional setting to keep window open after backup for review
+- 🗑️ **Task Management**: View, create, update, and delete scheduled tasks from the app
+- 🎯 **Smart Script Generation**: Includes all job settings (paths, tags, excludes, compression, etc.)
+- 📂 **Organized Storage**: Scripts stored in `scheduled_tasks/` folder with job name
+- ✅ **Multi-Repository Support**: For jobs with multiple repositories, schedules backup to the first one
+
 ### Automated Retention Scheduling ✨ NEW
 - 📅 **Task Scheduler Integration**: Create scheduled tasks to automatically clean up old snapshots
 - 🪟 **Windows Task Scheduler**: One-click task creation with `schtasks.exe`
@@ -367,6 +383,41 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - Buttons always visible at bottom
   - Clean, organized layout
 
+#### Backup Job Scheduling ✅ FULLY IMPLEMENTED
+- **Schedule Configuration** in Backup Job Editor:
+  - **Enable Scheduling**: Checkbox to enable/disable scheduled backups
+  - **Frequency Options**: Daily, Weekly, or Monthly
+  - **Time Selection**: Pick exact time for backup execution (e.g., 2:00 AM)
+  - **Day Selection for Weekly**: Choose specific days (Mon-Sun) to run backups
+  - **Run if Missed**: Auto-run at next logon if scheduled time was missed (optional)
+  - **Pause After Completion**: Keep window open after backup finishes for result review (optional)
+- **Windows Task Scheduler Integration**:
+  - **One-Click Creation**: Creates scheduled task via `schtasks.exe` command
+  - **Independent Execution**: Generated PowerShell scripts run restic directly (no Python/GUI needed)
+  - **Auto-Generated Scripts**: Complete backup command in PowerShell script format
+  - **Script Storage**: Scripts saved in `scheduled_tasks/` folder with job name
+  - **Secure Password Storage**: Uses Windows DPAPI to encrypt repository passwords
+    - Password stored in separate `.password` file (encrypted)
+    - Only the Windows user who created the task can decrypt it
+    - PowerShell script loads and decrypts password at runtime
+    - Password cleared from memory after backup completes
+  - **Complete Configuration**: Scripts include all job settings:
+    - Repository path and credentials
+    - All backup paths
+    - Tags, exclude patterns, compression settings
+    - Pack size, cache options, and all other advanced settings
+  - **Task Management**:
+    - Create new scheduled tasks when job is saved
+    - Update existing tasks when job configuration changes
+    - Delete tasks when jobs are deleted
+    - View task status in Windows Task Scheduler
+- **Multi-Repository Note**: For jobs with multiple repositories, scheduled task backs up to the first repository only
+- **Pause After Completion Feature**:
+  - When enabled, PowerShell window stays open after backup
+  - Shows "Press any key to continue..." prompt
+  - Allows reviewing success/failure status and any warnings
+  - Useful for testing and troubleshooting scheduled backups
+
 #### Repository Statistics & Verification ✅ FULLY IMPLEMENTED
 - **Comprehensive Dashboard Repository Stats**:
   - Repository selector dropdown
@@ -454,12 +505,15 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 #### Medium Priority
 
-5. **Backup Scheduling**
-   - Windows Task Scheduler integration
-   - Cron-like scheduler UI
-   - Schedule management for backup jobs
-   - Automated backup execution
-   - NOTE: **Retention scheduling is now implemented!** See Retention Policy page for automated cleanup scheduling
+5. **Backup Scheduling** ✅ IMPLEMENTED
+   - ✅ Windows Task Scheduler integration (schtasks.exe)
+   - ✅ Schedule management for backup jobs (Daily/Weekly/Monthly)
+   - ✅ Automated backup execution (independent PowerShell scripts)
+   - ✅ Secure password storage (Windows DPAPI encryption)
+   - ✅ Pause after completion option for review
+   - ✅ Create, update, and delete scheduled tasks from GUI
+   - NOTE: **Backup scheduling is now implemented!** See Schedule section in Backup Job Editor
+   - NOTE: **Retention scheduling also implemented!** See Retention Policy page for automated cleanup scheduling
 
 6. **Enhanced Dashboard** (Partially Complete)
    - ✅ Smart caching for instant loading
@@ -610,6 +664,38 @@ scrollable dialog:
    - ETA (estimated time remaining)
    - Current files being backed up
 5. Click **Cancel** to stop the backup (repository will auto-unlock)
+
+### Scheduling Automated Backups (Windows)
+
+You can create scheduled tasks to run backup jobs automatically:
+
+1. Click **Backup Jobs** in the sidebar
+2. Select a backup job (or create a new one)
+3. Click **Edit Job** or **Add Job**
+4. In the **Schedule** section:
+   - Check **Enable Scheduling**
+   - Select **Frequency** (Daily, Weekly, Monthly)
+   - Set the **Time** (e.g., 2:00 AM for nighttime backups)
+   - For **Weekly**: Select which days to run (e.g., Mon, Wed, Fri)
+   - For **Monthly**: Specify day of month (coming soon)
+   - Optional: Check **Pause after completion** to review results
+5. Click **OK** to save the job
+6. The scheduled task is created automatically in Windows Task Scheduler
+7. Verify in Task Scheduler: Look for "ResticBackup_YourJobName"
+
+**Important Notes:**
+- Scheduled tasks run independently - no need to keep the app open
+- Repository passwords are securely encrypted using Windows DPAPI
+- PowerShell scripts are generated in `scheduled_tasks/` folder
+- Tasks run restic directly (no Python/GUI overhead)
+- Multi-repository jobs: Only the first repository is backed up via schedule
+- **Pause after completion**: Keeps window open to review success/failure
+
+**To view or manage scheduled tasks:**
+- Open Windows Task Scheduler
+- Look under Task Scheduler Library
+- Find tasks named "ResticBackup_*"
+- You can manually run, disable, or view task history
 
 ### Managing Snapshots
 
@@ -1324,10 +1410,10 @@ def verify_repository(self):
 4. ✅ ~~**Snapshot Details & Browse Content**~~ - COMPLETED
 5. ✅ ~~**Lock Management**~~ - COMPLETED
 6. ✅ ~~**Diff Snapshots**~~ - COMPLETED
-7. **Implement Snapshot Table Loading**: Execute and parse `restic snapshots --json`
-8. **Complete Restore Operations**: Implement file selection and restore execution
-9. **Connect Forget/Prune**: Wire up snapshot deletion and repository pruning
-10. **Add Scheduling**: Windows Task Scheduler automation for backup jobs
+7. ✅ ~~**Add Scheduling**~~ - COMPLETED (Windows Task Scheduler automation for backup jobs)
+8. **Implement Snapshot Table Loading**: Execute and parse `restic snapshots --json`
+9. **Complete Restore Operations**: Implement file selection and restore execution
+10. **Connect Forget/Prune**: Wire up snapshot deletion and repository pruning
 
 ## Estimated Implementation Time
 
