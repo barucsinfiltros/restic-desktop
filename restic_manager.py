@@ -1109,7 +1109,23 @@ class BackupJobDialog(QDialog):
         
         self.days_widget = QWidget()
         self.days_widget.setLayout(days_layout)
-        schedule_settings_layout.addRow("Days (Weekly):", self.days_widget)
+        self.days_label = QLabel("Days (Weekly):")
+        schedule_settings_layout.addRow(self.days_label, self.days_widget)
+        
+        # Day of month (for monthly)
+        self.day_of_month_spin = QSpinBox()
+        self.day_of_month_spin.setToolTip("Day of the month to run the backup (1-31)")
+        self.day_of_month_spin.setFixedWidth(60)
+        self.day_of_month_spin.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.day_of_month_spin.setMinimum(1)
+        self.day_of_month_spin.setMaximum(28) # Limit to 28 to avoid issues with shorter months
+        if existing_job and existing_job.get("schedule"):
+            self.day_of_month_spin.setValue(existing_job["schedule"].get("day_of_month", 1))
+        else:
+            self.day_of_month_spin.setValue(1)
+        
+        self.day_of_month_label = QLabel("Day of Month:")
+        schedule_settings_layout.addRow(self.day_of_month_label, self.day_of_month_spin)
         
         # Run if missed
         self.run_if_missed_check = QCheckBox("Run at next logon if missed")
@@ -1162,6 +1178,15 @@ class BackupJobDialog(QDialog):
         if hasattr(self, 'days_widget'):
             is_weekly = self.frequency_combo.currentText() == "Weekly"
             self.days_widget.setVisible(is_weekly and enabled)
+            if hasattr(self, 'days_label'):
+                self.days_label.setVisible(is_weekly and enabled)
+        
+        # Show/hide day of month based on frequency
+        if hasattr(self, 'day_of_month_spin'):
+            is_monthly = self.frequency_combo.currentText() == "Monthly"
+            self.day_of_month_spin.setVisible(is_monthly and enabled)
+            if hasattr(self, 'day_of_month_label'):
+                self.day_of_month_label.setVisible(is_monthly and enabled)
     
     def add_path(self):
         """Add a path to backup"""
@@ -1203,6 +1228,7 @@ class BackupJobDialog(QDialog):
                 "frequency": self.frequency_combo.currentText().lower(),
                 "time": self.time_edit.time().toString("HH:mm"),
                 "days": selected_days,
+                "day_of_month": self.day_of_month_spin.value(),
                 "run_if_missed": self.run_if_missed_check.isChecked(),
                 "pause_after_completion": self.pause_after_completion_check.isChecked(),
                 "last_run": None
@@ -1647,7 +1673,8 @@ try {{
                 schtasks_days = ",".join([day_map.get(d, d) for d in days])
                 schtasks_cmd.extend(["/SC", "WEEKLY", "/D", schtasks_days])
             elif frequency == "monthly":
-                schtasks_cmd.extend(["/SC", "MONTHLY"])
+                day_of_month = schedule.get("day_of_month", 1)
+                schtasks_cmd.extend(["/SC", "MONTHLY", "/D", str(day_of_month)])
             else:
                 schtasks_cmd.extend(["/SC", "DAILY"])
             
@@ -1774,8 +1801,9 @@ try {{
                     cron_days = ",".join([day_map.get(d, "1") for d in days])
                     cron_schedule = f"{minute} {hour} * * {cron_days}"
             elif frequency == "monthly":
-                # Run on first day of month
-                cron_schedule = f"{minute} {hour} 1 * *"
+                # Run on specified day of month (default to 1st)
+                day_of_month = schedule.get("day_of_month", 1)
+                cron_schedule = f"{minute} {hour} {day_of_month} * *"
             else:
                 cron_schedule = f"{minute} {hour} * * *"
             
@@ -2644,6 +2672,9 @@ class ResticManagerWindow(QMainWindow):
                     days = schedule.get("days", [])
                     days_str = ", ".join(days) if days else "All days"
                     schedule_text = f"⏰ {freq} at {time}\n({days_str})"
+                elif freq == "Monthly":
+                    day_of_month = schedule.get("day_of_month", 1)
+                    schedule_text = f"⏰ {freq} at {time}\n(Day {day_of_month})"
                 else:
                     schedule_text = f"⏰ {freq} at {time}"
             else:
