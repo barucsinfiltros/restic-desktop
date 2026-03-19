@@ -35,11 +35,10 @@ from PyQt6.QtWidgets import (
     QFileDialog, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
     QGroupBox, QGridLayout, QProgressBar, QListWidget, QListWidgetItem,
     QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit,
-    QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog, QRadioButton
+    QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog, QRadioButton, QDateEdit
 )
 from PyQt6.QtGui import QColor, QFont, QTextCursor, QPixmap
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
-
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime, QDate
 import qdarkstyle
 from qdarkstyle.light.palette import LightPalette
 
@@ -2535,10 +2534,21 @@ class ResticManagerWindow(QMainWindow):
         self.restore_repo_combo = QComboBox()
         self.restore_repo_combo.setFixedWidth(400)
         
-        # Snapshot selection
+        # Snapshot selection with quick access buttons
+        snapshot_row = QHBoxLayout()
         self.restore_snapshot_combo = QComboBox()
-        self.restore_snapshot_combo.setFixedWidth(400)
+        self.restore_snapshot_combo.setFixedWidth(325)
         self.restore_repo_combo.currentTextChanged.connect(self.load_snapshots_for_restore)
+        snapshot_row.addWidget(self.restore_snapshot_combo)
+        
+        # Latest snapshot button
+        latest_btn = QPushButton("Latest")
+        latest_btn.setFixedWidth(70)
+        latest_btn.setToolTip("Jump to the most recent snapshot")
+        latest_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        latest_btn.clicked.connect(self.select_latest_snapshot)
+        snapshot_row.addWidget(latest_btn)
+        snapshot_row.addStretch()
         
         
         # Path to restore
@@ -2576,11 +2586,69 @@ class ResticManagerWindow(QMainWindow):
         
         
         form_layout.addRow("Repository:", self.restore_repo_combo)
-        form_layout.addRow("Snapshot:", self.restore_snapshot_combo)
+        form_layout.addRow("Snapshot:", snapshot_row)
+        
+        # Date-based quick restore
+        date_row = QHBoxLayout()
+        date_row.addWidget(QLabel("Quick Select by Date:"))
+        date_row.addSpacing(60)
+
+        self.restore_date_edit = QDateEdit()
+        self.restore_date_edit.setDate(QDate.currentDate())
+        self.restore_date_edit.setCalendarPopup(True)
+        self.restore_date_edit.setFixedWidth(200)
+        date_row.addWidget(self.restore_date_edit)
+        
+        find_date_btn = QPushButton("Find Snapshot")
+        find_date_btn.setFixedWidth(120)
+        find_date_btn.setToolTip("Find snapshot closest to selected date")
+        find_date_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        find_date_btn.clicked.connect(self.find_snapshot_by_date)
+        date_row.addWidget(find_date_btn)
+        date_row.addStretch()
+        
+        form_layout.addRow("", date_row)
         form_layout.addRow("Path to Restore:", path_layout)
         form_layout.addItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
         form_layout.addRow("", self.restore_to_original_check)
         form_layout.addRow("Restore To:", target_layout)
+        
+        # Global search section
+        search_group = QGroupBox("Search Across All Snapshots")
+        search_layout = QVBoxLayout()
+        search_group.setLayout(search_layout)
+        
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Find file/folder:"))
+        self.global_search_input = QLineEdit()
+        self.global_search_input.setPlaceholderText("Enter filename or path  pattern (e.g., *.pdf, my_document.txt, /path/to/folder)")
+        self.global_search_input.setFixedWidth(400)
+        search_row.addWidget(self.global_search_input)
+        
+        search_btn = QPushButton("Search All Snapshots")
+        search_btn.setFixedWidth(150)
+        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        search_btn.clicked.connect(self.search_across_snapshots)
+        search_row.addWidget(search_btn)
+        search_row.addStretch()
+        
+        search_layout.addLayout(search_row)
+        
+        # Search results table
+        from PyQt6.QtWidgets import QHeaderView
+        self.search_results_table = QTableWidget()
+        self.search_results_table.setColumnCount(6)
+        self.search_results_table.setHorizontalHeaderLabels(["File/Folder", "Path", "Snapshot ID", "Date/Time", "Size", "Action"])
+        self.search_results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.search_results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.search_results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.search_results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.search_results_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.search_results_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.search_results_table.setMaximumHeight(200)
+        #self.search_results_table.setFixedHeight(300)
+        self.search_results_table.setVisible(False)  # Hidden until search is performed
+        search_layout.addWidget(self.search_results_table)
         
         
         
@@ -2621,6 +2689,7 @@ class ResticManagerWindow(QMainWindow):
         
         layout.addWidget(title)
         layout.addWidget(form_group)
+        layout.addWidget(search_group)
         layout.addLayout(restore_layout)
         layout.addWidget(self.restore_progress)
         layout.addWidget(log_group)
@@ -5570,7 +5639,8 @@ class ResticManagerWindow(QMainWindow):
                 self.restore_snapshot_combo.addItem("No snapshots available")
                 return
             
-            self.restore_snapshot_combo.addItem("Select a snapshot")
+            # Store snapshots for search functionality
+            self._restore_snapshots_cache = snapshots
             
             # Add snapshots to combo box
             for snapshot in reversed(snapshots):  # Most recent first
@@ -5593,10 +5663,188 @@ class ResticManagerWindow(QMainWindow):
                 
                 display = f"{snap_id} - {time_str} - {snap_host} - {paths_str}"
                 self.restore_snapshot_combo.addItem(display, snapshot.get("id", snap_id))
+            
+            # Auto-select the latest snapshot (first item = most recent)
+            if self.restore_snapshot_combo.count() > 0:
+                self.restore_snapshot_combo.setCurrentIndex(0)
+                self.log(f"Auto-selected latest snapshot: {self.restore_snapshot_combo.currentText()}")
         
         except Exception as e:
             self.restore_snapshot_combo.addItem("Error parsing snapshots")
             self.log(f"Error parsing snapshots: {str(e)}")
+    
+    def select_latest_snapshot(self):
+        """Select the most recent snapshot in the dropdown"""
+        if self.restore_snapshot_combo.count() > 0:
+            self.restore_snapshot_combo.setCurrentIndex(0)
+            self.log("Selected latest snapshot")
+        else:
+            QMessageBox.information(self, "No Snapshots", "No snapshots available to select")
+    
+    def find_snapshot_by_date(self):
+        """Find snapshot closest to selected date"""
+        if not hasattr(self, '_restore_snapshots_cache') or not self._restore_snapshots_cache:
+            QMessageBox.warning(self, "No Snapshots", "No snapshots loaded. Please select a repository first.")
+            return
+        
+        # Get target date from date picker
+        target_date = self.restore_date_edit.date()
+        target_datetime = datetime(target_date.year(), target_date.month(), target_date.day())
+        
+        # Find closest snapshot
+        closest_snapshot = None
+        closest_diff = None
+        
+        for snapshot in self._restore_snapshots_cache:
+            snap_time = snapshot.get("time", "")
+            try:
+                snap_datetime = datetime.fromisoformat(snap_time.replace("Z", "+00:00"))
+                snap_datetime = snap_datetime.replace(tzinfo=None)  # Remove timezone for comparison
+                diff = abs((snap_datetime - target_datetime).total_seconds())
+                
+                if closest_diff is None or diff < closest_diff:
+                    closest_diff = diff
+                    closest_snapshot = snapshot
+            except:
+                continue
+        
+        if closest_snapshot:
+            # Find and select this snapshot in the combo box
+            snap_id = closest_snapshot.get("id", "")
+            for i in range(self.restore_snapshot_combo.count()):
+                if self.restore_snapshot_combo.itemData(i) == snap_id:
+                    self.restore_snapshot_combo.setCurrentIndex(i)
+                    self.log(f"Selected snapshot closest to {target_date.toString('yyyy-MM-dd')}: {self.restore_snapshot_combo.currentText()}")
+                    break
+        else:
+            QMessageBox.information(self, "No Match", "Could not find a snapshot near the selected date.")
+    
+    def search_across_snapshots(self):
+        """Search for files/folders across all snapshots"""
+        search_pattern = self.global_search_input.text().strip()
+        if not search_pattern:
+            QMessageBox.warning(self, "No Search Term", "Please enter a filename or path pattern to search for.")
+            return
+        
+        if not hasattr(self, '_restore_snapshots_cache') or not self._restore_snapshots_cache:
+            QMessageBox.warning(self, "No Snapshots", "No snapshots loaded. Please select a repository first.")
+            return
+        
+        repo_name = self.restore_repo_combo.currentText()
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            return
+        
+        self.log(f"Searching all snapshots for '{search_pattern}'...")
+        self.search_results_table.setRowCount(0)
+        self.search_results_table.setVisible(True)
+        QApplication.processEvents()
+        
+        # Search each snapshot
+        results = []
+        import fnmatch
+        
+        for snapshot in self._restore_snapshots_cache:
+            snap_id = snapshot.get("short_id", snapshot.get("id", "unknown")[:8])
+            snap_time = snapshot.get("time", "unknown")
+            
+            # Use restic ls to list files in this snapshot
+            env = {"RESTIC_PASSWORD": password} if password else {}
+            args = ["-r", repo["path"], "ls", snap_id, "--long"]
+            
+            success, stdout, stderr = self.restic_cmd.run(args, env=env, timeout=60)
+            
+            if success and stdout:
+                # Parse output and look for pattern
+                for line in stdout.split('\n'):
+                    if not line.strip():
+                        continue
+                    
+                    # Parse ls output (format: permissions user group size date time path)
+                    parts = line.split(None, 6)
+                    if len(parts) >= 7:
+                        file_path = parts[6]
+                        file_size = parts[3]
+                        
+                        # Check if path matches pattern
+                        file_name = file_path.split('/')[-1] if '/' in file_path else file_path
+                        
+                        # Match against pattern (case-insensitive)
+                        if fnmatch.fnmatch(file_name.lower(), search_pattern.lower()) or \
+                           fnmatch.fnmatch(file_path.lower(), search_pattern.lower()) or \
+                           search_pattern.lower() in file_path.lower():
+                            results.append({
+                                'name': file_name,
+                                'path': file_path,
+                                'snapshot_id': snap_id,
+                                'snapshot_full_id': snapshot.get('id'),
+                                'time': snap_time,
+                                'size': file_size
+                            })
+        
+        # Display results
+        if results:
+            self.search_results_table.setRowCount(len(results))
+            for row, result in enumerate(results):
+                # Format time
+                try:
+                    dt = datetime.fromisoformat(result['time'].replace("Z", "+00:00"))
+                    time_str = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    time_str = result['time']
+                
+                # Format size
+                try:
+                    size_bytes = int(result['size'])
+                    size_str = self.format_bytes(size_bytes)
+                except (ValueError, TypeError):
+                    size_str = result['size']
+                
+                self.search_results_table.setItem(row, 0, QTableWidgetItem(result['name']))
+                self.search_results_table.setItem(row, 1, QTableWidgetItem(result['path']))
+                self.search_results_table.setItem(row, 2, QTableWidgetItem(result['snapshot_id']))
+                self.search_results_table.setItem(row, 3, QTableWidgetItem(time_str))
+                self.search_results_table.setItem(row, 4, QTableWidgetItem(size_str))
+                
+                # Add restore button
+                restore_btn = QPushButton("Restore")
+                restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                restore_btn.clicked.connect(lambda checked, r=result: self._restore_from_search(r))
+                self.search_results_table.setCellWidget(row, 5, restore_btn)
+            
+            self.log(f"Found {len(results)} match(es) across {len(self._restore_snapshots_cache)} snapshots")
+        else:
+            self.search_results_table.setVisible(False)
+            QMessageBox.information(self, "No Results", f"No files matching '{search_pattern}' found in any snapshot.")
+            self.log(f"No matches found for '{search_pattern}'")
+    
+    def _restore_from_search(self, result):
+        """Restore a specific file from search results"""
+        # Set the snapshot and path
+        snap_full_id = result['snapshot_full_id']
+        file_path = result['path']
+        
+        # Find and select the snapshot
+        for i in range(self.restore_snapshot_combo.count()):
+            if self.restore_snapshot_combo.itemData(i) == snap_full_id:
+                self.restore_snapshot_combo.setCurrentIndex(i)
+                break
+        
+        # Set the path to restore
+        self.restore_path_input.setText(file_path)
+        
+        # Show message
+        QMessageBox.information(
+            self,
+            "Ready to Restore",
+            f"Selected file for restore:\n\n"
+            f"File: {result['name']}\n"
+            f"Path: {file_path}\n"
+            f"Snapshot: {result['snapshot_id']}\n\n"
+            f"Please select a restore location and click 'Start Restore'."
+        )
+        
+        self.log(f"Prepared to restore: {file_path} from snapshot {result['snapshot_id']}")
     
     # Restore Methods
     def browse_snapshot_files(self):
