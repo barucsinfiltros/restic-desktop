@@ -381,6 +381,69 @@ def apply_theme(app, settings_manager, theme: str):
         """
         app.setStyleSheet(stylesheet)
 
+    elif theme == "pure-black":
+        stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+        stylesheet += """
+        QWidget {
+            background-color: #000000;
+            color: #ffffff;
+        }
+        QPushButton {
+            background-color: #333333;
+            color: #ffffff;
+            border: 1px solid #666666;
+        }
+        QPushButton:hover {
+            background-color: #444444;
+            border: 1px solid #888888;
+            color: #ffffff;
+        }
+        QPushButton:checked {
+            background-color: #555555;
+            border: 2px solid #ffffff;
+            color: #ffffff;
+        }
+        QPushButton:pressed {
+            background-color: #222222;
+        }
+        QScrollArea {
+            background-color: #000000;
+        }
+        QFrame {
+            background-color: #000000;
+            border: 1px solid #333333;
+        }
+        """
+        app.setStyleSheet(stylesheet)
+
+    elif theme == "midnight-blue":
+        stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+        stylesheet += """
+        QWidget {
+            background-color: #0d1421;
+            color: #e1e5e9;
+        }
+        QPushButton {
+            background-color: #1e2a3a;
+            color: #e1e5e9;
+            border: 1px solid #3a4f66;
+        }
+        QPushButton:hover {
+            background-color: #2a3847;
+            border: 1px solid #5a8fb4;
+            color: #ffffff;
+        }
+        QPushButton:checked {
+            background-color: #3d4e63;
+            border: 2px solid #8db9d1;
+            color: #ffffff;
+        }
+        QPushButton:pressed {
+            background-color: #152028;
+        }
+        """
+        app.setStyleSheet(stylesheet)
+            
     elif theme == "cyberpunk-neon":
         stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
         stylesheet += """
@@ -704,6 +767,62 @@ def apply_theme(app, settings_manager, theme: str):
         """
         app.setStyleSheet(stylesheet)
 
+    elif theme == "one-dark":
+        stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+        stylesheet += """
+        QWidget {
+            background-color: #282c34;
+            color: #abb2bf;
+        }
+        QPushButton {
+            background-color: #3e4451;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+        }
+        QPushButton:hover {
+            background-color: #4b5263;
+            border: 1px solid #61afef;
+            color: #ffffff;
+        }
+        QPushButton:checked {
+            background-color: #61afef;
+            border: 2px solid #528bff;
+            color: #282c34;
+        }
+        QPushButton:pressed {
+            background-color: #21252b;
+        }
+        """
+        app.setStyleSheet(stylesheet)
+
+    elif theme == "rose-pine":
+        stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
+        stylesheet += """
+        QWidget {
+            background-color: #191724;
+            color: #e0def4;
+        }
+        QPushButton {
+            background-color: #1f1d2e;
+            color: #e0def4;
+            border: 1px solid #26233a;
+        }
+        QPushButton:hover {
+            background-color: #26233a;
+            border: 1px solid #c4a7e7;
+            color: #ffffff;
+        }
+        QPushButton:checked {
+            background-color: #c4a7e7;
+            border: 2px solid #ebbcba;
+            color: #191724;
+        }
+        QPushButton:pressed {
+            background-color: #151320;
+        }
+        """
+        app.setStyleSheet(stylesheet)
+              
     elif theme == "everforest":
         stylesheet = qdarkstyle.load_stylesheet(qt_api='pyqt6')
         stylesheet += """

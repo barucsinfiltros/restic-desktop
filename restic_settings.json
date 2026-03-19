@@ -1,5 +1,5 @@
 {
-    "theme": "arctic",
+    "theme": "one-dark",
     "restic_path": "C:/python_scripts/restic_mngr/restic/windows/restic.exe",
     "repositories": [
         {

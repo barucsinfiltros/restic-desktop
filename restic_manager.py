@@ -558,6 +558,36 @@ class ResticCommand:
         if success:
             return stdout.strip()
         return None
+    
+    def forget(self, repo_path: str, password: str, args: List[str] = None) -> Optional[str]:
+        """
+        Execute restic forget command to apply retention policy
+        Args:
+            repo_path: Path to the repository
+            password: Repository password
+            args: Additional arguments (keep policies, --prune, --dry-run, etc.)
+        Returns:
+            Command output if successful, None if it failed
+        """
+        cmd_args = ["-r", repo_path, "forget"]
+        
+        if args:
+            cmd_args.extend(args)
+        
+        env = {"RESTIC_PASSWORD": password}
+        success, stdout, stderr = self.run(cmd_args, env=env, timeout=600)
+        
+        # Return output regardless of success so user can see what happened
+        output = stdout + ("\n" + stderr if stderr else "")
+        
+        if success:
+            return output
+        else:
+            # Log error
+            if self.debug:
+                print(f"[RESTIC] forget failed: {stderr}")
+            # Return error message in output, but function returns None to signal failure
+            raise Exception(f"Restic forget failed:\n{output}")
 
 
 # Worker thread for long-running Restic operations
@@ -2094,7 +2124,7 @@ class ResticManagerWindow(QMainWindow):
         menu_layout.addStretch()
         
         # Version footer
-        version_label = QLabel(f"Version {VERSION}\nÂ© {YEAR}")
+        version_label = QLabel(f"Version {VERSION}\n© {YEAR}")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version_label.setStyleSheet("color: #888; font-size: 10px;")
         menu_layout.addWidget(version_label)
@@ -2127,6 +2157,11 @@ class ResticManagerWindow(QMainWindow):
             if hasattr(self, 'snapshot_repo_combo') and self.snapshot_repo_combo.currentText():
                 # Only load if not already loaded or needs refresh
                 self.load_snapshots()
+        
+        # Update retention repo combo with task indicators when switching to Retention page
+        if page_index == 5:  # Retention Policy page
+            if hasattr(self, 'retention_repo_combo'):
+                self.update_retention_repo_combo()
         
         # Load snapshots when switching to Restore page (if repository selected)
         if page_index == 3:  # Restore page
@@ -2171,7 +2206,7 @@ class ResticManagerWindow(QMainWindow):
         for i, (label_text, key) in enumerate(stats):
             label = QLabel(f"{label_text}:")
             #label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
-            value = QLabel("â€”")
+            value = QLabel("—")
             #value.setFont(QFont("Arial", 11))
             self.stats_labels[key] = value
             
@@ -2263,7 +2298,7 @@ class ResticManagerWindow(QMainWindow):
         if not repositories:
             if hasattr(self, 'stats_labels'):
                 self.stats_labels["total_snapshots"].setText("0")
-                self.stats_labels["total_size"].setText("â€”")
+                self.stats_labels["total_size"].setText("—")
                 self.stats_labels["last_backup"].setText("Never")
             return
         
@@ -2334,7 +2369,7 @@ class ResticManagerWindow(QMainWindow):
         """Update dashboard UI with gathered stats (called from background thread)"""
         if hasattr(self, 'stats_labels'):
             self.stats_labels["total_snapshots"].setText(str(total_snapshots))
-            self.stats_labels["total_size"].setText(self.format_bytes(total_size) if total_size > 0 else "â€”")
+            self.stats_labels["total_size"].setText(self.format_bytes(total_size) if total_size > 0 else "—")
             self.stats_labels["last_backup"].setText(last_backup if last_backup != "Never" else "Never")
     
     def create_repositories_page(self):
@@ -2908,7 +2943,7 @@ class ResticManagerWindow(QMainWindow):
         schedule_layout.addLayout(task_btn_layout)
         
         # Info label
-        info_label = QLabel("â„¹ï¸ Creates a system task that runs retention independently of this application")
+        info_label = QLabel("ℹ Creates a system task that runs retention independently of this application")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: #888; font-size: 10px; padding: 5px;")
         
@@ -3235,7 +3270,7 @@ class ResticManagerWindow(QMainWindow):
         
         version_info = QLabel(
             f"Restic Backup Manager {VERSION}\n"
-            f"Â© {YEAR}\n\n"
+            f"© {YEAR}\n\n"
             "A PyQt6 GUI for managing Restic backups"
         )
         version_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -3486,6 +3521,72 @@ class ResticManagerWindow(QMainWindow):
         # Don't auto-refresh dashboard to prevent UI freeze
         # Users can manually click "Refresh Stats" button when needed
     
+    def update_retention_repo_combo(self):
+        """Update retention repository combo box with scheduled task indicators"""
+        import platform
+        import subprocess
+        
+        repositories = self.settings_manager.get("repositories")
+        repo_names = [repo.get("name", "") for repo in repositories]
+        
+        # Store current selection (clean name)
+        current_index = self.retention_repo_combo.currentIndex()
+        current_repo = ""
+        if current_index >= 0:
+            current_repo = self.retention_repo_combo.itemData(current_index)
+            if not current_repo:  # Fallback if no userData
+                current_repo = self.retention_repo_combo.currentText().replace(" ✓", "").strip()
+        
+        # Get list of repositories with scheduled tasks
+        repos_with_tasks = set()
+        system = platform.system()
+        
+        if system == "Windows":
+            # Check Windows Task Scheduler for ResticRetention tasks
+            try:
+                result = subprocess.run(
+                    ['schtasks', '/Query', '/FO', 'LIST'],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    # Parse task names
+                    for line in result.stdout.split('\n'):
+                        if 'TaskName:' in line and 'ResticRetention_' in line:
+                            # Extract repo name from task name
+                            task_name = line.split('TaskName:')[1].strip()
+                            if 'ResticRetention_' in task_name:
+                                repo_name_sanitized = task_name.split('ResticRetention_')[-1].strip()
+                                # Convert back from sanitized name
+                                repo_name_actual = repo_name_sanitized.replace('_', ' ')
+                                # Check against actual repo names
+                                for repo_name in repo_names:
+                                    if repo_name.replace(' ', '_') == repo_name_sanitized:
+                                        repos_with_tasks.add(repo_name)
+            except:
+                pass  # If schtasks fails, just don't show indicators
+        
+        # Update combo box with indicators
+        self.retention_repo_combo.blockSignals(True)
+        self.retention_repo_combo.clear()
+        
+        for repo_name in repo_names:
+            if repo_name in repos_with_tasks:
+                display_name = f"{repo_name} ✓"  # Add checkmark for repos with scheduled tasks
+            else:
+                display_name = repo_name
+            self.retention_repo_combo.addItem(display_name, userData=repo_name)  # Store clean name in userData
+        
+        # Restore previous selection if it still exists
+        if current_repo:
+            # Try to find the repo (with or without indicator)
+            for i in range(self.retention_repo_combo.count()):
+                if self.retention_repo_combo.itemData(i) == current_repo or \
+                   self.retention_repo_combo.itemText(i).startswith(current_repo):
+                    self.retention_repo_combo.setCurrentIndex(i)
+                    break
+        
+        self.retention_repo_combo.blockSignals(False)
+    
     def get_repository_by_name(self, repo_name):
         """Get repository by name with decrypted password"""
         if not repo_name:
@@ -3571,7 +3672,7 @@ class ResticManagerWindow(QMainWindow):
                     # Size (if available in summary)
                     summary = snapshot.get("summary", {})
                     data_added = summary.get("data_added", 0)
-                    size_str = self.format_bytes(data_added) if data_added > 0 else "â€”"
+                    size_str = self.format_bytes(data_added) if data_added > 0 else "—"
                     self.snapshots_table.setItem(i, 5, QTableWidgetItem(size_str))
                     
                     # Store full snapshot data in first cell for later use
@@ -4726,10 +4827,10 @@ class ResticManagerWindow(QMainWindow):
         # Update status
         if hasattr(self, '_copy_status_label'):
             if success:
-                self._copy_status_label.setText("âœ“ Copy completed successfully!")
+                self._copy_status_label.setText("✓ Copy completed successfully!")
                 self._copy_status_label.setStyleSheet("color: green;")
             else:
-                self._copy_status_label.setText("âœ— Copy failed!")
+                self._copy_status_label.setText("✗ Copy failed!")
                 self._copy_status_label.setStyleSheet("color: red;")
         
         # Wait a moment for user to see final status
@@ -6929,9 +7030,9 @@ class ResticManagerWindow(QMainWindow):
             self._backup_output_text.appendPlainText("")
             self._backup_output_text.appendPlainText("=" * 60)
             if success:
-                self._backup_output_text.appendPlainText(f"âœ“ Backup to '{self._backup_repo_name}' completed successfully!")
+                self._backup_output_text.appendPlainText(f"✓ Backup to '{self._backup_repo_name}' completed successfully!")
             else:
-                self._backup_output_text.appendPlainText(f"âœ— Backup to '{self._backup_repo_name}' failed!")
+                self._backup_output_text.appendPlainText(f"✗ Backup to '{self._backup_repo_name}' failed!")
             self._backup_output_text.appendPlainText("=" * 60)
             # Auto-scroll to bottom
             scrollbar = self._backup_output_text.verticalScrollBar()
@@ -6939,7 +7040,7 @@ class ResticManagerWindow(QMainWindow):
         
         if success:
             if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText(f"âœ“ Backup to '{self._backup_repo_name}' completed successfully!")
+                self._backup_status_label.setText(f"✓ Backup to '{self._backup_repo_name}' completed successfully!")
             
             self.log(f"Backup job '{self._backup_job_name}' â†’ '{self._backup_repo_name}' completed successfully")
             
@@ -6951,7 +7052,7 @@ class ResticManagerWindow(QMainWindow):
                 QTimer.singleShot(1000, self.load_snapshots)
         else:
             if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText(f"âœ— Backup to '{self._backup_repo_name}' failed!")
+                self._backup_status_label.setText(f"✗ Backup to '{self._backup_repo_name}' failed!")
             
             error_msg = stderr if stderr else "Unknown error"
             self.log(f"Backup job '{self._backup_job_name}' â†’ '{self._backup_repo_name}' failed: {error_msg}")
@@ -7049,9 +7150,21 @@ class ResticManagerWindow(QMainWindow):
         
         return args
     
+    def _get_current_retention_repo(self):
+        """Get current retention repository name (clean, without task indicator)"""
+        # Get userData which has the clean repo name (without checkmark)
+        current_index = self.retention_repo_combo.currentIndex()
+        if current_index >= 0:
+            repo_name = self.retention_repo_combo.itemData(current_index)
+            if repo_name:
+                return repo_name
+        # Fallback to text and strip indicator
+        text = self.retention_repo_combo.currentText()
+        return text.replace(" ✓", "").strip() if text else ""
+    
     def create_retention_scheduled_task(self):
         """Create a scheduled task for retention policy"""
-        repo_name = self.retention_repo_combo.currentText()
+        repo_name = self._get_current_retention_repo()
         if not repo_name:
             QMessageBox.warning(self, "No Repository", "Please select a repository")
             return
@@ -7105,30 +7218,90 @@ class ResticManagerWindow(QMainWindow):
         
         if success:
             self.log(f"Created scheduled task: {task_name}")
+            # Refresh repo combo to show task indicator
+            self.update_retention_repo_combo()
     
     def _create_windows_scheduled_task(self, task_name, repo, password, command_args, frequency, time, day_of_week, day_of_month):
         """Create Windows Task Scheduler task"""
         import subprocess
         
-        # Build restic command
+        # Build restic command arguments
         restic_cmd = self.restic_cmd
-        full_command = f'"{restic_cmd}" -r "{repo["path"]}" forget {" ".join(command_args)}'
         
-        # Build PowerShell script content
-        ps_script = f"""# Restic Retention Task - {repo['name']}
-$env:RESTIC_PASSWORD = "{password}"
-{full_command}
-"""
-        
-        # Save PowerShell script to temp location
-        import tempfile
+        # Save PowerShell script to scheduled_tasks folder (same as backup jobs)
         import os
-        script_dir = os.path.join(tempfile.gettempdir(), "restic_tasks")
+        script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
         os.makedirs(script_dir, exist_ok=True)
         script_path = os.path.join(script_dir, f"{task_name}.ps1")
         
+        # Create encrypted password file using Windows DPAPI (same as backup jobs)
+        password_file = os.path.join(script_dir, f"{task_name}.password")
+        if password:
+            # Use PowerShell to encrypt the password with DPAPI
+            ps_encrypt_cmd = f'''
+$password = ConvertTo-SecureString -String "{password}" -AsPlainText -Force
+$password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Encoding utf8
+'''
+            try:
+                result = subprocess.run(
+                    ["powershell.exe", "-Command", ps_encrypt_cmd],
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace'
+                )
+                if result.returncode != 0:
+                    QMessageBox.critical(self, "Password Encryption Failed", f"Failed to encrypt password:\n{result.stderr}")
+                    return False
+            except Exception as e:
+                QMessageBox.critical(self, "Password Encryption Failed", f"Error encrypting password:\n{str(e)}")
+                return False
+        
+        # Build PowerShell script content with encrypted password loading
+        ps_script = f"""# Restic Retention Task - {repo['name']}
+# Generated by Restic Manager
+
+# Set error action preference
+$ErrorActionPreference = "Stop"
+
+# Load and decrypt repository password from encrypted file
+$passwordFile = "{password_file}"
+if (Test-Path $passwordFile) {{
+    $securePassword = Get-Content $passwordFile | ConvertTo-SecureString
+    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+    $env:RESTIC_PASSWORD = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+}} else {{
+    Write-Host "Error: Password file not found: $passwordFile"
+    exit 1
+}}
+
+# Run restic retention/forget command
+Write-Host "Starting retention policy for repository: {repo['name']}"
+Write-Host "Repository: {repo['path']}"
+
+try {{
+    & "{restic_cmd}" -r "{repo['path']}" forget {" ".join(command_args)}
+    $exitCode = $LASTEXITCODE
+    
+    if ($exitCode -eq 0) {{
+        Write-Host "Retention policy applied successfully"
+        exit 0
+    }} else {{
+        Write-Host "Retention policy failed with exit code: $exitCode"
+        exit $exitCode
+    }}
+}} catch {{
+    Write-Host "Error running retention policy: $_"
+    exit 1
+}} finally {{
+    # Clear password from environment
+    Remove-Item env:RESTIC_PASSWORD -ErrorAction SilentlyContinue
+}}
+"""
+        
         try:
-            with open(script_path, 'w') as f:
+            with open(script_path, 'w', encoding='utf-8') as f:
                 f.write(ps_script)
         except Exception as e:
             QMessageBox.critical(self, "Script Creation Failed", f"Failed to create PowerShell script:\n{e}")
@@ -7157,16 +7330,16 @@ $env:RESTIC_PASSWORD = "{password}"
             '/TN', task_name,
             '/TR', f'powershell.exe -ExecutionPolicy Bypass -File "{script_path}"',
             '/F',  # Force create (overwrite if exists)
-            '/RL', 'HIGHEST',  # Run with highest privileges
         ] + schedule_params.split()
         
         try:
             result = subprocess.run(schtasks_cmd, capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
+                password_note = " (password encrypted with DPAPI)" if password else ""
                 QMessageBox.information(
                     self,
                     "Task Created Successfully",
-                    f"Scheduled task '{task_name}' created successfully!\n\n"
+                    f"Scheduled task '{task_name}' created successfully{password_note}!\n\n"
                     f"Schedule: {frequency} at {start_time}\n"
                     f"Repository: {repo['name']}\n\n"
                     f"Script location: {script_path}\n\n"
@@ -7283,7 +7456,7 @@ $env:RESTIC_PASSWORD = "{password}"
         
         try:
             if system == "Windows":
-                subprocess.Popen(['taskschd.msc'])
+                os.startfile('taskschd.msc')
                 self.log("Opened Task Scheduler")
             elif system == "Linux":
                 # Try various cron GUIs
@@ -7305,7 +7478,7 @@ $env:RESTIC_PASSWORD = "{password}"
     
     def delete_retention_scheduled_task(self):
         """Delete scheduled retention task"""
-        repo_name = self.retention_repo_combo.currentText()
+        repo_name = self._get_current_retention_repo()
         if not repo_name:
             QMessageBox.warning(self, "No Repository", "Please select a repository")
             return
@@ -7334,8 +7507,26 @@ $env:RESTIC_PASSWORD = "{password}"
                     capture_output=True, text=True, timeout=10
                 )
                 if result.returncode == 0:
-                    QMessageBox.information(self, "Task Deleted", f"Scheduled task '{task_name}' deleted successfully")
-                    self.log(f"Deleted scheduled task: {task_name}")
+                    # Also delete the PowerShell script and password file
+                    import os
+                    script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
+                    script_file = os.path.join(script_dir, f"{task_name}.ps1")
+                    password_file = os.path.join(script_dir, f"{task_name}.password")
+                    
+                    files_deleted = []
+                    if os.path.exists(script_file):
+                        os.remove(script_file)
+                        files_deleted.append(".ps1")
+                    if os.path.exists(password_file):
+                        os.remove(password_file)
+                        files_deleted.append(".password")
+                    
+                    files_msg = f" (also removed {', '.join(files_deleted)} files)" if files_deleted else ""
+                    QMessageBox.information(self, "Task Deleted", f"Scheduled task '{task_name}' deleted successfully{files_msg}")
+                    self.log(f"Deleted scheduled task: {task_name}{files_msg}")
+                    
+                    # Refresh the repository combo to update indicators
+                    self.update_retention_repo_combo()
                 else:
                     error_msg = result.stderr if result.stderr else "Task not found"
                     QMessageBox.warning(self, "Delete Failed", f"Failed to delete task:\n{error_msg}")
@@ -7350,30 +7541,96 @@ $env:RESTIC_PASSWORD = "{password}"
     
     def apply_retention(self, dry_run=True):
         """Apply retention policy"""
-        repo_name = self.retention_repo_combo.currentText()
+        repo_name = self._get_current_retention_repo()
         if not repo_name:
             QMessageBox.warning(self, "No Repository", "Please select a repository")
             return
         
-        policy = {
-            "last": self.keep_last_spin.value(),
-            "hourly": self.keep_hourly_spin.value(),
-            "daily": self.keep_daily_spin.value(),
-            "weekly": self.keep_weekly_spin.value(),
-            "monthly": self.keep_monthly_spin.value(),
-            "yearly": self.keep_yearly_spin.value()
-        }
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            QMessageBox.warning(self, "Repository Not Found", f"Repository '{repo_name}' not found")
+            return
         
-        mode = "Dry run" if dry_run else "Applying"
-        self.log(f"{mode} retention policy for {repo_name}")
-        self.log(f"Policy: {policy}")
+        # Get retention command arguments
+        command_args = self._get_retention_command_args()
         
+        # Check if at least one retention policy is set
+        if len(command_args) == 1:  # Only --prune, no keep policies
+            QMessageBox.warning(
+                self, 
+                "No Retention Policies", 
+                "Please configure at least one retention policy (Keep Last, Daily, Weekly, etc.)"
+            )
+            return
+        
+        # Add dry-run flag if preview mode
+        if dry_run:
+            command_args.append("--dry-run")
+        
+        mode_text = "Preview" if dry_run else "Applying"
+        self.log(f"{mode_text} retention policy for {repo_name}")
+        
+        # Show initial message
         self.retention_output.setPlainText(
-            f"{mode} retention policy...\n\n"
-            f"Repository: {repo_name}\n"
-            f"Policy: {json.dumps(policy, indent=2)}\n\n"
-            "Full implementation needed"
+            f"{mode_text} retention policy...\n\n"
+            f"Repository: {repo['name']}\n"
+            f"Path: {repo['path']}\n"
+            f"Command: restic forget {' '.join(command_args)}\n\n"
+            f"Running...\n"
         )
+        QApplication.processEvents()
+        
+        # Execute restic forget command
+        try:
+            result = self.restic_cmd.forget(
+                repo_path=repo["path"],
+                password=password,
+                args=command_args
+            )
+            
+            if result:
+                output_text = (
+                    f"{'✓' if not dry_run else 'ℹ'} {mode_text} completed successfully!\n\n"
+                    f"Repository: {repo['name']}\n"
+                    f"Path: {repo['path']}\n"
+                    f"Command: restic forget {' '.join(command_args)}\n\n"
+                    f"{'--- DRY RUN MODE (No changes made) ---' if dry_run else '--- CHANGES APPLIED ---'}\n\n"
+                    f"{result}\n"
+                )
+                self.retention_output.setPlainText(output_text)
+                
+                if dry_run:
+                    self.log(f"Retention policy preview completed for {repo_name}")
+                else:
+                    self.log(f"Retention policy applied successfully for {repo_name}")
+                    QMessageBox.information(
+                        self,
+                        "Policy Applied",
+                        f"Retention policy applied successfully to '{repo_name}'!\n\n"
+                        f"Check the output below for details."
+                    )
+            else:
+                error_msg = "Failed to run retention policy. Check logs for details."
+                self.retention_output.setPlainText(
+                    f"✗ Error {mode_text.lower()} retention policy\n\n"
+                    f"Repository: {repo['name']}\n\n"
+                    f"{error_msg}"
+                )
+                self.log(f"Error applying retention policy: {error_msg}")
+                
+        except Exception as e:
+            error_msg = str(e)
+            self.retention_output.setPlainText(
+                f"✗ Error {mode_text.lower()} retention policy\n\n"
+                f"Repository: {repo['name']}\n\n"
+                f"Error: {error_msg}"
+            )
+            self.log(f"Error applying retention policy: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "Retention Error",
+                f"Failed to apply retention policy:\n\n{error_msg}"
+            )
     
     # Settings Methods
     def browse_restic_path(self):
@@ -7628,26 +7885,26 @@ $env:RESTIC_PASSWORD = "{password}"
             if result.returncode == 0 and result.stdout:
                 # Extract version
                 version_line = result.stdout.strip().split('\n')[0]
-                self.restic_status_label.setText(f"âœ“ Installed: {version_line}")
+                self.restic_status_label.setText(f"✓ Installed: {version_line}")
                 self.restic_status_label.setStyleSheet("color: green; font-weight: bold;")
                 self.restic_install_btn.setVisible(False)
                 self.log(f"Restic check SUCCESS: {version_line}")
             else:
                 # Command ran but failed
                 error_msg = result.stderr if result.stderr else "Command returned error"
-                self.restic_status_label.setText("âœ— Check failed")
+                self.restic_status_label.setText("✗ Check failed")
                 self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
                 self.restic_install_btn.setVisible(True)
                 self.log(f"Restic check FAILED: {error_msg}")
         
         except subprocess.TimeoutExpired:
-            self.restic_status_label.setText("âœ— Check timed out")
+            self.restic_status_label.setText("✗ Check timed out")
             self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
             self.restic_install_btn.setVisible(True)
             self.log("Restic check TIMEOUT after 10 seconds")
         
         except FileNotFoundError as e:
-            self.restic_status_label.setText("âœ— Not found in PATH")
+            self.restic_status_label.setText("✗ Not found in PATH")
             self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
             self.restic_install_btn.setVisible(True)
             self.log(f"Restic executable NOT FOUND: {restic_path}")
@@ -7655,7 +7912,7 @@ $env:RESTIC_PASSWORD = "{password}"
             self.log("Try: 1) Installing restic, or 2) Setting full path in Settings (e.g., C:\\\\Program Files\\\\restic\\\\restic.exe)")
         
         except Exception as e:
-            self.restic_status_label.setText(f"âœ— Error: {str(e)[:30]}")
+            self.restic_status_label.setText(f"✗ Error: {str(e)[:30]}")
             self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
             self.restic_install_btn.setVisible(True)
             self.log(f"Restic check EXCEPTION: {type(e).__name__}: {str(e)}")
@@ -7850,10 +8107,10 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         # Update status label with color coding
         if hasattr(self, 'license_status_label'):
             if is_valid:
-                self.license_status_label.setText(f"âœ“ {message}")
+                self.license_status_label.setText(f"✓ {message}")
                 self.license_status_label.setStyleSheet("color: green; font-weight: bold;")
             else:
-                self.license_status_label.setText(f"âœ— {message}")
+                self.license_status_label.setText(f"✗ {message}")
                 self.license_status_label.setStyleSheet("color: red; font-weight: bold;")
     
     def copy_machine_id(self):
@@ -7954,7 +8211,7 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         success, message = license_manager.save_license(license_key)
         
         if success:
-            status_label.setText(f"âœ“ {message}")
+            status_label.setText(f"✓ {message}")
             status_label.setStyleSheet("color: green; font-weight: bold;")
             self.log("License key updated successfully")
             
@@ -7971,7 +8228,7 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
                 "Your license key has been updated successfully!"
             )
         else:
-            status_label.setText(f"âœ— {message}")
+            status_label.setText(f"✗ {message}")
             status_label.setStyleSheet("color: red; font-weight: bold;")
             self.log(f"License activation failed: {message}")
     
@@ -8346,11 +8603,11 @@ def run_job_cli(job_name):
             settings_manager.save_settings()
         
         if success:
-            print(f"[Restic Manager CLI] âœ“ Backup completed successfully!")
+            print(f"[Restic Manager CLI] ✓ Backup completed successfully!")
             print(f"[Restic Manager CLI] Output saved to log")
             return 0
         else:
-            print(f"[Restic Manager CLI] âœ— Backup failed!")
+            print(f"[Restic Manager CLI] ✗ Backup failed!")
             print(f"[ERROR] {stderr}")
             return 1
     
