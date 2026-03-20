@@ -1030,3 +1030,85 @@ def apply_theme(app, settings_manager, theme: str):
         }
         """
         app.setStyleSheet(stylesheet)
+
+# Map themes to background colors for splash screen
+theme_splash_colors = {
+    "light": "#f9f9f9",
+    "dark": "#353535",
+    "dark-cyan": "#001f2f",
+    "dark-navy": "#12233d",
+    "dark-green": "#0c2b29",
+    "light-green": "#d5f2e6",
+    "dark-purple": "#1c0f2f",
+    "solarized-dark": "#002b36",
+    "light-blue": "#e7f0fb",
+    "monokai-dark": "#272822",
+    "dark-indigo": "#1a1b3a",
+    "dark-magenta": "#2a0a2a",
+    "sunset-orange": "#fff3e6",
+    "forest-moss": "#1c2d24",
+    "cool-grey": "#2e2e38",
+    "pure-black": "#000000",
+    "midnight-blue": "#0d1421",
+    "cyberpunk-neon": "#0a0a0a",
+    "github-dark": "#0d1117",
+    "vscode-dark": "#1e1e1e",
+    "material-dark": "#212121",
+    "dracula": "#282a36",
+    "nord-dark": "#2e3440",
+    "amoled-black": "#000000",
+    "matrix-green": "#000000",
+    "tokyo-night": "#c0caf5",
+    "catppuccin-mocha": "#1e1e2e",
+    "gruvbox-dark": "#282828",
+    "one-dark": "#282c34",
+    "rose-pine": "#191724",
+    "everforest": "#2d333b",
+    "kanagawa": "#1f1f28",
+    "night-owl": "#011627",
+    "palenight": "#292d3e",
+    "arctic": "#2e3440",
+    "horizon": "#1e1e2e",
+    "moonlight": "#212337"
+}
+
+# Map themes to text colors for splash screen
+theme_text_colors = {
+    "light": "#333333",
+    "light-green": "#222423",
+    "light-blue": "#1a2b3c",
+    "sunset-orange": "#552200"
+}
+
+
+def get_chart_colors(theme: str):
+    """
+    Get matplotlib chart colors for a given theme.
+    
+    Returns dict with:
+        - bg_color: Background color for charts
+        - text_color: Color for text/labels
+        - grid_color: Color for grid lines
+        - is_light: Boolean indicating if theme is light
+    """
+    # Determine if theme is light
+    light_themes = ["light", "light-green", "light-blue", "sunset-orange"]
+    is_light = theme in light_themes
+    
+    # Get background color from splash colors (fallback to dark default)
+    bg_color = theme_splash_colors.get(theme, "#31363b")
+    
+    # Get text color (light text for dark themes, dark text for light themes)
+    if is_light:
+        text_color = theme_text_colors.get(theme, "#2c2c2c")
+        grid_color = "#b0b0b0"
+    else:
+        text_color = "#eff0f1"
+        grid_color = "#4d545d"
+    
+    return {
+        "bg_color": bg_color,
+        "text_color": text_color,
+        "grid_color": grid_color,
+        "is_light": is_light
+    }

@@ -28,6 +28,16 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # Import theme module
 import themes
 
+# Import Windows toast notifications (optional)
+try:
+    if sys.platform == "win32":
+        from winotify import Notification, audio
+        NOTIFICATIONS_AVAILABLE = True
+    else:
+        NOTIFICATIONS_AVAILABLE = False
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QPushButton, QLabel, QLineEdit, QComboBox, QCheckBox,
@@ -41,6 +51,17 @@ from PyQt6.QtGui import QColor, QFont, QTextCursor, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime, QDate
 import qdarkstyle
 from qdarkstyle.light.palette import LightPalette
+
+# Import matplotlib for charts (optional)
+try:
+    import matplotlib
+    matplotlib.use('QtAgg')  # Use Qt backend
+    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.figure import Figure
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
 VERSION = "v1.6.5"
 YEAR = datetime.now().year
@@ -95,6 +116,248 @@ def generate_password(length: Optional[int] = 32) -> str:
         # If no punctuation is found, add one randomly to the password
         password += random.choice(punctuations)
         return password
+
+
+# Application password security functions
+def hash_app_password(password: str, salt: bytes = None) -> Tuple[str, str]:
+    """
+    Hash an application password using PBKDF2
+    Returns: (base64_encoded_hash, base64_encoded_salt)
+    """
+    if salt is None:
+        salt = os.urandom(32)  # Generate random salt
+    
+    # Use PBKDF2 with SHA256, 100000 iterations
+    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    
+    # Encode to base64 for storage
+    hash_b64 = base64.b64encode(pwd_hash).decode('utf-8')
+    salt_b64 = base64.b64encode(salt).decode('utf-8')
+    
+    return hash_b64, salt_b64
+
+
+def verify_app_password(password: str, stored_hash: str, stored_salt: str) -> bool:
+    """
+    Verify a password against the stored hash
+    Returns: True if password matches, False otherwise
+    """
+    try:
+        # Decode the stored salt
+        salt = base64.b64decode(stored_salt)
+        
+        # Hash the provided password with the stored salt
+        pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+        computed_hash = base64.b64encode(pwd_hash).decode('utf-8')
+        
+        # Constant-time comparison to prevent timing attacks
+        return hmac.compare_digest(computed_hash, stored_hash)
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Password verification error: {e}")
+        return False
+
+
+# Windows Credential Manager integration (more secure than JSON storage)
+def store_credential_windows(name: str, value: str) -> bool:
+    """
+    Store a credential in Windows Credential Manager using cmdkey
+    Returns: True if successful, False otherwise
+    """
+    if sys.platform != "win32":
+        return False
+    
+    try:
+        # Use cmdkey to store generic credential
+        # Format: cmdkey /generic:TargetName /user:Username /pass:Password
+        result = subprocess.run(
+            ['cmdkey', f'/generic:{name}', f'/user:ResticManager', f'/pass:{value}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to store credential: {e}")
+        return False
+
+
+def retrieve_credential_windows(name: str) -> Optional[str]:
+    """
+    Retrieve a credential from Windows Credential Manager using PowerShell
+    Returns: The credential value or None if not found
+    """
+    if sys.platform != "win32":
+        return None
+    
+    try:
+        # Use PowerShell to retrieve the credential
+        ps_script = f'''
+$cred = cmdkey /list:"{name}" 2>&1
+if ($cred -match "{name}") {{
+    # Credential exists, retrieve it using CredentialManager
+    $target = "{name}"
+    Add-Type -AssemblyName System.Security
+    $encoding = [System.Text.Encoding]::UTF8
+    
+    # Read credential using Windows API
+    $credPtr = [IntPtr]::Zero
+    $success = [PInvoke.CredRead]::CredRead($target, 1, 0, [ref]$credPtr)
+    
+    if ($success) {{
+        $cred = [System.Runtime.InteropServices.Marshal]::PtrToStructure($credPtr, [Type][PInvoke.Credential])
+        $password = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($cred.CredentialBlob, $cred.CredentialBlobSize / 2)
+        [PInvoke.CredRead]::CredFree($credPtr)
+        Write-Output $password
+    }}
+}}
+'''
+        
+        # Simpler approach: Use a temporary file to store/retrieve
+        # Since direct retrieval is complex, we'll use a different strategy
+        # Store in Credential Manager but also maintain a registry fallback
+        
+        # For now, return None and use registry storage instead
+        return None
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to retrieve credential: {e}")
+        return None
+
+
+def delete_credential_windows(name: str) -> bool:
+    """
+    Delete a credential from Windows Credential Manager
+    Returns: True if successful, False otherwise
+    """
+    if sys.platform != "win32":
+        return False
+    
+    try:
+        result = subprocess.run(
+            ['cmdkey', f'/delete:{name}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to delete credential: {e}")
+        return False
+
+
+# Windows Registry storage (alternative secure storage)
+def store_in_registry(key_name: str, value: str) -> bool:
+    """
+    Store a value in Windows Registry (HKEY_CURRENT_USER)
+    Returns: True if successful, False otherwise
+    """
+    if sys.platform != "win32":
+        return False
+    
+    try:
+        import winreg
+        # Store in HKCU\Software\ResticManager
+        key_path = r"Software\ResticManager"
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+        winreg.SetValueEx(key, key_name, 0, winreg.REG_SZ, value)
+        winreg.CloseKey(key)
+        return True
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to store in registry: {e}")
+        return False
+
+
+def retrieve_from_registry(key_name: str) -> Optional[str]:
+    """
+    Retrieve a value from Windows Registry
+    Returns: The value or None if not found
+    """
+    if sys.platform != "win32":
+        return None
+    
+    try:
+        import winreg
+        key_path = r"Software\ResticManager"
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
+        value, _ = winreg.QueryValueEx(key, key_name)
+        winreg.CloseKey(key)
+        return value
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to retrieve from registry: {e}")
+        return None
+
+
+def delete_from_registry(key_name: str) -> bool:
+    """
+    Delete a value from Windows Registry
+    Returns: True if successful, False otherwise
+    """
+    if sys.platform != "win32":
+        return False
+    
+    try:
+        import winreg
+        key_path = r"Software\ResticManager"
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE)
+        winreg.DeleteValue(key, key_name)
+        winreg.CloseKey(key)
+        return True
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to delete from registry: {e}")
+        return False
+
+
+def show_notification(title: str, message: str, icon_type: str = "info", duration: str = "short"):
+    """
+    Show a Windows toast notification
+    
+    Args:
+        title: Notification title
+        message: Notification message
+        icon_type: Type of icon ("success", "error", "info", "warning")
+        duration: Duration ("short" or "long")
+    """
+    if not NOTIFICATIONS_AVAILABLE:
+        return
+    
+    if sys.platform != "win32":
+        return
+    
+    try:
+        # Create notification
+        toast = Notification(
+            app_id="Restic Backup Manager",
+            title=title,
+            msg=message,
+            duration=duration
+        )
+        
+        # Set icon based on type
+        if icon_type == "success":
+            toast.set_audio(audio.Default, loop=False)
+        elif icon_type == "error":
+            toast.set_audio(audio.SMS, loop=False)
+        elif icon_type == "warning":
+            toast.set_audio(audio.Reminder, loop=False)
+        
+        # Show notification
+        toast.show()
+        
+        if DEBUG_MODE:
+            print(f"Notification shown: {title} - {message}")
+    except Exception as e:
+        # Silently fail if notification fails
+        if DEBUG_MODE:
+            print(f"Failed to show notification: {e}")
+
     
 # Password encryption key (derived from machine-specific data)
 def get_encryption_key():
@@ -1415,6 +1678,105 @@ class LicenseDialog(QDialog):
             self.status_label.setStyleSheet("color: red;")
 
 
+class AppPasswordDialog(QDialog):
+    """Dialog for entering application password at startup"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Application Password Required")
+        self.setModal(True)
+        self.setFixedSize(450, 250)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        layout.addSpacing(15)
+        
+        # Title
+        title = QLabel("🔒 Password Required")
+        title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        layout.addSpacing(15)
+        
+        # Info message
+        info_label = QLabel("This application is password protected.\nPlease enter your password to continue.")
+        info_label.setWordWrap(True)
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(info_label)
+        
+        layout.addSpacing(20)
+        
+        # Password input (centered form layout)
+        form_container = QWidget()
+        form_layout = QFormLayout()
+        form_layout.setContentsMargins(50, 0, 50, 0)  # Add margins for better centering
+        form_layout.setHorizontalSpacing(10)
+        form_container.setLayout(form_layout)
+        
+        self.password_input = QLineEdit()
+        self.password_input.setFixedWidth(205)
+        self.password_input.setMinimumHeight(30)
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_input.setPlaceholderText("Enter password...")
+        self.password_input.returnPressed.connect(self.accept)  # Enter key submits
+        
+        form_layout.addRow("Password:", self.password_input)
+        layout.addWidget(form_container)
+        
+        layout.addSpacing(10)
+        
+        # Status message
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("color: red;")
+        self.status_label.setMinimumHeight(20)
+        layout.addWidget(self.status_label)
+        
+        layout.addStretch()
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        login_btn = QPushButton("Login")
+        login_btn.setDefault(True)
+        login_btn.setFixedWidth(100)
+        login_btn.setFixedHeight(32)
+        login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        login_btn.clicked.connect(self.accept)
+        
+        cancel_btn = QPushButton("Exit")
+        cancel_btn.setFixedWidth(100)
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(login_btn)
+        button_layout.addSpacing(10)
+        button_layout.addWidget(cancel_btn)
+        button_layout.addStretch()
+        
+        layout.addLayout(button_layout)
+        layout.addSpacing(15)
+        
+        # Focus on password field
+        self.password_input.setFocus()
+    
+    def get_password(self):
+        """Get the entered password"""
+        return self.password_input.text()
+    
+    def set_error(self, message):
+        """Display an error message"""
+        self.status_label.setText(message)
+        self.password_input.clear()
+        self.password_input.setFocus()
+
+
 # Settings Manager
 class ResticSettingsManager:
     """Manager for application settings"""
@@ -1431,7 +1793,10 @@ class ResticSettingsManager:
             "auto_refresh_snapshots": True,
             "snapshot_refresh_interval": 60,  # seconds
             "log_level": "info",
-            "temp_restore_path": "C:\\temp\\restic_restore"  # Temporary location for restore to original
+            "temp_restore_path": "C:\\temp\\restic_restore",  # Temporary location for restore to original
+            "app_password_enabled": False,
+            "app_password_hash": "",
+            "app_password_salt": ""
         }
         self.settings = self.load_settings()
     
@@ -1618,6 +1983,39 @@ $password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Enc
 # Set error action preference
 $ErrorActionPreference = "Stop"
 
+# Function to show Windows toast notification
+function Show-ToastNotification {{
+    param(
+        [string]$Title,
+        [string]$Message
+    )
+    
+    try {{
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+        
+        $toastXml = @"
+<toast>
+    <visual>
+        <binding template="ToastText02">
+            <text id="1">$Title</text>
+            <text id="2">$Message</text>
+        </binding>
+    </visual>
+    <audio src="ms-winsoundevent:Notification.Default"/>
+</toast>
+"@
+        
+        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $xml.LoadXml($toastXml)
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Restic Backup Manager").Show($toast)
+    }} catch {{
+        # Silently fail if notification fails
+        Write-Host "Note: Could not show toast notification"
+    }}
+}}
+
 # Load and decrypt repository password from encrypted file
 $passwordFile = "{password_file}"
 if (Test-Path $passwordFile) {{
@@ -1627,6 +2025,7 @@ if (Test-Path $passwordFile) {{
     [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
 }} else {{
     Write-Host "Error: Password file not found: $passwordFile"
+    Show-ToastNotification "Backup Failed" "Password file not found for job: {job_name}"
     exit 1
 }}
 
@@ -1659,20 +2058,23 @@ try {{
     $exitCode = $LASTEXITCODE
     
     if ($exitCode -eq 0) {{
-        Write-Host "Backup completed successfully"{pause_code}
+        Write-Host "Backup completed successfully"
+        Show-ToastNotification "Backup Completed ✓" "Job '{job_name}' to '{repo_name}' completed successfully"{pause_code}
         exit 0
     }} else {{
-        Write-Host "Backup failed with exit code: $exitCode"{pause_code}
+        Write-Host "Backup failed with exit code: $exitCode"
+        Show-ToastNotification "Backup Failed ✗" "Job '{job_name}' failed with exit code: $exitCode"{pause_code}
         exit $exitCode
     }}
 }} catch {{
-    Write-Host "Error running backup: $_"{pause_code}
+    Write-Host "Error running backup: $_"
+    Show-ToastNotification "Backup Failed ✗" "Job '{job_name}' error: $_"{pause_code}
     exit 1
 }} finally {{
     # Clear password from environment
     Remove-Item env:RESTIC_PASSWORD -ErrorAction SilentlyContinue
 }}
-""".format(job_name=job_name, repo_path=repo['path'], pause_code=pause_code)
+""".format(job_name=job_name, repo_path=repo['path'], repo_name=repo['name'], pause_code=pause_code)
             
             # Write PowerShell script to file
             with open(script_file, 'w', encoding='utf-8') as f:
@@ -1983,10 +2385,16 @@ try {{
 
 # Main Application Window
 class ResticManagerWindow(QMainWindow):
+    # Signal for thread-safe dashboard updates (using str for size to avoid int32 overflow)
+    dashboard_update_signal = pyqtSignal(int, str, str, list)
+    
     def __init__(self, app, splash=None):
         super().__init__()
         self.app = app
         self.splash = splash
+        
+        # Connect dashboard update signal
+        self.dashboard_update_signal.connect(self._update_dashboard_ui_impl)
         
         self._update_splash("Initializing settings...")
         self.settings_manager = ResticSettingsManager()
@@ -2214,6 +2622,41 @@ class ResticManagerWindow(QMainWindow):
         
         layout.addWidget(stats_group)
         
+        # Visual Charts Section (if matplotlib available)
+        if MATPLOTLIB_AVAILABLE:
+            charts_group = QGroupBox("Visual Overview")
+            charts_layout = QHBoxLayout()
+            charts_group.setLayout(charts_layout)
+            
+            # Repository Size Chart
+            size_chart_container = QVBoxLayout()
+            size_chart_label = QLabel("Repository Sizes")
+            size_chart_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            size_chart_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            size_chart_container.addWidget(size_chart_label)
+            
+            self.repo_size_canvas = FigureCanvas(Figure(figsize=(6, 3)))
+            self.repo_size_canvas.setMinimumSize(400, 250)
+            size_chart_container.addWidget(self.repo_size_canvas)
+            charts_layout.addLayout(size_chart_container)
+            
+            # Snapshot Count Chart
+            snapshot_chart_container = QVBoxLayout()
+            snapshot_chart_label = QLabel("Snapshot Distribution")
+            snapshot_chart_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            snapshot_chart_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            snapshot_chart_container.addWidget(snapshot_chart_label)
+            
+            self.snapshot_count_canvas = FigureCanvas(Figure(figsize=(6, 3)))
+            self.snapshot_count_canvas.setMinimumSize(400, 250)
+            snapshot_chart_container.addWidget(self.snapshot_count_canvas)
+            charts_layout.addLayout(snapshot_chart_container)
+            
+            layout.addWidget(charts_group)
+            
+            # Initialize empty charts with theme colors
+            self._initialize_empty_charts()
+        
         # Repository Stats
         repo_stats_group = QGroupBox("Repository Statistics")
         repo_stats_layout = QVBoxLayout()
@@ -2310,10 +2753,17 @@ class ResticManagerWindow(QMainWindow):
             total_size = 0
             last_backup = "Never"
             
+            # Collect per-repository data for charts
+            repo_data = []  # List of (name, size, snapshot_count)
+            
             for repo in repositories:
                 repo_name = repo.get("name", "")
                 repo_path = repo.get("path", "")
                 password = ""
+                
+                # Initialize repo stats
+                repo_size = 0
+                repo_snapshot_count = 0
                 
                 if repo.get("password"):
                     try:
@@ -2331,7 +2781,8 @@ class ResticManagerWindow(QMainWindow):
                         try:
                             snapshots = json.loads(stdout)
                             if isinstance(snapshots, list):
-                                total_snapshots += len(snapshots)
+                                repo_snapshot_count = len(snapshots)
+                                total_snapshots += repo_snapshot_count
                                 # Check for most recent snapshot time
                                 if snapshots:
                                     for snapshot in snapshots:
@@ -2351,25 +2802,253 @@ class ResticManagerWindow(QMainWindow):
                     if success and stdout:
                         try:
                             stats = json.loads(stdout)
-                            total_size += stats.get("total_size", 0)
+                            repo_size = stats.get("total_size", 0)
+                            total_size += repo_size
                         except json.JSONDecodeError:
                             pass
                 except:
                     pass
+                
+                # Add repo data if we got any info
+                if repo_name and (repo_size > 0 or repo_snapshot_count > 0):
+                    repo_data.append((repo_name, repo_size, repo_snapshot_count))
             
-            # Update UI on main thread using QTimer
-            QTimer.singleShot(0, lambda: self._update_dashboard_ui(total_snapshots, total_size, last_backup))
+            if DEBUG_MODE:
+                print(f"[DASHBOARD] Stats collected: {total_snapshots} snapshots, {total_size} bytes, {len(repo_data)} repos")
+            
+            # Emit signal to update UI on main thread (using str to avoid int32 overflow)
+            self.dashboard_update_signal.emit(total_snapshots, str(total_size), last_backup, repo_data)
         
         # Start background thread
         thread = Thread(target=gather_stats, daemon=True)
         thread.start()
     
-    def _update_dashboard_ui(self, total_snapshots, total_size, last_backup):
-        """Update dashboard UI with gathered stats (called from background thread)"""
+    def _update_dashboard_ui_impl(self, total_snapshots, total_size_str, last_backup, repo_data):
+        """Update dashboard UI with gathered stats (called from main thread via signal)"""
+        # Convert size back from string to int
+        total_size = int(total_size_str) if total_size_str else 0
+        
+        if DEBUG_MODE:
+            print(f"[DASHBOARD] Updating UI: {total_snapshots} snapshots, {total_size} bytes")
+        
         if hasattr(self, 'stats_labels'):
             self.stats_labels["total_snapshots"].setText(str(total_snapshots))
             self.stats_labels["total_size"].setText(self.format_bytes(total_size) if total_size > 0 else "—")
             self.stats_labels["last_backup"].setText(last_backup if last_backup != "Never" else "Never")
+        
+        # Update charts if matplotlib available and data provided
+        if MATPLOTLIB_AVAILABLE and repo_data:
+            self._update_dashboard_charts(repo_data)
+    
+    def _update_dashboard_charts(self, repo_data):
+        """Update dashboard charts with repository data"""
+        if not repo_data or not hasattr(self, 'repo_size_canvas'):
+            return
+        
+        try:
+            # Extract data
+            repo_names = [name for name, _, _ in repo_data]
+            repo_sizes = [size for _, size, _ in repo_data]
+            repo_snapshots = [count for _, _, count in repo_data]
+            
+            # Get theme colors dynamically
+            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
+            colors = themes.get_chart_colors(current_theme)
+            bg_color = colors['bg_color']
+            text_color = colors['text_color']
+            grid_color = colors['grid_color']
+            
+            # Update Repository Size Chart (Pie Chart)
+            if hasattr(self, 'repo_size_canvas'):
+                self.repo_size_canvas.figure.clear()
+                self.repo_size_canvas.figure.patch.set_facecolor(bg_color)
+                ax = self.repo_size_canvas.figure.add_subplot(111)
+                ax.set_facecolor(bg_color)
+                
+                if sum(repo_sizes) > 0:
+                    # Vibrant colors for pie chart
+                    colors = ['#3daee9', '#f67400', '#27ae60', '#da4453', '#9b59b6', 
+                             '#f39c12', '#e74c3c', '#16a085', '#2ecc71', '#3498db']
+                    
+                    # Create pie chart without labels (cleaner look)
+                    wedges, texts, autotexts = ax.pie(
+                        repo_sizes, 
+                        autopct='%1.1f%%',
+                        startangle=90, 
+                        colors=colors[:len(repo_sizes)],
+                        pctdistance=0.85
+                    )
+                    
+                    # Make percentage text bold and white
+                    for autotext in autotexts:
+                        autotext.set_color('white')
+                        autotext.set_fontweight('bold')
+                        autotext.set_fontsize(9)
+                    
+                    # Create legend with repo names and sizes
+                    legend_labels = [f"{name}: {self.format_bytes(size)}" 
+                                    for name, size in zip(repo_names, repo_sizes)]
+                    ax.legend(wedges, legend_labels,
+                             title="Repositories",
+                             loc="center left",
+                             bbox_to_anchor=(1, 0, 0.5, 1),
+                             fontsize=8,
+                             frameon=True,
+                             facecolor=bg_color,
+                             edgecolor=grid_color,
+                             labelcolor=text_color,
+                             title_fontsize=9)
+                    
+                    # Set legend title color
+                    legend = ax.get_legend()
+                    if legend:
+                        plt.setp(legend.get_title(), color=text_color, fontweight='bold')
+                    
+                    ax.set_title('Repository Storage Distribution', 
+                                fontsize=11, pad=10, color=text_color, fontweight='bold')
+                else:
+                    ax.text(0.5, 0.5, 'No data available', 
+                           ha='center', va='center', transform=ax.transAxes,
+                           color=text_color, fontsize=10)
+                    ax.set_title('Repository Storage Distribution', 
+                                fontsize=11, pad=10, color=text_color, fontweight='bold')
+                
+                # Adjust layout to prevent legend cutoff
+                self.repo_size_canvas.figure.tight_layout()
+                self.repo_size_canvas.draw()
+            
+            # Update Snapshot Count Chart (Bar Chart)
+            if hasattr(self, 'snapshot_count_canvas'):
+                self.snapshot_count_canvas.figure.clear()
+                self.snapshot_count_canvas.figure.patch.set_facecolor(bg_color)
+                ax = self.snapshot_count_canvas.figure.add_subplot(111)
+                ax.set_facecolor(bg_color)
+                
+                if sum(repo_snapshots) > 0:
+                    # Create bar chart with vibrant color
+                    bars = ax.bar(range(len(repo_names)), repo_snapshots, 
+                                 color='#27ae60', alpha=0.85, edgecolor='#2ecc71', linewidth=1.5)
+                    
+                    # Add value labels on bars
+                    for bar in bars:
+                        height = bar.get_height()
+                        if height > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2., height,
+                                   f'{int(height)}',
+                                   ha='center', va='bottom', fontsize=9,
+                                   color=text_color, fontweight='bold')
+                    
+                    ax.set_xlabel('Repository', fontsize=10, color=text_color, fontweight='bold')
+                    ax.set_ylabel('Snapshot Count', fontsize=10, color=text_color, fontweight='bold')
+                    ax.set_title('Snapshots per Repository', 
+                                fontsize=11, pad=10, color=text_color, fontweight='bold')
+                    ax.set_xticks(range(len(repo_names)))
+                    
+                    # Truncate long names for x-axis
+                    display_names = [name[:15] + '...' if len(name) > 15 else name 
+                                    for name in repo_names]
+                    ax.set_xticklabels(display_names, rotation=45, ha='right', 
+                                      fontsize=8, color=text_color)
+                    
+                    # Style grid and axes
+                    ax.grid(axis='y', alpha=0.3, linestyle='--', color=grid_color)
+                    ax.tick_params(colors=text_color, which='both')
+                    ax.spines['bottom'].set_color(grid_color)
+                    ax.spines['top'].set_color(grid_color)
+                    ax.spines['left'].set_color(grid_color)
+                    ax.spines['right'].set_color(grid_color)
+                else:
+                    ax.text(0.5, 0.5, 'No snapshots found', 
+                           ha='center', va='center', transform=ax.transAxes,
+                           color=text_color, fontsize=10)
+                    ax.set_title('Snapshots per Repository', 
+                                fontsize=11, pad=10, color=text_color, fontweight='bold')
+                
+                # Adjust layout to prevent label cutoff
+                self.snapshot_count_canvas.figure.tight_layout()
+                self.snapshot_count_canvas.draw()
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"[CHART ERROR] Failed to update charts: {str(e)}")
+                import traceback
+                traceback.print_exc()
+    
+    def _initialize_empty_charts(self):
+        """Initialize empty charts with current theme colors"""
+        if not MATPLOTLIB_AVAILABLE or not hasattr(self, 'repo_size_canvas'):
+            return
+        
+        try:
+            # Get theme colors
+            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
+            colors = themes.get_chart_colors(current_theme)
+            bg_color = colors['bg_color']
+            text_color = colors['text_color']
+            
+            # Initialize pie chart
+            if hasattr(self, 'repo_size_canvas'):
+                self.repo_size_canvas.figure.clear()
+                self.repo_size_canvas.figure.patch.set_facecolor(bg_color)
+                ax = self.repo_size_canvas.figure.add_subplot(111)
+                ax.set_facecolor(bg_color)
+                ax.text(0.5, 0.5, 'Click "Refresh Dashboard" to load data', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       color=text_color, fontsize=10)
+                ax.set_title('Repository Storage Distribution', 
+                            fontsize=11, pad=10, color=text_color, fontweight='bold')
+                self.repo_size_canvas.draw()
+            
+            # Initialize bar chart
+            if hasattr(self, 'snapshot_count_canvas'):
+                self.snapshot_count_canvas.figure.clear()
+                self.snapshot_count_canvas.figure.patch.set_facecolor(bg_color)
+                ax = self.snapshot_count_canvas.figure.add_subplot(111)
+                ax.set_facecolor(bg_color)
+                ax.text(0.5, 0.5, 'Click "Refresh Dashboard" to load data', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       color=text_color, fontsize=10)
+                ax.set_title('Snapshots per Repository', 
+                            fontsize=11, pad=10, color=text_color, fontweight='bold')
+                self.snapshot_count_canvas.figure.tight_layout()
+                self.snapshot_count_canvas.draw()
+                
+            if DEBUG_MODE:
+                print(f"[CHART] Initialized empty charts with theme: {current_theme}")
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"[CHART ERROR] Failed to initialize empty charts: {str(e)}")
+    
+    def _refresh_chart_theme(self):
+        """Refresh chart backgrounds when theme changes"""
+        if not MATPLOTLIB_AVAILABLE or not hasattr(self, 'repo_size_canvas'):
+            return
+        
+        try:
+            # Get new theme colors
+            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
+            colors = themes.get_chart_colors(current_theme)
+            bg_color = colors['bg_color']
+            text_color = colors['text_color']
+            
+            # Update pie chart background
+            if hasattr(self, 'repo_size_canvas'):
+                self.repo_size_canvas.figure.patch.set_facecolor(bg_color)
+                for ax in self.repo_size_canvas.figure.get_axes():
+                    ax.set_facecolor(bg_color)
+                self.repo_size_canvas.draw()
+            
+            # Update bar chart background
+            if hasattr(self, 'snapshot_count_canvas'):
+                self.snapshot_count_canvas.figure.patch.set_facecolor(bg_color)
+                for ax in self.snapshot_count_canvas.figure.get_axes():
+                    ax.set_facecolor(bg_color)
+                self.snapshot_count_canvas.draw()
+            
+            if DEBUG_MODE:
+                print(f"[CHART] Refreshed chart theme: {current_theme}")
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"[CHART ERROR] Failed to refresh chart theme: {str(e)}")
     
     def create_repositories_page(self):
         """Create repositories management page"""
@@ -3194,6 +3873,92 @@ class ResticManagerWindow(QMainWindow):
         temp_restore_help.setWordWrap(True)
         form_layout.addRow("", temp_restore_help)
         
+        layout.addWidget(title)
+        layout.addWidget(form_group)
+        
+        # Security Settings
+        security_group = QGroupBox("Security Settings - Application Password")
+        security_layout = QVBoxLayout()
+        security_group.setLayout(security_layout)
+        
+        # Status display
+        status_container = QHBoxLayout()
+        status_label = QLabel("Password Protection Status:")
+        status_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        status_container.addWidget(status_label)
+        
+        self.password_status_label = QLabel()
+        has_password = False
+        storage_location = ""
+        
+        if sys.platform == "win32":
+            # Windows: Registry only
+            reg_hash = retrieve_from_registry("AppPasswordHash")
+            reg_salt = retrieve_from_registry("AppPasswordSalt")
+            if reg_hash and reg_salt:
+                has_password = True
+                storage_location = " (Registry)"
+        else:
+            # Non-Windows: JSON storage
+            if self.settings_manager.get("app_password_hash"):
+                has_password = True
+                storage_location = " (Settings file)"
+        
+        if has_password:
+            self.password_status_label.setText(f"🔒 ACTIVE - Password required at startup{storage_location}")
+            self.password_status_label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self.password_status_label.setText("🔓 INACTIVE")
+            self.password_status_label.setStyleSheet("color: orange; font-weight: bold;")
+        status_container.addWidget(self.password_status_label)
+        status_container.addStretch()
+        security_layout.addLayout(status_container)
+        
+        security_layout.addSpacing(10)
+        
+        # Help text
+        storage_info = ""
+        if sys.platform == "win32":
+            storage_info = "Password hash is stored in Windows Registry (HKCU\\Software\\ResticManager) for enhanced security. "
+        
+        password_help = QLabel(
+            f"⚠️ Security Note: {storage_info}"
+            f"Password protection is enforced by cryptographic hashing. "
+            f"To disable password protection, you must authenticate and use the 'Remove Password' button below."
+        )
+        password_help.setStyleSheet("color: gray; font-style: italic; font-size: 9pt; padding: 5px; background-color: rgba(255, 165, 0, 0.1); border-radius: 3px;")
+        password_help.setWordWrap(True)
+        security_layout.addWidget(password_help)
+        
+        security_layout.addSpacing(10)
+        
+        # Buttons
+        password_btn_layout = QHBoxLayout()
+        
+        # Check if password exists (Registry or JSON)
+        password_exists = has_password  # Use the value from status check above
+        
+        self.set_password_btn = QPushButton("Set Password" if not password_exists else "Change Password")
+        self.set_password_btn.setFixedWidth(150)
+        self.set_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.set_password_btn.clicked.connect(self.set_app_password)
+        password_btn_layout.addWidget(self.set_password_btn)
+        
+        password_btn_layout.addSpacing(10)
+        
+        self.remove_password_btn = QPushButton("Remove Password")
+        self.remove_password_btn.setFixedWidth(150)
+        self.remove_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_password_btn.clicked.connect(self.remove_app_password)
+        self.remove_password_btn.setEnabled(password_exists)
+        password_btn_layout.addWidget(self.remove_password_btn)
+        
+        password_btn_layout.addStretch()
+        
+        security_layout.addLayout(password_btn_layout)
+        
+        
+        
         
         
         # Buttons layout (Save, Backup, Restore)
@@ -3348,6 +4113,8 @@ class ResticManagerWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(form_group)
         layout.addLayout(buttons_layout)
+        layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+        layout.addWidget(security_group)
         layout.addWidget(deps_group)
         layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
         layout.addWidget(license_group)
@@ -7292,6 +8059,14 @@ class ResticManagerWindow(QMainWindow):
             
             self.log(f"Backup job '{self._backup_job_name}' â†’ '{self._backup_repo_name}' completed successfully")
             
+            # Show success notification
+            show_notification(
+                title="Backup Completed Successfully ✓",
+                message=f"Backup job '{self._backup_job_name}' to '{self._backup_repo_name}' completed successfully.",
+                icon_type="success",
+                duration="short"
+            )
+            
             # Auto-unlock if locks exist (check and unlock)
             self._auto_unlock_after_completion()
             
@@ -7304,6 +8079,14 @@ class ResticManagerWindow(QMainWindow):
             
             error_msg = stderr if stderr else "Unknown error"
             self.log(f"Backup job '{self._backup_job_name}' â†’ '{self._backup_repo_name}' failed: {error_msg}")
+            
+            # Show failure notification
+            show_notification(
+                title="Backup Failed ✗",
+                message=f"Backup job '{self._backup_job_name}' to '{self._backup_repo_name}' failed. Check logs for details.",
+                icon_type="error",
+                duration="long"
+            )
             
             # Also try to unlock on failure in case lock is stuck
             if "locked" in error_msg.lower():
@@ -7512,6 +8295,39 @@ $password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Enc
 # Set error action preference
 $ErrorActionPreference = "Stop"
 
+# Function to show Windows toast notification
+function Show-ToastNotification {{
+    param(
+        [string]$Title,
+        [string]$Message
+    )
+    
+    try {{
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+        
+        $toastXml = @"
+<toast>
+    <visual>
+        <binding template="ToastText02">
+            <text id="1">$Title</text>
+            <text id="2">$Message</text>
+        </binding>
+    </visual>
+    <audio src="ms-winsoundevent:Notification.Default"/>
+</toast>
+"@
+        
+        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $xml.LoadXml($toastXml)
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Restic Backup Manager").Show($toast)
+    }} catch {{
+        # Silently fail if notification fails
+        Write-Host "Note: Could not show toast notification"
+    }}
+}}
+
 # Load and decrypt repository password from encrypted file
 $passwordFile = "{password_file}"
 if (Test-Path $passwordFile) {{
@@ -7521,6 +8337,7 @@ if (Test-Path $passwordFile) {{
     [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
 }} else {{
     Write-Host "Error: Password file not found: $passwordFile"
+    Show-ToastNotification "Retention Failed" "Password file not found for repository: {repo['name']}"
     exit 1
 }}
 
@@ -7534,13 +8351,16 @@ try {{
     
     if ($exitCode -eq 0) {{
         Write-Host "Retention policy applied successfully"
+        Show-ToastNotification "Retention Completed ✓" "Repository '{repo['name']}' retention policy applied successfully"
         exit 0
     }} else {{
         Write-Host "Retention policy failed with exit code: $exitCode"
+        Show-ToastNotification "Retention Failed ✗" "Repository '{repo['name']}' failed with exit code: $exitCode"
         exit $exitCode
     }}
 }} catch {{
     Write-Host "Error running retention policy: $_"
+    Show-ToastNotification "Retention Failed ✗" "Repository '{repo['name']}' error: $_"
     exit 1
 }} finally {{
     # Clear password from environment
@@ -7958,6 +8778,177 @@ try {{
         
         QMessageBox.information(self, "Success", "Settings saved successfully!")
         self.log("Settings saved")
+    
+    def set_app_password(self):
+        """Set or change application password"""
+        # Check if password already exists
+        has_password = False
+        stored_hash = None
+        stored_salt = None
+        
+        if sys.platform == "win32":
+            # Windows: Registry only
+            stored_hash = retrieve_from_registry("AppPasswordHash")
+            stored_salt = retrieve_from_registry("AppPasswordSalt")
+            if stored_hash and stored_salt:
+                has_password = True
+        else:
+            # Non-Windows: JSON storage
+            stored_hash = self.settings_manager.get("app_password_hash")
+            stored_salt = self.settings_manager.get("app_password_salt")
+            if stored_hash and stored_salt:
+                has_password = True
+        
+        # If password already exists, verify old password first
+        if has_password:
+            old_password, ok = QInputDialog.getText(
+                self,
+                "Verify Current Password",
+                "Enter your current password:",
+                QLineEdit.EchoMode.Password
+            )
+            
+            if not ok:
+                return
+            
+            # Verify old password
+            
+            if not verify_app_password(old_password, stored_hash, stored_salt):
+                QMessageBox.warning(self, "Incorrect Password", "The current password you entered is incorrect.")
+                return
+        
+        # Ask for new password
+        new_password, ok = QInputDialog.getText(
+            self,
+            "Set Application Password",
+            "Enter a new password for the application:\n(Minimum 8 characters)",
+            QLineEdit.EchoMode.Password
+        )
+        
+        if not ok or not new_password:
+            return
+        
+        # Validate password length
+        if len(new_password) < 8:
+            QMessageBox.warning(self, "Password Too Short", "Password must be at least 8 characters long.")
+            return
+        
+        # Confirm new password
+        confirm_password, ok = QInputDialog.getText(
+            self,
+            "Confirm Password",
+            "Confirm the new password:",
+            QLineEdit.EchoMode.Password
+        )
+        
+        if not ok or new_password != confirm_password:
+            QMessageBox.warning(self, "Password Mismatch", "Passwords do not match!")
+            return
+        
+        # Hash the password
+        pwd_hash, pwd_salt = hash_app_password(new_password)
+        
+        # Store password
+        if sys.platform == "win32":
+            # Windows: Registry only
+            store_in_registry("AppPasswordHash", pwd_hash)
+            store_in_registry("AppPasswordSalt", pwd_salt)
+            storage_location = "Windows Registry (HKCU\\Software\\ResticManager)"
+        else:
+            # Non-Windows: JSON storage
+            self.settings_manager.set("app_password_hash", pwd_hash)
+            self.settings_manager.set("app_password_salt", pwd_salt)
+            self.settings_manager.save_settings()
+            storage_location = "Settings file"
+        
+        # Update UI
+        self.set_password_btn.setText("Change Password")
+        self.remove_password_btn.setEnabled(True)
+        status_suffix = " (Registry)" if sys.platform == "win32" else " (Settings file)"
+        self.password_status_label.setText(f"🔒 ACTIVE")
+        self.password_status_label.setStyleSheet("color: green; font-weight: bold;")
+        
+        QMessageBox.information(
+            self,
+            "Password Set Successfully",
+            f"Your application password has been set successfully.\n\n"
+            f"Storage location: {storage_location}\n\n"
+            f"This password will be required the next time you start the application."
+        )
+        self.log(f"Application password updated (stored in {storage_location})")
+    
+    def remove_app_password(self):
+        """Remove application password protection (requires authentication)"""
+        # Retrieve current password from storage
+        stored_hash = None
+        stored_salt = None
+        
+        if sys.platform == "win32":
+            # Windows: Registry only
+            stored_hash = retrieve_from_registry("AppPasswordHash")
+            stored_salt = retrieve_from_registry("AppPasswordSalt")
+        else:
+            # Non-Windows: JSON storage
+            stored_hash = self.settings_manager.get("app_password_hash")
+            stored_salt = self.settings_manager.get("app_password_salt")
+        
+        if not stored_hash or not stored_salt:
+            QMessageBox.information(self, "No Password Set", "No password is currently set.")
+            return
+        
+        current_password, ok = QInputDialog.getText(
+            self,
+            "Verify Password",
+            "Enter your current password to remove password protection:",
+            QLineEdit.EchoMode.Password
+        )
+        
+        if not ok:
+            return
+        
+        # Verify password
+        if not verify_app_password(current_password, stored_hash, stored_salt):
+            QMessageBox.warning(self, "Incorrect Password", "The password you entered is incorrect.")
+            return
+        
+        # Confirm removal
+        reply = QMessageBox.question(
+            self,
+            "Confirm Password Removal",
+            "Are you sure you want to remove password protection?\n\n"
+            "The application will no longer require a password at startup.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Remove password from storage
+        if sys.platform == "win32":
+            # Windows: Registry only
+            delete_from_registry("AppPasswordHash")
+            delete_from_registry("AppPasswordSalt")
+        else:
+            # Non-Windows: JSON storage
+            self.settings_manager.set("app_password_hash", "")
+            self.settings_manager.set("app_password_salt", "")
+            self.settings_manager.save_settings()
+        
+        # Update UI
+        self.set_password_btn.setText("Set Password")
+        self.remove_password_btn.setEnabled(False)
+        self.password_status_label.setText("🔓 INACTIVE")
+        self.password_status_label.setStyleSheet("color: orange; font-weight: bold;")
+        
+        QMessageBox.information(
+            self,
+            "Password Removed",
+            "Password protection has been removed successfully.\n\n"
+            "The application will no longer require a password at startup."
+        )
+        storage_type = "Registry" if sys.platform == "win32" else "Settings file"
+        self.log(f"Application password removed from {storage_type}")
     
     def backup_settings(self):
         """Backup settings to an encrypted file"""
@@ -8485,6 +9476,10 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         """Apply a theme to the application - delegates to themes module."""
         themes.apply_theme(self.app, self.settings_manager, theme)
         
+        # Refresh charts with new theme colors
+        if MATPLOTLIB_AVAILABLE and hasattr(self, 'repo_size_canvas'):
+            self._refresh_chart_theme()
+        
         # Refresh status widgets if they exist
         self.refresh_status_widget_themes()
 
@@ -8928,45 +9923,8 @@ def main():
     settings_manager = ResticSettingsManager()
     current_theme = settings_manager.get("theme")
     
-    # Map themes to background colors for splash screen
-    theme_splash_colors = {
-        "light": "#f9f9f9",
-        "dark": "#353535",
-        "dark-cyan": "#001f2f",
-        "dark-navy": "#12233d",
-        "dark-green": "#0c2b29",
-        "light-green": "#d5f2e6",
-        "dark-purple": "#1c0f2f",
-        "solarized-dark": "#002b36",
-        "light-blue": "#e7f0fb",
-        "monokai-dark": "#272822",
-        "dark-indigo": "#1a1b3a",
-        "dark-magenta": "#2a0a2a",
-        "sunset-orange": "#fff3e6",
-        "forest-moss": "#1c2d24",
-        "cool-grey": "#2e2e38",
-        "pure-black": "#000000",
-        "midnight-blue": "#0d1421",
-        "cyberpunk-neon": "#0a0a0a",
-        "github-dark": "#0d1117",
-        "vscode-dark": "#1e1e1e",
-        "material-dark": "#212121",
-        "dracula": "#282a36",
-        "nord-dark": "#2e3440",
-        "amoled-black": "#000000",
-        "matrix-green": "#000000"
-    }
-    
-    # Map themes to text colors for splash screen
-    theme_text_colors = {
-        "light": "#333333",
-        "light-green": "#222423",
-        "light-blue": "#1a2b3c",
-        "sunset-orange": "#552200"
-    }
-    
-    splash_bg_color = theme_splash_colors.get(current_theme, "#1a1b3a")
-    splash_text_color = theme_text_colors.get(current_theme, "#ffffff")
+    splash_bg_color = themes.theme_splash_colors.get(current_theme, "#1a1b3a")
+    splash_text_color = themes.theme_text_colors.get(current_theme, "#ffffff")
     
     # Create splash screen
     splash_pix = QPixmap(400, 200)
@@ -9022,6 +9980,96 @@ def main():
         splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
         splash.showMessage(
             f"Restic Backup Manager {VERSION}\n\nLicense activated! Loading application...\n",
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
+            QColor(splash_text_color)
+        )
+        splash.show()
+        app.processEvents()
+
+    # Check application password - if hash exists, ALWAYS require authentication
+    # Retrieve password from storage
+    stored_hash = None
+    stored_salt = None
+    storage_source = None
+    
+    if sys.platform == "win32":
+        # Windows: Registry only
+        stored_hash = retrieve_from_registry("AppPasswordHash")
+        stored_salt = retrieve_from_registry("AppPasswordSalt")
+        if stored_hash and stored_salt:
+            storage_source = "Windows Registry"
+    else:
+        # Non-Windows: JSON storage
+        stored_hash = settings_manager.get("app_password_hash")
+        stored_salt = settings_manager.get("app_password_salt")
+        if stored_hash and stored_salt:
+            storage_source = "Settings file"
+    
+    if stored_hash and stored_salt:
+        # Password protection active - authenticate required
+        # Hide splash screen to show password dialog
+        splash.close()
+        splash.deleteLater()
+        app.processEvents()  # Process the deletion
+        
+        # Show password dialog
+        max_attempts = 3
+        attempt = 0
+        authenticated = False
+        
+        while attempt < max_attempts:
+            password_dialog = AppPasswordDialog()
+            
+            # Apply basic styling based on theme
+            if current_theme == "dark" or "dark" in current_theme:
+                password_dialog.setStyleSheet("""
+                    QDialog { background-color: #2b2b2b; color: #ffffff; }
+                    QLineEdit { background-color: #3b3b3b; color: #ffffff; border: 1px solid #555; padding: 5px; }
+                    QPushButton { background-color: #4a4a4a; color: #ffffff; border: 1px solid #666; padding: 5px 10px; }
+                    QPushButton:hover { background-color: #5a5a5a; }
+                """)
+            
+            result = password_dialog.exec()
+            
+            if result != QDialog.DialogCode.Accepted:
+                # User cancelled - exit application
+                return 0
+            
+            # Verify password
+            entered_password = password_dialog.get_password()
+            if verify_app_password(entered_password, stored_hash, stored_salt):
+                authenticated = True
+                break
+            else:
+                attempt += 1
+                remaining = max_attempts - attempt
+                if remaining > 0:
+                    password_dialog = AppPasswordDialog()
+                    if current_theme == "dark" or "dark" in current_theme:
+                        password_dialog.setStyleSheet("""
+                            QDialog { background-color: #2b2b2b; color: #ffffff; }
+                            QLineEdit { background-color: #3b3b3b; color: #ffffff; border: 1px solid #555; padding: 5px; }
+                            QPushButton { background-color: #4a4a4a; color: #ffffff; border: 1px solid #666; padding: 5px 10px; }
+                            QPushButton:hover { background-color: #5a5a5a; }
+                        """)
+                    password_dialog.set_error(f"Incorrect password. {remaining} attempt(s) remaining.")
+                    password_dialog.show()
+                    continue
+        
+        if not authenticated:
+            QMessageBox.critical(
+                None,
+                "Authentication Failed",
+                "Maximum login attempts exceeded.\nApplication will now exit."
+            )
+            return 1
+        
+        # Recreate splash screen after successful authentication
+        splash_pix = QPixmap(400, 200)
+        splash_pix.fill(QColor(splash_bg_color))
+        splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
+        splash.showMessage(
+            f"Restic Backup Manager {VERSION}\n\nAuthenticated! Loading application...\n",
             Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
             QColor(splash_text_color)
         )

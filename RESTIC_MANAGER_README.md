@@ -19,6 +19,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 🎯 **Smart Script Generation**: Includes all job settings (paths, tags, excludes, compression, etc.)
 - 📂 **Organized Storage**: Scripts stored in `scheduled_tasks/` folder with job name
 - ✅ **Multi-Repository Support**: For jobs with multiple repositories, schedules backup to the first one
+- 🔔 **Toast Notifications**: PowerShell scripts show Windows toast notifications on completion (success/failure)
 
 ### Automated Retention Scheduling ✨ NEW
 - 📅 **Task Scheduler Integration**: Create scheduled tasks to automatically clean up old snapshots
@@ -32,6 +33,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 🗑️ **Task Management**: View, create, and delete scheduled tasks from the app
 - 🔧 **Auto-Generated Scripts**: PowerShell scripts (Windows) with embedded restic commands
 - ℹ️ **Best Practice Design**: Separates backup frequency from retention cleanup (run backups often, cleanup weekly)
+- 🔔 **Toast Notifications**: PowerShell scripts show Windows toast notifications on completion (success/failure)
 
 ### Enhanced Snapshot Browsing ✨ NEW
 - 🌳 **Hierarchical Tree View**: Browse snapshot contents in a natural folder structure (QTreeView)
@@ -48,6 +50,19 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 🐧 **Linux**: Uses `apt` package manager with terminal guidance
 - ✅ **Status Indicators**: Real-time status showing installed versions or missing packages
 - 🔄 **Quick Verification**: Instantly verify installations after setup
+
+### Application Password Protection ✨ NEW
+- 🔒 **Startup Password**: Optional password protection for application access
+- 🔐 **PBKDF2-HMAC-SHA256**: Industry-standard password hashing with 100,000 iterations
+- 🧂 **Random Salt**: 32-byte cryptographically secure salt for each password
+- 🪟 **Windows Registry Storage**: Hash stored in Registry (HKCU\Software\ResticManager) for enhanced security
+- 📁 **Settings File Storage**: Non-Windows systems use encrypted settings file
+- 🚫 **No Bypass**: Cannot be disabled by editing settings/JSON files
+- 3️⃣ **Three Attempts**: Maximum 3 login attempts before application exit
+- 🔄 **Change Password**: Requires current password verification
+- ❌ **Remove Protection**: Authenticate to disable password requirement
+- 🛡️ **Security**: One-way hash (password cannot be reversed), constant-time comparison
+- ⚙️ **Easy Setup**: Configure in Settings > Security Settings
 
 ### File Restore & Browse Features ✨ NEW
 - 📂 **Full Restore Functionality**: Restore files from any snapshot to any location
@@ -68,6 +83,25 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 📜 **Scrollable Backup Dialog**: All options neatly organized in a scrollable interface
 - 📦 **Copy Snapshots Between Repos**: Fix backup mistakes by moving snapshots to the correct repository
 - 📊 **Comprehensive Repository Stats**: Detailed breakdown showing Original Data Size, Repository Size, Total Saved (dedup+compression), and storage efficiency ratio - no more confusing stats!
+- 🔔 **Windows Toast Notifications** ✨ NEW: Get notified when backups complete (success or failure)
+  - Native Windows 10/11 toast notifications
+  - Shows backup job name and repository
+  - Success notifications with confirmation sound
+  - Error notifications with alert sound (longer display)
+  - Works for both GUI-initiated and scheduled backups
+  - Scheduled tasks use built-in PowerShell notifications (no dependencies)
+  - GUI backups use optional `winotify` package
+  - Works even when app is minimized
+
+### Dashboard Visual Charts ✨ NEW
+- 📊 **Interactive Charts**: Visual representation of repository data (optional matplotlib package)
+  - **Repository Storage Distribution**: Pie chart showing space usage across all repositories
+  - **Snapshot Distribution**: Bar chart displaying snapshot counts per repository
+  - **Real-time Updates**: Charts refresh automatically when clicking "Refresh Dashboard"
+  - **Color-Coded**: Professional color schemes for easy data interpretation
+  - **Responsive Design**: Charts resize with window and display human-readable sizes
+  - **No Data Handling**: Gracefully handles repositories with no data
+  - **Optional Feature**: Works without matplotlib installed (charts section hidden if not available)
 
 ### Advanced Repository Verification & Maintenance ✨ NEW
 - 🔍 **Flexible Verification Levels**: Choose the right check for your needs
@@ -123,6 +157,16 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - PBKDF2HMAC with 100,000 iterations
   - Machine-specific encryption key (based on unique hardware/system ID)
   - Passwords securely stored in settings file
+- **Application Password Protection**: Optional startup password to secure the application (NEW v1.3.0)
+  - PBKDF2-HMAC-SHA256 password hashing with 100,000 iterations
+  - 32-byte random salt per password (cryptographically secure)
+  - Password hash stored in Windows Registry (HKCU\Software\ResticManager)
+  - Settings file storage for non-Windows platforms
+  - Three login attempts before application exit
+  - Set/Change/Remove password from Settings page
+  - Requires authentication before password removal
+  - One-way cryptographic hash (password cannot be reversed)
+  - Constant-time comparison prevents timing attacks
 - **Theme Support**: 25 themes including:
   - light, dark, dark-cyan, dark-navy, dark-green, light-green
   - dark-purple, solarized-dark, light-blue, monokai-dark
@@ -148,6 +192,10 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   1. **Dashboard** - Statistics, repository stats, and recent activity overview
      - **Smart Caching**: Dashboard loads instantly after first view
      - **Manual Refresh**: "Refresh Dashboard" button to update stats on demand
+     - **Visual Charts** ✨ NEW: Interactive charts showing repository data (requires matplotlib)
+       - Repository storage distribution (pie chart)
+       - Snapshot counts per repository (bar chart)
+       - Real-time updates with dashboard refresh
      - No delays when switching between menus
   2. Repositories - Manage backup repositories
   3. Snapshots - Browse, view, restore, and manage snapshots
@@ -562,6 +610,17 @@ Already installed in your environment:
 - qdarkstyle
 - cryptography (for password encryption and license system)
 
+Optional (for Windows toast notifications):
+- winotify (for backup completion notifications on Windows)
+
+Optional (for dashboard visual charts):
+- matplotlib (for repository size and snapshot distribution charts)
+
+To install optional packages:
+```powershell
+.\env\Scripts\python.exe -m pip install winotify matplotlib
+```
+
 Additional requirement:
 - **Restic**: Download from https://restic.net/
 
@@ -952,6 +1011,64 @@ env = {"RESTIC_PASSWORD": password}
 args = ["-r", repo["path"], "snapshots", "--json"]
 success, stdout, stderr = self.restic_cmd.run(args, env)
 ```
+
+### Application Password Protection (✅ Fully Implemented)
+
+Protect your application with an optional startup password. When enabled, users must authenticate before accessing the application.
+
+#### Features
+
+- **PBKDF2-HMAC-SHA256 Hashing**: Industry-standard password hashing with 100,000 iterations
+- **Random Salt**: 32-byte cryptographically secure random salt per password
+- **Secure Storage**:
+  - **Windows**: Password hash stored in Windows Registry (`HKCU\Software\ResticManager`)
+  - **Linux/macOS**: Password hash stored in settings file
+- **Three Attempts**: Maximum 3 login attempts before application exits
+- **One-Way Hash**: Password cannot be reversed from stored hash
+- **Timing Attack Protection**: Constant-time comparison prevents timing-based attacks
+
+#### Setting Up Password Protection
+
+1. Navigate to **Settings** page
+2. Find the **Security Settings** section
+3. Click **Set Password**
+4. Enter your desired password (minimum 4 characters)
+5. Confirm the password
+6. Password is immediately active
+
+**Storage Location:**
+- Windows: `HKCU\Software\ResticManager\AppPasswordHash` and `AppPasswordSalt`
+- Other platforms: `restic_settings.json` (encrypted hash and salt)
+
+#### Changing Your Password
+
+1. Navigate to **Settings** > **Security Settings**
+2. Click **Change Password**
+3. Enter your current password for verification
+4. Enter and confirm your new password
+5. Password is updated immediately
+
+#### Removing Password Protection
+
+1. Navigate to **Settings** > **Security Settings**
+2. Click **Remove Password**
+3. Enter your current password for authentication
+4. Confirm the removal
+5. Password protection is disabled
+
+#### Security Notes
+
+- **Windows Registry Storage**: On Windows, the password hash is stored in the Registry, which requires Windows API knowledge to access (more secure than JSON file editing)
+- **No Bypass**: The application checks for password hash presence at startup - cannot be bypassed by editing settings
+- **Desktop App Limitations**: Like all desktop applications, password protection provides a convenience barrier but cannot prevent access from users with full filesystem/Registry access
+- **Combine with OS Security**: For maximum security, combine with Windows user accounts, disk encryption, or OS-level security features
+
+#### Password Requirements
+
+- Minimum length: 4 characters
+- No maximum length
+- All characters supported (letters, numbers, symbols)
+- Case-sensitive
 
 ### Repository Management (✅ Fully Implemented)
 

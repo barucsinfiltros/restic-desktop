@@ -229,5 +229,8 @@
             "created": "2026-03-17 16:19:36"
         }
     ],
-    "temp_restore_path": "C:\\temp\\restic_restore"
+    "temp_restore_path": "C:\\temp\\restic_restore",
+    "app_password_hash": "",
+    "app_password_salt": "",
+    "app_password_enabled": false
 }
