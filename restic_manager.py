@@ -52,24 +52,44 @@ from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime, QDate
 import qdarkstyle
 from qdarkstyle.light.palette import LightPalette
 
+# Version and debug settings (must be defined before matplotlib import)
+VERSION = "v1.6.6"
+YEAR = datetime.now().year
+DEBUG_MODE = False
+
 # Import matplotlib for charts (optional)
 try:
     import matplotlib
     matplotlib.use('QtAgg')  # Use Qt backend
-    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    # Try PyQt6 backend first, fall back to PyQt5
+    try:
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    except ImportError:
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
-except ImportError:
+    MATPLOTLIB_ERROR = None
+except Exception as e:
     MATPLOTLIB_AVAILABLE = False
+    MATPLOTLIB_ERROR = str(e)
+    # Log error if debug mode
+    import traceback
+    if DEBUG_MODE:
+        print(f"Matplotlib import failed: {e}")
+        traceback.print_exc()
+    # Also write to a log file for debugging compiled exe
+    try:
+        with open("matplotlib_error.log", "w") as f:
+            f.write(f"Matplotlib import failed: {e}\n")
+            f.write(traceback.format_exc())
+    except:
+        pass  # Silently fail if we can't write the log
 
 
 """ pyinstaller --noconsole --onefile license_generator_gui.py """
-""" pyinstaller --noconsole --onefile restic_manager.py """
-
-VERSION = "v1.6.6"
-YEAR = datetime.now().year
-DEBUG_MODE = False
+""" pyinstaller --noconsole --onefile restic_manager.py """ # Dont Use
+""" pyinstaller restic_manager.spec """ # Use this for including matplotlib data files
 
 stylesheet = (
     """
@@ -106,6 +126,17 @@ stylesheet = (
         }
     """
 )
+
+# Windows subprocess helper - prevents console windows from appearing
+def get_subprocess_creation_flags():
+    """
+    Get appropriate creation flags for subprocess to prevent console windows on Windows
+    Returns subprocess.CREATE_NO_WINDOW on Windows, 0 on other platforms
+    """
+    if sys.platform == "win32":
+        # Prevent console window from flashing when running subprocesses
+        return subprocess.CREATE_NO_WINDOW
+    return 0
 
 def generate_password(length: Optional[int] = 32) -> str:
     punctuations_list = ["!", "@", "#", "%", "&", "_", "*"]
@@ -178,7 +209,8 @@ def store_credential_windows(name: str, value: str) -> bool:
             ['cmdkey', f'/generic:{name}', f'/user:ResticManager', f'/pass:{value}'],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            creationflags=get_subprocess_creation_flags()
         )
         return result.returncode == 0
     except Exception as e:
@@ -243,7 +275,8 @@ def delete_credential_windows(name: str) -> bool:
             ['cmdkey', f'/delete:{name}'],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            creationflags=get_subprocess_creation_flags()
         )
         return result.returncode == 0
     except Exception as e:
@@ -407,7 +440,8 @@ def get_machine_id():
                 ['wmic', 'csproduct', 'get', 'uuid'],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                creationflags=get_subprocess_creation_flags()
             )
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')
@@ -423,7 +457,8 @@ def get_machine_id():
                 ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                creationflags=get_subprocess_creation_flags()
             )
             if result.returncode == 0:
                 for line in result.stdout.split('\n'):
@@ -655,7 +690,8 @@ class ResticCommand:
                 text=True,
                 encoding='utf-8',
                 errors='replace',  # Replace invalid characters instead of crashing
-                env={**os.environ, **(env or {})}
+                env={**os.environ, **(env or {})},
+                creationflags=get_subprocess_creation_flags()
             )
             
             stdout, stderr = process.communicate(input=input_data, timeout=timeout)
@@ -706,7 +742,8 @@ class ResticCommand:
                 errors='replace',
                 env={**os.environ, **(env or {})},
                 bufsize=1,  # Line buffered
-                universal_newlines=True
+                universal_newlines=True,
+                creationflags=get_subprocess_creation_flags()
             )
             
             # Use deque with maxlen to prevent memory overflow on large outputs
@@ -1973,7 +2010,8 @@ $password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Enc
                         capture_output=True,
                         text=True,
                         encoding='utf-8',
-                        errors='replace'
+                        errors='replace',
+                        creationflags=get_subprocess_creation_flags()
                     )
                     if result.returncode != 0:
                         return False, f"Failed to encrypt password: {result.stderr}"
@@ -2125,7 +2163,8 @@ try {{
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=get_subprocess_creation_flags()
             )
             
             if result.returncode == 0:
@@ -2152,7 +2191,8 @@ try {{
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=get_subprocess_creation_flags()
             )
             
             # Delete PowerShell script file if it exists
@@ -2190,7 +2230,8 @@ try {{
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=get_subprocess_creation_flags()
             )
             
             if result.returncode == 0:
@@ -2285,7 +2326,8 @@ try {{
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=get_subprocess_creation_flags()
             )
             
             if result.returncode == 0:
@@ -2314,7 +2356,8 @@ try {{
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=get_subprocess_creation_flags()
             )
             
             if result.returncode != 0:
@@ -2344,7 +2387,8 @@ try {{
                     capture_output=True,
                     text=True,
                     encoding='utf-8',
-                    errors='replace'
+                    errors='replace',
+                    creationflags=get_subprocess_creation_flags()
                 )
             else:
                 # Remove crontab entirely if no entries left
@@ -2353,7 +2397,8 @@ try {{
                     capture_output=True,
                     text=True,
                     encoding='utf-8',
-                    errors='replace'
+                    errors='replace',
+                    creationflags=get_subprocess_creation_flags()
                 )
             
             return True, f"Cron job deleted"
@@ -2371,7 +2416,8 @@ try {{
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=get_subprocess_creation_flags()
             )
             
             if result.returncode == 0:
@@ -2660,6 +2706,12 @@ class ResticManagerWindow(QMainWindow):
             
             # Initialize empty charts with theme colors
             self._initialize_empty_charts()
+        else:
+            # Show why matplotlib is not available (debugging)
+            if DEBUG_MODE:
+                charts_debug = QLabel(f"Matplotlib not available. Error: {MATPLOTLIB_ERROR}")
+                charts_debug.setStyleSheet("color: orange; padding: 10px;")
+                layout.addWidget(charts_debug)
         
         # Repository Stats
         repo_stats_group = QGroupBox("Repository Statistics")
@@ -4386,7 +4438,8 @@ class ResticManagerWindow(QMainWindow):
             try:
                 result = subprocess.run(
                     ['schtasks', '/Query', '/FO', 'LIST'],
-                    capture_output=True, text=True, timeout=10
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=get_subprocess_creation_flags()
                 )
                 if result.returncode == 0:
                     # Parse task names
@@ -8283,7 +8336,8 @@ $password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Enc
                     capture_output=True,
                     text=True,
                     encoding='utf-8',
-                    errors='replace'
+                    errors='replace',
+                    creationflags=get_subprocess_creation_flags()
                 )
                 if result.returncode != 0:
                     QMessageBox.critical(self, "Password Encryption Failed", f"Failed to encrypt password:\n{result.stderr}")
@@ -8576,7 +8630,8 @@ try {{
             if system == "Windows":
                 result = subprocess.run(
                     ['schtasks', '/Delete', '/TN', task_name, '/F'],
-                    capture_output=True, text=True, timeout=10
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=get_subprocess_creation_flags()
                 )
                 if result.returncode == 0:
                     # Also delete the PowerShell script and password file
