@@ -6,4 +6,10 @@ scheduled_tasks/
 *.pyd
 *.swp
 .DS_Store
-.key
+*.key
+*.spec
+dist/
+*.json
+build/
+license.key
+.license_check
