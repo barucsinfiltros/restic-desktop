@@ -67,7 +67,7 @@ except ImportError:
 """ pyinstaller --noconsole --onefile license_generator_gui.py """
 """ pyinstaller --noconsole --onefile restic_manager.py """
 
-VERSION = "v1.6.5"
+VERSION = "v1.6.6"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 
