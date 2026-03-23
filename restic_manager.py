@@ -925,34 +925,34 @@ class ResticWorker(QThread):
             pass
 
 
-class MountMonitorThread(QThread):
-    """Monitor file explorer process and request unmount when closed"""
-    unmount_requested = pyqtSignal()
+# class MountMonitorThread(QThread):
+#     """Monitor file explorer process and request unmount when closed"""
+#     unmount_requested = pyqtSignal()
     
-    def __init__(self, mount_info, parent=None):
-        super().__init__(parent)
-        self.mount_info = mount_info
-        self.should_stop = False
+#     def __init__(self, mount_info, parent=None):
+#         super().__init__(parent)
+#         self.mount_info = mount_info
+#         self.should_stop = False
     
-    def run(self):
-        """Monitor the explorer process"""
-        explorer_process = self.mount_info.get('explorer_process')
+#     def run(self):
+#         """Monitor the explorer process"""
+#         explorer_process = self.mount_info.get('explorer_process')
         
-        if not explorer_process:
-            return
+#         if not explorer_process:
+#             return
         
-        # Wait for explorer process to finish
-        while not self.should_stop:
-            if explorer_process.poll() is not None:
-                # Explorer has closed
-                time.sleep(1)  # Brief delay before unmounting
-                self.unmount_requested.emit()
-                break
-            time.sleep(1)  # Check every second
+#         # Wait for explorer process to finish
+#         while not self.should_stop:
+#             if explorer_process.poll() is not None:
+#                 # Explorer has closed
+#                 time.sleep(1)  # Brief delay before unmounting
+#                 self.unmount_requested.emit()
+#                 break
+#             time.sleep(1)  # Check every second
     
-    def stop(self):
-        """Stop monitoring"""
-        self.should_stop = True
+#     def stop(self):
+#         """Stop monitoring"""
+#         self.should_stop = True
 
 
 # Repository Dialog
@@ -2412,7 +2412,7 @@ class ResticManagerWindow(QMainWindow):
         
         self._update_splash("Creating main window...")
         self.setWindowTitle(f"Restic Backup Manager {VERSION}")
-        self.setMinimumSize(1200, 700)
+        self.setMinimumSize(1200, 850)
         
         # Main layout
         main_widget = QWidget()
