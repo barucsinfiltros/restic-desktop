@@ -63,6 +63,10 @@ try:
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
+
+""" pyinstaller --noconsole --onefile license_generator_gui.py """
+""" pyinstaller --noconsole --onefile restic_manager.py """
+
 VERSION = "v1.6.5"
 YEAR = datetime.now().year
 DEBUG_MODE = False

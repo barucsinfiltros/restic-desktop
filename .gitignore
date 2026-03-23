@@ -11,5 +11,4 @@ scheduled_tasks/
 dist/
 *.json
 build/
-license.key
 .license_check
