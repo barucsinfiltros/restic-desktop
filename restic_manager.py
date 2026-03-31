@@ -9983,7 +9983,7 @@ def main():
     sys.excepthook = qt_exception_hook
     
     # Check for previous crash log
-    crash_log_file = \"restic_manager_crash.log\"
+    crash_log_file = "restic_manager_crash.log"
     if os.path.exists(crash_log_file):
         try:
             file_size = os.path.getsize(crash_log_file)
@@ -9991,10 +9991,10 @@ def main():
                 # Previous crash detected
                 reply = QMessageBox.question(
                     None,
-                    \"Previous Crash Detected\",
-                    f\"A crash log file was found ({file_size} bytes).\\n\\n\"
-                    \"This indicates the application crashed previously.\\n\\n\"
-                    \"Would you like to view the crash log?\",
+                    "Previous Crash Detected",
+                    f"A crash log file was found ({file_size} bytes).\n\n"
+                    "This indicates the application crashed previously.\n\n"
+                    "Would you like to view the crash log?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 
@@ -10004,25 +10004,28 @@ def main():
                         crash_content = f.read()
                     
                     dialog = QDialog()
-                    dialog.setWindowTitle(\"Previous Crash Log\")
+                    dialog.setWindowTitle("Previous Crash Log")
                     dialog.resize(800, 600)
                     layout = QVBoxLayout()
                     
                     text_edit = QTextEdit()
                     text_edit.setPlainText(crash_content)
                     text_edit.setReadOnly(True)
-                    text_edit.setFont(QFont(\"Courier\", 9))
+                    text_edit.setFont(QFont("Courier", 9))
                     layout.addWidget(text_edit)
                     
                     button_layout = QHBoxLayout()
-                    copy_btn = QPushButton(\"Copy to Clipboard\")
+                    copy_btn = QPushButton("Copy to Clipboard")
                     copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(crash_content))
                     button_layout.addWidget(copy_btn)
                     
-                    delete_btn = QPushButton(\"Delete Log\")
-                    delete_btn.clicked.connect(lambda: (os.remove(crash_log_file), dialog.accept())  # type: ignore\n                        if os.path.exists(crash_log_file) else dialog.accept())\n                    button_layout.addWidget(delete_btn)
+                    delete_btn = QPushButton("Delete Log")
+                    delete_btn.clicked.connect(lambda: (os.remove(crash_log_file), dialog.accept())  
+                      
+                    if os.path.exists(crash_log_file) else dialog.accept())
+                    button_layout.addWidget(delete_btn)
                     
-                    close_btn = QPushButton(\"Close\")
+                    close_btn = QPushButton("Close")
                     close_btn.clicked.connect(dialog.accept)
                     button_layout.addWidget(close_btn)
                     
