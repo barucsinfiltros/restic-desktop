@@ -53,9 +53,12 @@ import qdarkstyle
 from qdarkstyle.light.palette import LightPalette
 
 # Version and debug settings (must be defined before matplotlib import)
-VERSION = "v1.6.6"
+VERSION = "v1.6.7"
 YEAR = datetime.now().year
 DEBUG_MODE = False
+
+# CRASH LOGGING: Unhandled exceptions are logged to "restic_manager_crash.log"
+# Check this file if the application closes unexpectedly
 
 # Import matplotlib for charts (optional)
 try:
@@ -91,41 +94,6 @@ except Exception as e:
 """ pyinstaller --noconsole --onefile restic_manager.py """ # Dont Use
 """ pyinstaller restic_manager.spec """ # Use this for including matplotlib data files
 
-stylesheet = (
-    """
-        QScrollBar:vertical {
-            width: 10px;
-            background: transparent;
-        }
-        QScrollBar::handle:vertical {
-            background: #888;
-            border-radius: 4px;
-            min-height: 20px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background: #555;
-        }
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-            background: none;
-        }
-        
-        QScrollBar:horizontal {
-            height: 10px;
-            background: transparent;
-        }
-        QScrollBar::handle:horizontal {
-            background: #888;
-            border-radius: 4px;
-            min-width: 20px;
-        }
-        QScrollBar::handle:horizontal:hover {
-            background: #555;
-        }
-        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-            background: none;
-        }
-    """
-)
 
 # Windows subprocess helper - prevents console windows from appearing
 def get_subprocess_creation_flags():
@@ -911,18 +879,33 @@ class ResticWorker(QThread):
     
     def run(self):
         """Execute the Restic command in a separate thread"""
-        if self.use_progress:
-            # Use streaming output with progress updates
-            success, stdout, stderr = self.restic_cmd.run_with_progress(
-                self.args, self.env, 
-                progress_callback=self._parse_progress,
-                timeout=self.timeout
-            )
-        else:
-            # Standard execution
-            success, stdout, stderr = self.restic_cmd.run(self.args, self.env, timeout=self.timeout)
-        
-        self.finished.emit(success, stdout, stderr)
+        try:
+            if self.use_progress:
+                # Use streaming output with progress updates
+                success, stdout, stderr = self.restic_cmd.run_with_progress(
+                    self.args, self.env, 
+                    progress_callback=self._parse_progress,
+                    timeout=self.timeout
+                )
+            else:
+                # Standard execution
+                success, stdout, stderr = self.restic_cmd.run(self.args, self.env, timeout=self.timeout)
+            
+            self.finished.emit(success, stdout, stderr)
+        except Exception as e:
+            # Log the exception to a crash file
+            try:
+                import traceback
+                with open("restic_manager_crash.log", "a") as f:
+                    f.write(f"\n\n=== CRASH in ResticWorker Thread at {datetime.now()} ===\n")
+                    f.write(f"Exception: {type(e).__name__}: {str(e)}\n")
+                    f.write(traceback.format_exc())
+            except:
+                pass  # Can't even log, just fail gracefully
+            
+            # Emit error result
+            error_msg = f"Worker thread crashed: {type(e).__name__}: {str(e)}"
+            self.finished.emit(False, "", error_msg)
     
     def _parse_progress(self, line: str):
         """Parse progress line from restic JSON output"""
@@ -1203,7 +1186,7 @@ class BackupJobDialog(QDialog):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll_area.setStyleSheet(stylesheet)
+        scroll_area.setStyleSheet(themes.STYLESHEET_SCROLL)
         
         # Content widget inside scroll area
         content_widget = QWidget()
@@ -3191,7 +3174,7 @@ class ResticManagerWindow(QMainWindow):
         self.snapshot_details = QTextEdit()
         self.snapshot_details.setReadOnly(True)
         self.snapshot_details.setFont(QFont("Courier", 10))
-        self.snapshot_details.setStyleSheet(stylesheet)
+        self.snapshot_details.setStyleSheet(themes.STYLESHEET_SCROLL)
         
         details_layout.addWidget(self.snapshot_details)
         
@@ -7833,7 +7816,7 @@ class ResticManagerWindow(QMainWindow):
             
             output_text = QPlainTextEdit()
             output_text.setReadOnly(True)
-            output_text.setStyleSheet(stylesheet)
+            output_text.setStyleSheet(themes.STYLESHEET_SCROLL)
             dialog_layout.addWidget(output_text)
             self._backup_output_text = output_text
             
@@ -9970,13 +9953,85 @@ def main():
     # Set up global exception handler to show crashes in a copyable popup
     def exception_hook(exc_type, exc_value, exc_traceback):
         """Wrapper for the exception handler that works with QApplication"""
+        # Log to crash file FIRST (in case dialog fails)
+        try:
+            import traceback
+            with open("restic_manager_crash.log", "a") as f:
+                f.write(f"\n\n=== UNHANDLED EXCEPTION at {datetime.now()} ===\n")
+                f.write(''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+        except:
+            pass  # Can't even log
+        
         # Print to console for debugging
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        
         # Show the dialog
-        show_exception_dialog(exc_type, exc_value, exc_traceback)
+        try:
+            show_exception_dialog(exc_type, exc_value, exc_traceback)
+        except:
+            # Even the error dialog failed, just exit
+            pass
         
     sys.excepthook = exception_hook
     
+    # Qt-specific exception handler for event loop exceptions
+    def qt_exception_hook(exc_type, exc_value, exc_traceback):
+        """Handle exceptions that occur in Qt event loop"""
+        exception_hook(exc_type, exc_value, exc_traceback)
+    
+    # Install Qt exception hook (this catches exceptions in signal/slot connections)
+    sys.excepthook = qt_exception_hook
+    
+    # Check for previous crash log
+    crash_log_file = \"restic_manager_crash.log\"
+    if os.path.exists(crash_log_file):
+        try:
+            file_size = os.path.getsize(crash_log_file)
+            if file_size > 0:
+                # Previous crash detected
+                reply = QMessageBox.question(
+                    None,
+                    \"Previous Crash Detected\",
+                    f\"A crash log file was found ({file_size} bytes).\\n\\n\"
+                    \"This indicates the application crashed previously.\\n\\n\"
+                    \"Would you like to view the crash log?\",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    # Show crash log
+                    with open(crash_log_file, 'r') as f:
+                        crash_content = f.read()
+                    
+                    dialog = QDialog()
+                    dialog.setWindowTitle(\"Previous Crash Log\")
+                    dialog.resize(800, 600)
+                    layout = QVBoxLayout()
+                    
+                    text_edit = QTextEdit()
+                    text_edit.setPlainText(crash_content)
+                    text_edit.setReadOnly(True)
+                    text_edit.setFont(QFont(\"Courier\", 9))
+                    layout.addWidget(text_edit)
+                    
+                    button_layout = QHBoxLayout()
+                    copy_btn = QPushButton(\"Copy to Clipboard\")
+                    copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(crash_content))
+                    button_layout.addWidget(copy_btn)
+                    
+                    delete_btn = QPushButton(\"Delete Log\")
+                    delete_btn.clicked.connect(lambda: (os.remove(crash_log_file), dialog.accept())  # type: ignore\n                        if os.path.exists(crash_log_file) else dialog.accept())\n                    button_layout.addWidget(delete_btn)
+                    
+                    close_btn = QPushButton(\"Close\")
+                    close_btn.clicked.connect(dialog.accept)
+                    button_layout.addWidget(close_btn)
+                    
+                    layout.addLayout(button_layout)
+                    dialog.setLayout(layout)
+                    dialog.exec()
+        except Exception as e:
+            # Silently fail if we can't read crash log
+            pass
 
     # Load settings to get theme
     settings_manager = ResticSettingsManager()

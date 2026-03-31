@@ -1112,3 +1112,40 @@ def get_chart_colors(theme: str):
         "grid_color": grid_color,
         "is_light": is_light
     }
+
+
+STYLESHEET_SCROLL = (
+    """
+        QScrollBar:vertical {
+            width: 10px;
+            background: transparent;
+        }
+        QScrollBar::handle:vertical {
+            background: #888;
+            border-radius: 4px;
+            min-height: 20px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background: #555;
+        }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+            background: none;
+        }
+        
+        QScrollBar:horizontal {
+            height: 10px;
+            background: transparent;
+        }
+        QScrollBar::handle:horizontal {
+            background: #888;
+            border-radius: 4px;
+            min-width: 20px;
+        }
+        QScrollBar::handle:horizontal:hover {
+            background: #555;
+        }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+            background: none;
+        }
+    """
+)
