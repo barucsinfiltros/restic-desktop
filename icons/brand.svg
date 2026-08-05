@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <!-- Rounded chip -->
+  <rect x="1" y="1" width="38" height="38" rx="10" fill="#152033" stroke="#24344a" stroke-width="1"/>
+  <!-- Soft glow -->
+  <path d="M20 6.5 L30.2 12.4 V24.1 L20 30 L9.8 24.1 V12.4 Z"
+        fill="#3d8dff" fill-opacity="0.12"/>
+  <!-- Hexagon outline -->
+  <path d="M20 7.2 L29.4 12.6 V23.4 L20 28.8 L10.6 23.4 V12.6 Z"
+        stroke="#5db0ff" stroke-width="1.7" stroke-linejoin="round"/>
+  <!-- Layered plates (data stack) -->
+  <path d="M14.2 14.6 C16.4 13.5 18.2 13 20 13 C21.8 13 23.6 13.5 25.8 14.6
+           C24.1 15.5 22.1 16 20 16 C17.9 16 15.9 15.5 14.2 14.6 Z"
+        fill="#7cc4ff"/>
+  <path d="M13.6 18.4 C16.1 17.1 18.1 16.5 20 16.5 C21.9 16.5 23.9 17.1 26.4 18.4
+           C24.4 19.5 22.3 20.1 20 20.1 C17.7 20.1 15.6 19.5 13.6 18.4 Z"
+        fill="#5db0ff"/>
+  <path d="M13.2 22.3 C15.9 20.9 18 20.2 20 20.2 C22 20.2 24.1 20.9 26.8 22.3
+           C24.6 23.6 22.4 24.3 20 24.3 C17.6 24.3 15.4 23.6 13.2 22.3 Z"
+        fill="#3d9af0"/>
+</svg>

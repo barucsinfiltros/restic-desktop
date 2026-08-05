@@ -19,8 +19,6 @@ PyQt6-Qt6==6.10.2
 PyQt6_sip==13.11.1
 python-dateutil==2.9.0.post0
 pywin32-ctypes==0.2.3
-QDarkStyle==3.2.3
-QtPy==2.4.3
 setuptools==82.0.1
 six==1.17.0
 winotify==1.1.0

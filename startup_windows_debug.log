@@ -1,0 +1,2461 @@
+=== startup window probe 2026-08-05 09:12:06.091769 ===
+--- phase: after QApplication ---
+
+[after QApplication] Polish: QSplashScreen objectName='(no objectName)' title='' visible=False geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10361, in main
+    splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[after QApplication] Show: QSplashScreen objectName='(no objectName)' title='' visible=True geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10366, in main
+    splash.show()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[after QApplication] WindowActivate: QSplashScreen objectName='(no objectName)' title='' visible=True geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10366, in main
+    splash.show()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[after QApplication] ShowToParent: QSplashScreen objectName='(no objectName)' title='' visible=True geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10366, in main
+    splash.show()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash shown ---
+
+--- phase: creating main window ---
+
+--- phase: splash: Initializing settings... ---
+
+[splash: Initializing settings...] Polish: ResticManagerWindow objectName='(no objectName)' title='' visible=False geom=640x480+1216+600 frame=640x510 sizeHint=0x0 flags=0x8800f001 id=2754286
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2614, in __init__
+    self._update_splash("Initializing settings...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Creating main window... ---
+
+--- phase: splash: Building navigation menu... ---
+
+--- phase: splash: Loading dashboard... ---
+
+[splash: Loading dashboard...] Polish: QLabel objectName='statCardSubtitle' title='' visible=False geom=640x480+1216+600 frame=640x510 sizeHint=97x18 flags=0x8800f001 id=657684
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] Show: QLabel objectName='statCardSubtitle' title='' visible=True geom=82x15+1216+600 frame=82x45 sizeHint=82x15 flags=0x8800f001 id=657684
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] ShowToParent: QLabel objectName='statCardSubtitle' title='' visible=True geom=82x15+1216+600 frame=82x45 sizeHint=82x15 flags=0x8800f001 id=657684
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading dashboard...] Polish: QLabel objectName='statCardSubtitle' title='' visible=False geom=640x480+1216+600 frame=640x510 sizeHint=92x18 flags=0x8800f001 id=723220
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] Show: QLabel objectName='statCardSubtitle' title='' visible=True geom=78x15+1216+600 frame=78x45 sizeHint=78x15 flags=0x8800f001 id=723220
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] ShowToParent: QLabel objectName='statCardSubtitle' title='' visible=True geom=78x15+1216+600 frame=78x45 sizeHint=78x15 flags=0x8800f001 id=723220
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading dashboard...] Polish: QLabel objectName='statCardSubtitle' title='' visible=False geom=640x480+1216+600 frame=640x510 sizeHint=84x18 flags=0x8800f001 id=788756
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] Show: QLabel objectName='statCardSubtitle' title='' visible=True geom=72x15+1216+600 frame=72x45 sizeHint=72x15 flags=0x8800f001 id=788756
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] ShowToParent: QLabel objectName='statCardSubtitle' title='' visible=True geom=72x15+1216+600 frame=72x45 sizeHint=72x15 flags=0x8800f001 id=788756
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading dashboard...] Polish: QLabel objectName='statCardSubtitle' title='' visible=False geom=640x480+1216+600 frame=640x510 sizeHint=71x18 flags=0x8800f001 id=854292
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] Show: QLabel objectName='statCardSubtitle' title='' visible=True geom=60x15+1216+600 frame=60x45 sizeHint=60x15 flags=0x8800f001 id=854292
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+!! TINY !! [splash: Loading dashboard...] ShowToParent: QLabel objectName='statCardSubtitle' title='' visible=True geom=60x15+1216+600 frame=60x45 sizeHint=60x15 flags=0x8800f001 id=854292
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2670, in __init__
+    self.create_dashboard_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2779, in create_dashboard_page
+    page = create_dashboard_page(
+  File "C:\python_scripts\restic_mngr\ui\dashboard.py", line 88, in create_dashboard_page
+    card = StatCard(title_text, icon_name=icon_name, accent=accent, subtitle=sub)
+  File "C:\python_scripts\restic_mngr\ui\cards.py", line 54, in __init__
+    self.subtitle_label.setVisible(bool(subtitle))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading repositories view... ---
+
+[splash: Loading repositories view...] WindowActivate: QSplashScreen objectName='(no objectName)' title='' visible=True geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2671, in __init__
+    self._update_splash("Loading repositories view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading repositories view...] WindowActivate: QSplashScreen objectName='(no objectName)' title='' visible=True geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2671, in __init__
+    self._update_splash("Loading repositories view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading repositories view...] WindowActivate: QSplashScreen objectName='(no objectName)' title='' visible=True geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2671, in __init__
+    self._update_splash("Loading repositories view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading repositories view...] WindowActivate: QSplashScreen objectName='(no objectName)' title='' visible=True geom=400x200+1336+764 frame=400x200 sizeHint=-1x-1 flags=0x4080f id=1639826
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2671, in __init__
+    self._update_splash("Loading repositories view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading snapshots view... ---
+
+[splash: Loading snapshots view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=919828
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2674, in __init__
+    self.create_snapshots_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 3350, in create_snapshots_page
+    layout.addLayout(title_layout)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading restore view... ---
+
+[splash: Loading restore view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=985364
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2675, in __init__
+    self._update_splash("Loading restore view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading restore view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1050900
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2676, in __init__
+    self.create_restore_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 3431, in create_restore_page
+    form_layout.addRow("Repository:", self.restore_repo_combo)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading restore view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1116436
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2676, in __init__
+    self.create_restore_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 3432, in create_restore_page
+    form_layout.addRow("Snapshot:", snapshot_row)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading backup view... ---
+
+[splash: Loading backup view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1181972
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2677, in __init__
+    self._update_splash("Loading backup view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading backup view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1247508
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2677, in __init__
+    self._update_splash("Loading backup view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading retention view... ---
+
+[splash: Loading retention view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1313044
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2680, in __init__
+    self.create_retention_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 3756, in create_retention_page
+    form_layout.addRow("Repository:", self.retention_repo_combo)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading retention view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1378580
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2680, in __init__
+    self.create_retention_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 3775, in create_retention_page
+    self.retention_frequency_combo.addItems(["Daily", "Weekly", "Monthly"])
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading retention view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1444116
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2680, in __init__
+    self.create_retention_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 3797, in create_retention_page
+    self.retention_day_combo.addItems(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading logs view... ---
+
+[splash: Loading logs view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1509652
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2681, in __init__
+    self._update_splash("Loading logs view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading logs view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1575188
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2681, in __init__
+    self._update_splash("Loading logs view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading logs view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1640724
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2681, in __init__
+    self._update_splash("Loading logs view...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading settings view... ---
+
+[splash: Loading settings view...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1706260
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2684, in __init__
+    self.create_settings_page()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 3974, in create_settings_page
+    self.theme_combo.addItems(themes.theme_display_names())
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Loading repositories... ---
+
+[splash: Loading repositories...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1771796
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2687, in __init__
+    self._update_splash("Loading repositories...")
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2713, in _update_splash
+    self.splash.showMessage(
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Loading repositories...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1837332
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2688, in __init__
+    self.update_repository_combos()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 4489, in update_repository_combos
+    combo.clear()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Applying theme... ---
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1902868
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=1968404
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2033940
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2099476
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2165012
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2230548
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2296084
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2361620
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2427156
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2492692
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2558228
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2623764
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2689300
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2754836
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2820372
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2885908
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=2951444
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3016980
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3082516
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3148052
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3213588
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3279124
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3344660
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3410196
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3475732
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3541268
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3606804
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3672340
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3737876
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3803412
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3868948
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=3934484
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4000020
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4065556
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4131092
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4196628
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4262164
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4327700
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4393236
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4458772
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4524308
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4589844
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4655380
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4720916
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4786452
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4851988
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4917524
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=4983060
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5048596
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5114132
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5179668
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5245204
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5310740
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5376276
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5441812
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5507348
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5572884
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5638420
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5703956
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5769492
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5835028
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5900564
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=5966100
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6031636
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6097172
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6162708
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6228244
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6293780
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6359316
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6424852
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6490388
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6555924
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6621460
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6686996
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6752532
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6818068
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6883604
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=6949140
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7014676
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7080212
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7145748
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7211284
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7276820
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7342356
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7407892
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7473428
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7538964
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7604500
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7670036
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7735572
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7801108
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7866644
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7932180
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=7997716
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8063252
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8128788
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8194324
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8259860
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8325396
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8390932
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2352, in apply_theme
+    app.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8456468
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=8522004
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8587540
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=8653076
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8718612
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=8784148
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8849684
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=8915220
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=8980756
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=9046292
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=9111828
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=9177364
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=9242900
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=9308436
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=6x6 flags=0x8800f009 id=9373972
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[splash: Applying theme...] Polish: QMenu objectName='(no objectName)' title='' visible=False geom=640x480+0+0 frame=640x480 sizeHint=-1x-1 flags=0x8800f009 id=9439508
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10495, in main
+    window = ResticManagerWindow(app, splash)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 2692, in __init__
+    self.apply_theme(self.settings_manager.get("theme"))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 9622, in apply_theme
+    theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+  File "C:\python_scripts\restic_mngr\themes.py", line 2354, in apply_theme
+    window.setStyleSheet(css)
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- phase: splash: Checking Restic installation... ---
+
+--- phase: showing main window ---
+
+[showing main window] Show: ResticManagerWindow objectName='(no objectName)' title='Restic Backup Manager v1.6.7' visible=True geom=1470x992+1216+600 frame=1470x1022 sizeHint=1470x992 flags=0x801 id=2754286
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10503, in main
+    window.show()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[showing main window] ShowToParent: ResticManagerWindow objectName='(no objectName)' title='Restic Backup Manager v1.6.7' visible=True geom=1470x992+1216+600 frame=1470x1022 sizeHint=1470x992 flags=0x801 id=2754286
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10503, in main
+    window.show()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+[showing main window] WindowActivate: ResticManagerWindow objectName='(no objectName)' title='Restic Backup Manager v1.6.7' visible=True geom=1470x992+1209+570 frame=1470x992 sizeHint=1470x992 flags=0x801 id=2754286
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10515, in <module>
+    main()
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 10508, in main
+    app.processEvents()  # Process all pending events to ensure splash is fully gone
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 135, in eventFilter
+    self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 185, in _report
+    stack = "".join(traceback.format_stack(limit=18))
+
+--- probe stopped (main window shown) ---
+

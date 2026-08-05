@@ -25,8 +25,11 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-# Import theme module
+# Import theme + chrome modules
 import themes
+from title_bar import TitleBar
+from framed_dialog import FramedDialog
+from ui import NavSidebar, create_dashboard_page, populate_jobs_table
 
 # Import Windows toast notifications (optional)
 try:
@@ -47,15 +50,177 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit,
     QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog, QRadioButton, QDateEdit
 )
-from PyQt6.QtGui import QColor, QFont, QTextCursor, QPixmap
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime, QDate
-import qdarkstyle
-from qdarkstyle.light.palette import LightPalette
+from PyQt6.QtGui import QColor, QCursor, QFont, QMouseEvent, QTextCursor, QPixmap
+from PyQt6.QtCore import Qt, QEvent, QObject, QPoint, QTimer, QThread, pyqtSignal, QTime, QDate
+
+# Win32 WM_NCHITTEST result codes for frameless edge resize.
+_WINDOW_EDGE = 8
+_HTLEFT = 10
+_HTRIGHT = 11
+_HTTOP = 12
+_HTTOPLEFT = 13
+_HTTOPRIGHT = 14
+_HTBOTTOM = 15
+_HTBOTTOMLEFT = 16
+_HTBOTTOMRIGHT = 17
+_WM_NCHITTEST = 0x0084
+
+try:
+    from ctypes import wintypes
+except ImportError:
+    wintypes = None
 
 # Version and debug settings (must be defined before matplotlib import)
 VERSION = "v1.6.7"
 YEAR = datetime.now().year
 DEBUG_MODE = False
+_STARTUP_WINDOW_PROBE = None  # installed when --debug; traces flash windows
+
+
+class _StartupWindowProbe(QObject):
+    """Log every top-level window Show during startup (finds the tiny flash)."""
+
+    def __init__(self, app: QApplication, log_path: str = "startup_windows_debug.log"):
+        super().__init__(app)
+        self._app = app
+        self._log_path = log_path
+        self._seen: set[int] = set()
+        self._enabled = True
+        self._phase = "boot"
+        try:
+            with open(self._log_path, "w", encoding="utf-8") as f:
+                f.write(f"=== startup window probe {datetime.now()} ===\n")
+        except Exception:
+            pass
+        app.installEventFilter(self)
+        # Catch windows that appear between Qt events (e.g. after processEvents).
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self.snapshot)
+        self._timer.start()
+
+    def set_phase(self, phase: str) -> None:
+        self._phase = phase
+        self._log(f"--- phase: {phase} ---")
+
+    def stop(self) -> None:
+        self._enabled = False
+        self._timer.stop()
+        self._log("--- probe stopped (main window shown) ---")
+        self.snapshot(force_all=True)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if not self._enabled:
+            return False
+        try:
+            et = event.type()
+        except Exception:
+            return False
+        if et not in (
+            QEvent.Type.Show,
+            QEvent.Type.ShowToParent,
+            QEvent.Type.WindowActivate,
+            QEvent.Type.Polish,
+        ):
+            return False
+        if not isinstance(obj, QWidget):
+            return False
+        try:
+            if obj.parent() is not None:
+                return False
+            if not obj.isWindow():
+                return False
+        except RuntimeError:
+            return False
+        self._report(obj, trigger=et.name if hasattr(et, "name") else str(et))
+        return False
+
+    def snapshot(self, force_all: bool = False) -> None:
+        if not self._enabled and not force_all:
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+        for w in app.topLevelWidgets():
+            try:
+                if not w.isVisible():
+                    continue
+                self._report(w, trigger="snapshot")
+            except RuntimeError:
+                continue
+
+    def _report(self, widget: QWidget, trigger: str) -> None:
+        try:
+            wid = int(widget.winId())
+        except Exception:
+            wid = id(widget)
+        key = wid
+        if key in self._seen and trigger == "snapshot":
+            return
+        self._seen.add(key)
+        try:
+            geom = widget.geometry()
+            frame = widget.frameGeometry()
+            name = widget.objectName() or "(no objectName)"
+            cls = type(widget).__name__
+            title = ""
+            try:
+                title = widget.windowTitle() or ""
+            except Exception:
+                pass
+            flags = int(widget.windowFlags())
+            visible = widget.isVisible()
+            size_hint = widget.sizeHint()
+            line = (
+                f"[{self._phase}] {trigger}: {cls} objectName={name!r} title={title!r} "
+                f"visible={visible} geom={geom.width()}x{geom.height()}+{geom.x()}+{geom.y()} "
+                f"frame={frame.width()}x{frame.height()} sizeHint={size_hint.width()}x{size_hint.height()} "
+                f"flags=0x{flags:x} id={key}"
+            )
+            # Highlight likely "tiny flash" candidates
+            if geom.width() < 200 or geom.height() < 120 or frame.width() < 200 or frame.height() < 120:
+                line = "!! TINY !! " + line
+        except RuntimeError:
+            return
+        stack = "".join(traceback.format_stack(limit=18))
+        self._log(line + "\n" + stack)
+
+    def _log(self, message: str) -> None:
+        text = message if message.endswith("\n") else message + "\n"
+        try:
+            # Console: first line only for readability; full detail goes to the log file.
+            first = text.splitlines()[0] if text else ""
+            print(f"[STARTUP-WIN] {first}")
+        except Exception:
+            pass
+        try:
+            with open(self._log_path, "a", encoding="utf-8") as f:
+                f.write(text)
+                if not text.endswith("\n"):
+                    f.write("\n")
+                f.write("\n")
+        except Exception:
+            pass
+
+
+def install_startup_window_probe(app: QApplication):
+    """Enable when --debug to capture the tiny startup flash window."""
+    global _STARTUP_WINDOW_PROBE
+    _STARTUP_WINDOW_PROBE = _StartupWindowProbe(app)
+    print(f"Startup window probe writing to: {os.path.abspath(_STARTUP_WINDOW_PROBE._log_path)}")
+    return _STARTUP_WINDOW_PROBE
+
+
+def startup_probe_phase(phase: str) -> None:
+    if _STARTUP_WINDOW_PROBE is not None:
+        _STARTUP_WINDOW_PROBE.set_phase(phase)
+
+
+def stop_startup_window_probe() -> None:
+    global _STARTUP_WINDOW_PROBE
+    if _STARTUP_WINDOW_PROBE is not None:
+        _STARTUP_WINDOW_PROBE.stop()
+        _STARTUP_WINDOW_PROBE = None
 
 # CRASH LOGGING: Unhandled exceptions are logged to "restic_manager_crash.log"
 # Check this file if the application closes unexpectedly
@@ -71,6 +236,11 @@ try:
         from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
     import matplotlib.pyplot as plt
+    # Avoid pyplot creating/showing stray interactive figure windows at startup.
+    try:
+        plt.ioff()
+    except Exception:
+        pass
     MATPLOTLIB_AVAILABLE = True
     MATPLOTLIB_ERROR = None
 except Exception as e:
@@ -976,20 +1146,19 @@ class ResticWorker(QThread):
 
 
 # Repository Dialog
-class RepositoryDialog(QDialog):
+class RepositoryDialog(FramedDialog):
     """Dialog for adding/editing repositories"""
     
     def __init__(self, parent, settings_manager, existing_repo=None):
-        super().__init__(parent)
+        title = "Add Repository" if not existing_repo else "Edit Repository"
+        super().__init__(title, parent, show_maximize=False, show_minimize=False)
         self.settings_manager = settings_manager
         self.password_manager = settings_manager.password_manager
         self.existing_repo = existing_repo
         
-        self.setWindowTitle("Add Repository" if not existing_repo else "Edit Repository")
-        self.setMinimumWidth(500)
-        
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        self.setMinimumWidth(520)
+        self.body_layout.setContentsMargins(16, 12, 16, 16)
+        layout = self.body_layout
         
         # Form layout
         form_layout = QFormLayout()
@@ -1014,7 +1183,6 @@ class RepositoryDialog(QDialog):
             self.path_input.setText(existing_repo.get("path", ""))
         path_layout.addWidget(self.path_input)
         browse_btn = QPushButton("Browse")
-        browse_btn.setFixedWidth(120)
         browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_btn.clicked.connect(self.browse_path)
         path_layout.addWidget(browse_btn)
@@ -1024,7 +1192,6 @@ class RepositoryDialog(QDialog):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         generate_password_btn = QPushButton("Generate")
-        generate_password_btn.setFixedWidth(120)
         generate_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         generate_password_btn.clicked.connect(lambda: self.password_input.setText(generate_password()))
         if existing_repo and existing_repo.get("password"):
@@ -1166,31 +1333,30 @@ class RepositoryDialog(QDialog):
         return data
 
 
-class BackupJobDialog(QDialog):
+class BackupJobDialog(FramedDialog):
     """Dialog for creating/editing backup jobs"""
     
     def __init__(self, parent, settings_manager, existing_job=None):
-        super().__init__(parent)
+        title = "New Backup Job" if not existing_job else "Edit Backup Job"
+        super().__init__(title, parent, show_maximize=True, show_minimize=False)
         self.settings_manager = settings_manager
         self.existing_job = existing_job
         
-        self.setWindowTitle("New Backup Job" if not existing_job else "Edit Backup Job")
-        self.setMinimumWidth(600)
-        self.setMinimumHeight(600)  # Increased minimum height
+        self.setMinimumWidth(620)
+        self.setMinimumHeight(640)
         
-        # Main dialog layout
-        main_layout = QVBoxLayout()
-        self.setLayout(main_layout)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout = self.body_layout
         
         # Create scroll area for the form content
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll_area.setStyleSheet(themes.STYLESHEET_SCROLL)
         
         # Content widget inside scroll area
         content_widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 12, 16, 16)
         content_widget.setLayout(layout)
         scroll_area.setWidget(content_widget)
         
@@ -1485,7 +1651,10 @@ class BackupJobDialog(QDialog):
         buttons.rejected.connect(self.reject)
         button_layout.addWidget(buttons)
         
-        main_layout.addLayout(button_layout)
+        button_wrap = QWidget()
+        button_wrap.setLayout(button_layout)
+        button_layout.setContentsMargins(16, 8, 16, 12)
+        main_layout.addWidget(button_wrap)
     
     def update_schedule_ui(self):
         """Update schedule UI based on selections"""
@@ -1580,20 +1749,22 @@ class BackupJobDialog(QDialog):
 
 
 # License Activation Dialog
-class LicenseDialog(QDialog):
+class LicenseDialog(FramedDialog):
     """Dialog for entering and activating license keys"""
     
     def __init__(self, parent=None, machine_id=""):
-        super().__init__(parent)
+        super().__init__(
+            "License Activation",
+            parent,
+            show_maximize=False,
+            show_minimize=False,
+        )
         self.machine_id = machine_id
         self.license_manager = LicenseManager()
         
-        self.setWindowTitle("License Activation")
-        self.setMinimumWidth(600)
-        self.setModal(True)
-        
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        self.setMinimumWidth(620)
+        self.body_layout.setContentsMargins(16, 12, 16, 16)
+        layout = self.body_layout
         
         # Title
         title_label = QLabel("License Activation Required")
@@ -1631,7 +1802,7 @@ class LicenseDialog(QDialog):
         machine_id_layout.addWidget(self.machine_id_display)
         
         copy_btn = QPushButton("Copy")
-        copy_btn.setFixedWidth(80)
+        copy_btn.setObjectName("dialogSecondary")
         copy_btn.clicked.connect(self.copy_machine_id)
         machine_id_layout.addWidget(copy_btn)
         
@@ -1663,11 +1834,13 @@ class LicenseDialog(QDialog):
         button_layout = QHBoxLayout()
         
         activate_btn = QPushButton("Activate License")
+        activate_btn.setObjectName("dialogPrimary")
         activate_btn.setDefault(True)
         activate_btn.clicked.connect(self.activate_license)
         button_layout.addWidget(activate_btn)
         
         quit_btn = QPushButton("Quit Application")
+        quit_btn.setObjectName("dialogSecondary")
         quit_btn.clicked.connect(self.reject)
         button_layout.addWidget(quit_btn)
         
@@ -1702,28 +1875,30 @@ class LicenseDialog(QDialog):
             self.status_label.setStyleSheet("color: red;")
 
 
-class AppPasswordDialog(QDialog):
+class AppPasswordDialog(FramedDialog):
     """Dialog for entering application password at startup"""
     
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Application Password Required")
-        self.setModal(True)
-        self.setFixedSize(450, 250)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        super().__init__(
+            "Application Password Required",
+            parent,
+            show_maximize=False,
+            show_minimize=False,
+        )
+        self.setFixedSize(460, 300)
         
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        self.body_layout.setContentsMargins(16, 8, 16, 16)
+        layout = self.body_layout
         
-        layout.addSpacing(15)
+        layout.addSpacing(8)
         
         # Title
-        title = QLabel("🔒 Password Required")
+        title = QLabel("Password Required")
         title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
-        layout.addSpacing(15)
+        layout.addSpacing(12)
         
         # Info message
         info_label = QLabel("This application is password protected.\nPlease enter your password to continue.")
@@ -1731,7 +1906,7 @@ class AppPasswordDialog(QDialog):
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(info_label)
         
-        layout.addSpacing(20)
+        layout.addSpacing(16)
         
         # Password input (centered form layout)
         form_container = QWidget()
@@ -1766,14 +1941,14 @@ class AppPasswordDialog(QDialog):
         button_layout = QHBoxLayout()
         
         login_btn = QPushButton("Login")
+        login_btn.setObjectName("dialogPrimary")
         login_btn.setDefault(True)
-        login_btn.setFixedWidth(100)
         login_btn.setFixedHeight(32)
         login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         login_btn.clicked.connect(self.accept)
         
         cancel_btn = QPushButton("Exit")
-        cancel_btn.setFixedWidth(100)
+        cancel_btn.setObjectName("dialogSecondary")
         cancel_btn.setFixedHeight(32)
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.clicked.connect(self.reject)
@@ -1785,7 +1960,7 @@ class AppPasswordDialog(QDialog):
         button_layout.addStretch()
         
         layout.addLayout(button_layout)
-        layout.addSpacing(15)
+        layout.addSpacing(8)
         
         # Focus on password field
         self.password_input.setFocus()
@@ -1809,7 +1984,7 @@ class ResticSettingsManager:
         self.filename = filename
         self.password_manager = PasswordManager()
         self.defaults = {
-            "theme": "light",
+            "theme": "slate",
             "restic_path": "restic",
             "repositories": [],
             "backup_jobs": [],
@@ -2423,8 +2598,15 @@ class ResticManagerWindow(QMainWindow):
     
     def __init__(self, app, splash=None):
         super().__init__()
+        # QMainWindow is a top-level window (visible by default). Keep it hidden
+        # until main() calls show(), otherwise splash processEvents() flashes a
+        # tiny empty frameless frame during construction.
+        self.setVisible(False)
         self.app = app
         self.splash = splash
+        self._resize_edges: set[str] = set()
+        self._resize_origin: QPoint | None = None
+        self._resize_geom = None
         
         # Connect dashboard update signal
         self.dashboard_update_signal.connect(self._update_dashboard_ui_impl)
@@ -2441,13 +2623,39 @@ class ResticManagerWindow(QMainWindow):
         
         self._update_splash("Creating main window...")
         self.setWindowTitle(f"Restic Backup Manager {VERSION}")
+        self.setWindowIcon(themes.app_window_icon())
         self.setMinimumSize(1200, 850)
-        
-        # Main layout
-        main_widget = QWidget()
-        main_layout = QHBoxLayout()
-        main_widget.setLayout(main_layout)
-        self.setCentralWidget(main_widget)
+        # Custom chrome — no native Windows title bar.
+        self.setWindowFlags(
+            Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+
+        # Frameless shell: rounded #windowRoot + title bar + content row
+        root = QFrame()
+        root.setObjectName("windowRoot")
+        root.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        root.setMouseTracking(True)
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        self.title_bar = TitleBar(
+            self,
+            title=f"Restic Backup Manager {VERSION}",
+            show_refresh=True,
+        )
+        self.title_bar.refresh_clicked.connect(self.refresh_dashboard)
+        root_layout.addWidget(self.title_bar)
+
+        body = QWidget()
+        body.setObjectName("contentArea")
+        main_layout = QHBoxLayout(body)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        root_layout.addWidget(body, stretch=1)
+        self.setCentralWidget(root)
         
         # Sidebar menu
         self._update_splash("Building navigation menu...")
@@ -2482,6 +2690,7 @@ class ResticManagerWindow(QMainWindow):
         # Apply theme
         self._update_splash("Applying theme...")
         self.apply_theme(self.settings_manager.get("theme"))
+        self._sync_window_chrome()
         
         # Check Restic installation at startup
         self._update_splash("Checking Restic installation...")
@@ -2489,6 +2698,7 @@ class ResticManagerWindow(QMainWindow):
     
     def _update_splash(self, message):
         """Update splash screen message if available"""
+        startup_probe_phase(f"splash: {message}")
         if self.splash:
             try:
                 # Check if splash is still valid (not deleted)
@@ -2497,16 +2707,8 @@ class ResticManagerWindow(QMainWindow):
                     return
                 
                 # Get current theme for text color
-                current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
-                
-                # Map themes to text colors
-                theme_text_colors = {
-                    "light": "#333333",
-                    "light-green": "#222423",
-                    "light-blue": "#1a2b3c",
-                    "sunset-orange": "#552200"
-                }
-                text_color = theme_text_colors.get(current_theme, "#ffffff")
+                current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "slate"
+                _, text_color = themes.theme_splash_colors_for(current_theme)
                 
                 self.splash.showMessage(
                     f"Restic Backup Manager {VERSION}\n\n{message}\n",
@@ -2514,65 +2716,26 @@ class ResticManagerWindow(QMainWindow):
                     QColor(text_color)
                 )
                 self.app.processEvents()  # Force UI update
+                if _STARTUP_WINDOW_PROBE is not None:
+                    _STARTUP_WINDOW_PROBE.snapshot()
             except RuntimeError:
                 # Splash has been deleted, silently ignore
                 pass
     
     def create_sidebar(self, main_layout):
-        """Create sidebar navigation menu"""
-        # Sidebar scroll area
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFixedWidth(220)
-        scroll_area.setFrameShape(QFrame.Shape.StyledPanel)
-        
-        menu_widget = QWidget()
-        menu_layout = QVBoxLayout()
-        menu_widget.setLayout(menu_layout)
-        scroll_area.setWidget(menu_widget)
-        
-        # Title
-        title_label = QLabel("Restic Manager")
-        title_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        menu_layout.addWidget(title_label)
-        
-        menu_layout.addSpacing(10)
-        
-        # Menu buttons
-        self.menu_buttons = []
-        menu_items = [
-            ("Dashboard", 0),
-            ("Repositories", 1),
-            ("Snapshots", 2),
-            ("Restore Files", 3),
-            ("Backup Jobs", 4),
-            ("Retention Policy", 5),
-            ("Logs", 6),
-            ("Settings", 7),
-            ("Exit", -1)
-        ]
-        
-        for label, page_idx in menu_items:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setMinimumHeight(40)
-            btn.clicked.connect(lambda checked, idx=page_idx: self.switch_page(idx))
-            menu_layout.addWidget(btn)
-            self.menu_buttons.append(btn)
-        
-        menu_layout.addStretch()
-        
-        # Version footer
-        version_label = QLabel(f"Version {VERSION}\n© {YEAR}")
-        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        version_label.setStyleSheet("color: #888; font-size: 10px;")
-        menu_layout.addWidget(version_label)
-        
-        main_layout.addWidget(scroll_area)
-        
-        # Select first page
-        self.menu_buttons[0].setChecked(True)
+        """Create modern icon navigation sidebar"""
+        theme = themes.get_app_theme(
+            themes.resolve_theme_id(self.settings_manager.get("theme"))
+        )
+        self.nav_sidebar = NavSidebar(
+            app_name="Restic Manager",
+            version=VERSION,
+            year=str(YEAR),
+            muted=theme.muted,
+        )
+        self.nav_sidebar.page_requested.connect(self.switch_page)
+        self.menu_buttons = self.nav_sidebar.menu_buttons
+        main_layout.addWidget(self.nav_sidebar)
     
     def switch_page(self, page_index):
         """Switch to a different page"""
@@ -2583,9 +2746,12 @@ class ResticManagerWindow(QMainWindow):
         
         self.stacked_widget.setCurrentIndex(page_index)
         
-        # Update button states
-        for i, btn in enumerate(self.menu_buttons):
-            btn.setChecked(i == page_index)
+        if hasattr(self, "nav_sidebar"):
+            self.nav_sidebar.set_active_page(page_index)
+            theme = themes.get_app_theme(
+                themes.resolve_theme_id(self.settings_manager.get("theme"))
+            )
+            self.nav_sidebar.recolor(theme.muted, theme.accent)
         
         # Refresh dashboard only on first load
         if page_index == 0 and not self._dashboard_loaded:  # Dashboard page
@@ -2609,163 +2775,57 @@ class ResticManagerWindow(QMainWindow):
                 self.load_snapshots_for_restore()
     
     def create_dashboard_page(self):
-        """Create dashboard overview page"""
-        page = QWidget()
-        layout = QVBoxLayout()
-        page.setLayout(layout)
-        
-        # Title and refresh button
-        title_layout = QHBoxLayout()
-        title = QLabel("Dashboard")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        title_layout.addWidget(title)
-        title_layout.addStretch()
-        
-        refresh_dashboard_btn = QPushButton("Refresh Dashboard")
-        refresh_dashboard_btn.setFixedWidth(150)
-        refresh_dashboard_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_dashboard_btn.setToolTip("Refresh all dashboard statistics")
-        refresh_dashboard_btn.clicked.connect(self.refresh_dashboard)
-        title_layout.addWidget(refresh_dashboard_btn)
-        
-        layout.addLayout(title_layout)
-        
-        # Statistics grid
-        stats_group = QGroupBox("Statistics")
-        stats_layout = QGridLayout()
-        stats_group.setLayout(stats_layout)
-        
-        self.stats_labels = {}
-        stats = [
-            ("Total Repositories", "total_repos"),
-            ("Total Snapshots", "total_snapshots"),
-            ("Total Size", "total_size"),
-            ("Last Backup", "last_backup")
-        ]
-        
-        for i, (label_text, key) in enumerate(stats):
-            label = QLabel(f"{label_text}:")
-            #label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
-            value = QLabel("—")
-            #value.setFont(QFont("Arial", 11))
-            self.stats_labels[key] = value
-            
-            stats_layout.addWidget(label, i, 0)
-            stats_layout.addWidget(value, i, 1)
-        
-        layout.addWidget(stats_group)
-        
-        # Visual Charts Section (if matplotlib available)
-        if MATPLOTLIB_AVAILABLE:
-            charts_group = QGroupBox("Visual Overview")
-            charts_layout = QHBoxLayout()
-            charts_group.setLayout(charts_layout)
-            
-            # Repository Size Chart
-            size_chart_container = QVBoxLayout()
-            size_chart_label = QLabel("Repository Sizes")
-            size_chart_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-            size_chart_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            size_chart_container.addWidget(size_chart_label)
-            
-            self.repo_size_canvas = FigureCanvas(Figure(figsize=(6, 3)))
-            self.repo_size_canvas.setMinimumSize(400, 250)
-            size_chart_container.addWidget(self.repo_size_canvas)
-            charts_layout.addLayout(size_chart_container)
-            
-            # Snapshot Count Chart
-            snapshot_chart_container = QVBoxLayout()
-            snapshot_chart_label = QLabel("Snapshot Distribution")
-            snapshot_chart_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-            snapshot_chart_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            snapshot_chart_container.addWidget(snapshot_chart_label)
-            
-            self.snapshot_count_canvas = FigureCanvas(Figure(figsize=(6, 3)))
-            self.snapshot_count_canvas.setMinimumSize(400, 250)
-            snapshot_chart_container.addWidget(self.snapshot_count_canvas)
-            charts_layout.addLayout(snapshot_chart_container)
-            
-            layout.addWidget(charts_group)
-            
-            # Initialize empty charts with theme colors
-            self._initialize_empty_charts()
-        else:
-            # Show why matplotlib is not available (debugging)
-            if DEBUG_MODE:
-                charts_debug = QLabel(f"Matplotlib not available. Error: {MATPLOTLIB_ERROR}")
-                charts_debug.setStyleSheet("color: orange; padding: 10px;")
-                layout.addWidget(charts_debug)
-        
-        # Repository Stats
-        repo_stats_group = QGroupBox("Repository Statistics")
-        repo_stats_layout = QVBoxLayout()
-        repo_stats_group.setLayout(repo_stats_layout)
-        
-        # Repository selector for stats
-        repo_stats_header = QHBoxLayout()
-        repo_stats_header.addWidget(QLabel("Repository:"))
-        self.dashboard_repo_combo = QComboBox()
-        self.dashboard_repo_combo.setFixedWidth(200)
-        
-        repo_stats_header.addWidget(self.dashboard_repo_combo)
-        refresh_stats_btn = QPushButton("Refresh Stats")
-        refresh_stats_btn.setFixedWidth(150)
-        refresh_stats_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_stats_btn.clicked.connect(self.load_repository_stats)
-        repo_stats_header.addWidget(refresh_stats_btn)
-        
-        verify_btn = QPushButton("Verify Repository")
-        verify_btn.setFixedWidth(150)
-        verify_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        verify_btn.clicked.connect(self.verify_repository)
-        
-        repo_stats_header.addWidget(verify_btn)
-        
-        rebuild_index_btn = QPushButton("Rebuild Index")
-        rebuild_index_btn.setFixedWidth(150)
-        rebuild_index_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        rebuild_index_btn.clicked.connect(self.rebuild_index)
-        rebuild_index_btn.setToolTip("Rebuild the repository index (useful after errors or corruption)")
-        repo_stats_header.addWidget(rebuild_index_btn)
-        
-        repo_stats_header.addStretch()
-        repo_stats_layout.addLayout(repo_stats_header)
-        
-        # Stats display
-        self.repo_stats_text = QTextEdit()
-        self.repo_stats_text.setReadOnly(True)
-        self.repo_stats_text.setMaximumHeight(260)  # Increased height for detailed breakdown
-        self.repo_stats_text.setHtml("<i>Select a repository and click Refresh Stats</i>")
-        repo_stats_layout.addWidget(self.repo_stats_text)
-        
-        layout.addWidget(repo_stats_group)
-        
-        # Recent activity
-        activity_group = QGroupBox("Recent Activity")
-        activity_layout = QVBoxLayout()
-        activity_group.setLayout(activity_layout)
-        
-        self.activity_list = QListWidget()
-        self.activity_list.addItem("No recent activity")
-        activity_layout.addWidget(self.activity_list)
-        
-        layout.addWidget(activity_group)
-        layout.addStretch()
-        
+        """Create modern dashboard overview page"""
+        page = create_dashboard_page(
+            self,
+            matplotlib_available=MATPLOTLIB_AVAILABLE,
+            on_refresh=self.refresh_dashboard,
+            on_view_logs=lambda: self.switch_page(6),
+        )
+        # Hidden compatibility widgets for verify/rebuild/stats helpers
+        self.dashboard_repo_combo = QComboBox(self)
+        self.dashboard_repo_combo.hide()
+        self.repo_stats_text = QTextEdit(self)
+        self.repo_stats_text.hide()
+        populate_jobs_table(self)
         self.stacked_widget.addWidget(page)
+        if hasattr(self, "_initialize_empty_charts"):
+            self._initialize_empty_charts()
     
     def refresh_dashboard(self):
         """Refresh dashboard statistics (runs in background to avoid UI freeze)"""
-        # Show loading indicator
+        self._set_dashboard_refreshing(True)
+
+        # Show loading indicator on cards
         if hasattr(self, 'stats_labels'):
-            for label in self.stats_labels.values():
-                label.setText("Loading...")
+            for key, label in self.stats_labels.items():
+                if key == "last_backup":
+                    label.setText("Loading...")
+                elif key != "status":
+                    try:
+                        label.setText("…")
+                    except Exception:
+                        pass
+
+        if hasattr(self, "dashboard_subtitle"):
+            self.dashboard_subtitle.setText("Refreshing backup statistics…")
+        
+        if hasattr(self, "refresh_dashboard_jobs_table"):
+            self.refresh_dashboard_jobs_table()
         
         # Process events to update UI
         QApplication.processEvents()
         
         # Run dashboard refresh in background worker to prevent UI freeze
         self._start_dashboard_refresh_worker()
+
+    def _set_dashboard_refreshing(self, busy: bool) -> None:
+        if hasattr(self, "title_bar"):
+            self.title_bar.set_refreshing(busy)
+        if not busy and hasattr(self, "dashboard_subtitle"):
+            self.dashboard_subtitle.setText(
+                "Welcome back! Here's an overview of your backup environment."
+            )
     
     def _start_dashboard_refresh_worker(self):
         """Start background worker to refresh dashboard stats"""
@@ -2781,6 +2841,7 @@ class ResticManagerWindow(QMainWindow):
                 self.stats_labels["total_snapshots"].setText("0")
                 self.stats_labels["total_size"].setText("—")
                 self.stats_labels["last_backup"].setText("Never")
+            self._set_dashboard_refreshing(False)
             return
         
         # Start worker to gather stats from all repositories
@@ -2792,8 +2853,9 @@ class ResticManagerWindow(QMainWindow):
             total_size = 0
             last_backup = "Never"
             
-            # Collect per-repository data for charts
-            repo_data = []  # List of (name, size, snapshot_count)
+            # Collect per-repository data for charts + last snapshot times/ids
+            # Tuple: (name, size, snapshot_count, last_time, short_id, full_id)
+            repo_data = []
             
             for repo in repositories:
                 repo_name = repo.get("name", "")
@@ -2803,6 +2865,9 @@ class ResticManagerWindow(QMainWindow):
                 # Initialize repo stats
                 repo_size = 0
                 repo_snapshot_count = 0
+                repo_last_time = ""
+                repo_last_short_id = ""
+                repo_last_full_id = ""
                 
                 if repo.get("password"):
                     try:
@@ -2822,11 +2887,19 @@ class ResticManagerWindow(QMainWindow):
                             if isinstance(snapshots, list):
                                 repo_snapshot_count = len(snapshots)
                                 total_snapshots += repo_snapshot_count
-                                # Check for most recent snapshot time
+                                # Check for most recent snapshot time + id
                                 if snapshots:
                                     for snapshot in snapshots:
                                         snapshot_time = snapshot.get("time", "")
                                         if snapshot_time:
+                                            if not repo_last_time or snapshot_time > repo_last_time:
+                                                repo_last_time = snapshot_time
+                                                full_id = snapshot.get("id") or ""
+                                                repo_last_full_id = full_id
+                                                repo_last_short_id = (
+                                                    snapshot.get("short_id")
+                                                    or (full_id[:8] if full_id else "")
+                                                )
                                             if last_backup == "Never" or snapshot_time > last_backup:
                                                 last_backup = snapshot_time
                         except json.JSONDecodeError:
@@ -2848,9 +2921,16 @@ class ResticManagerWindow(QMainWindow):
                 except:
                     pass
                 
-                # Add repo data if we got any info
-                if repo_name and (repo_size > 0 or repo_snapshot_count > 0):
-                    repo_data.append((repo_name, repo_size, repo_snapshot_count))
+                # Keep repos that have any usable info (charts / last-backup map)
+                if repo_name and (repo_size > 0 or repo_snapshot_count > 0 or repo_last_time):
+                    repo_data.append((
+                        repo_name,
+                        repo_size,
+                        repo_snapshot_count,
+                        repo_last_time,
+                        repo_last_short_id,
+                        repo_last_full_id,
+                    ))
             
             if DEBUG_MODE:
                 print(f"[DASHBOARD] Stats collected: {total_snapshots} snapshots, {total_size} bytes, {len(repo_data)} repos")
@@ -2874,10 +2954,69 @@ class ResticManagerWindow(QMainWindow):
             self.stats_labels["total_snapshots"].setText(str(total_snapshots))
             self.stats_labels["total_size"].setText(self.format_bytes(total_size) if total_size > 0 else "—")
             self.stats_labels["last_backup"].setText(last_backup if last_backup != "Never" else "Never")
+
+        # Map latest snapshot time/id per repository → jobs table / persisted fields
+        repo_last = {}
+        repo_snaps = {}
+        for row in repo_data or []:
+            if len(row) >= 4 and row[0] and row[3]:
+                repo_last[row[0]] = row[3]
+            elif len(row) >= 1 and row[0]:
+                repo_last.setdefault(row[0], "")
+            if len(row) >= 6 and row[0] and row[4]:
+                repo_snaps[row[0]] = {"short_id": row[4], "id": row[5] or row[4]}
+        self._repo_last_backup = repo_last
+        self._repo_last_snapshot = repo_snaps
+        self._sync_job_last_runs_from_repos(repo_last, repo_snaps)
         
         # Update charts if matplotlib available and data provided
         if MATPLOTLIB_AVAILABLE and repo_data:
             self._update_dashboard_charts(repo_data)
+
+        if hasattr(self, "refresh_dashboard_jobs_table"):
+            self.refresh_dashboard_jobs_table()
+
+        self._set_dashboard_refreshing(False)
+
+    def _sync_job_last_runs_from_repos(self, repo_last: dict, repo_snaps: dict | None = None) -> None:
+        """Persist discovered snapshot times/ids onto backup jobs (no SQLite needed)."""
+        repo_snaps = repo_snaps or {}
+        if not repo_last and not repo_snaps:
+            return
+        jobs = self.settings_manager.get("backup_jobs") or []
+        changed = False
+        for job in jobs:
+            repos = job.get("repositories") or []
+            if not repos and job.get("repository"):
+                repos = [job.get("repository")]
+            best = ""
+            best_snap = None
+            for name in repos:
+                stamp = repo_last.get(name) or ""
+                if stamp and (not best or stamp > best):
+                    best = stamp
+                    best_snap = repo_snaps.get(name)
+            if best:
+                prev = (job.get("schedule") or {}).get("last_run") or job.get("last_run")
+                if prev != best:
+                    job["last_run"] = best
+                    if job.get("schedule") is None:
+                        job["schedule"] = {"enabled": False}
+                    job["schedule"]["last_run"] = best
+                    changed = True
+            if best_snap:
+                short_id = best_snap.get("short_id") or ""
+                full_id = best_snap.get("id") or short_id
+                if short_id and (
+                    job.get("last_snapshot_id") != short_id
+                    or job.get("last_snapshot_full_id") != full_id
+                ):
+                    job["last_snapshot_id"] = short_id
+                    job["last_snapshot_full_id"] = full_id
+                    changed = True
+        if changed:
+            self.settings_manager.set("backup_jobs", jobs)
+            self.settings_manager.save_settings()
     
     def _update_dashboard_charts(self, repo_data):
         """Update dashboard charts with repository data"""
@@ -2885,15 +3024,15 @@ class ResticManagerWindow(QMainWindow):
             return
         
         try:
-            # Extract data
-            repo_names = [name for name, _, _ in repo_data]
-            repo_sizes = [size for _, size, _ in repo_data]
-            repo_snapshots = [count for _, _, count in repo_data]
+            # Extract data (supports 3- or 4-tuples)
+            repo_names = [r[0] for r in repo_data]
+            repo_sizes = [r[1] for r in repo_data]
+            repo_snapshots = [r[2] for r in repo_data]
             
-            # Get theme colors dynamically
-            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
+            # Get theme colors dynamically — use card surface so charts sit flush
+            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "slate"
             colors = themes.get_chart_colors(current_theme)
-            bg_color = colors['bg_color']
+            bg_color = colors.get('surface') or colors['bg_color']
             text_color = colors['text_color']
             grid_color = colors['grid_color']
             
@@ -2915,7 +3054,8 @@ class ResticManagerWindow(QMainWindow):
                         autopct='%1.1f%%',
                         startangle=90, 
                         colors=colors[:len(repo_sizes)],
-                        pctdistance=0.85
+                        pctdistance=0.75,
+                        wedgeprops=dict(width=0.42, edgecolor=bg_color, linewidth=2),
                     )
                     
                     # Make percentage text bold and white
@@ -2932,9 +3072,7 @@ class ResticManagerWindow(QMainWindow):
                              loc="center left",
                              bbox_to_anchor=(1, 0, 0.5, 1),
                              fontsize=8,
-                             frameon=True,
-                             facecolor=bg_color,
-                             edgecolor=grid_color,
+                             frameon=False,
                              labelcolor=text_color,
                              title_fontsize=9)
                     
@@ -2942,15 +3080,10 @@ class ResticManagerWindow(QMainWindow):
                     legend = ax.get_legend()
                     if legend:
                         plt.setp(legend.get_title(), color=text_color, fontweight='bold')
-                    
-                    ax.set_title('Repository Storage Distribution', 
-                                fontsize=11, pad=10, color=text_color, fontweight='bold')
                 else:
                     ax.text(0.5, 0.5, 'No data available', 
                            ha='center', va='center', transform=ax.transAxes,
                            color=text_color, fontsize=10)
-                    ax.set_title('Repository Storage Distribution', 
-                                fontsize=11, pad=10, color=text_color, fontweight='bold')
                 
                 # Adjust layout to prevent legend cutoff
                 self.repo_size_canvas.figure.tight_layout()
@@ -2966,7 +3099,7 @@ class ResticManagerWindow(QMainWindow):
                 if sum(repo_snapshots) > 0:
                     # Create bar chart with vibrant color
                     bars = ax.bar(range(len(repo_names)), repo_snapshots, 
-                                 color='#27ae60', alpha=0.85, edgecolor='#2ecc71', linewidth=1.5)
+                                 color='#22c55e', alpha=0.9, linewidth=0)
                     
                     # Add value labels on bars
                     for bar in bars:
@@ -2977,10 +3110,7 @@ class ResticManagerWindow(QMainWindow):
                                    ha='center', va='bottom', fontsize=9,
                                    color=text_color, fontweight='bold')
                     
-                    ax.set_xlabel('Repository', fontsize=10, color=text_color, fontweight='bold')
-                    ax.set_ylabel('Snapshot Count', fontsize=10, color=text_color, fontweight='bold')
-                    ax.set_title('Snapshots per Repository', 
-                                fontsize=11, pad=10, color=text_color, fontweight='bold')
+                    ax.set_ylabel('Snapshot Count', fontsize=10, color=text_color)
                     ax.set_xticks(range(len(repo_names)))
                     
                     # Truncate long names for x-axis
@@ -2989,19 +3119,17 @@ class ResticManagerWindow(QMainWindow):
                     ax.set_xticklabels(display_names, rotation=45, ha='right', 
                                       fontsize=8, color=text_color)
                     
-                    # Style grid and axes
-                    ax.grid(axis='y', alpha=0.3, linestyle='--', color=grid_color)
+                    # Style grid and axes — minimal chrome
+                    ax.grid(axis='y', alpha=0.25, linestyle='--', color=grid_color)
                     ax.tick_params(colors=text_color, which='both')
                     ax.spines['bottom'].set_color(grid_color)
-                    ax.spines['top'].set_color(grid_color)
+                    ax.spines['top'].set_visible(False)
                     ax.spines['left'].set_color(grid_color)
-                    ax.spines['right'].set_color(grid_color)
+                    ax.spines['right'].set_visible(False)
                 else:
                     ax.text(0.5, 0.5, 'No snapshots found', 
                            ha='center', va='center', transform=ax.transAxes,
                            color=text_color, fontsize=10)
-                    ax.set_title('Snapshots per Repository', 
-                                fontsize=11, pad=10, color=text_color, fontweight='bold')
                 
                 # Adjust layout to prevent label cutoff
                 self.snapshot_count_canvas.figure.tight_layout()
@@ -3018,10 +3146,10 @@ class ResticManagerWindow(QMainWindow):
             return
         
         try:
-            # Get theme colors
-            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
+            # Get theme colors — match card surface
+            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "slate"
             colors = themes.get_chart_colors(current_theme)
-            bg_color = colors['bg_color']
+            bg_color = colors.get('surface') or colors['bg_color']
             text_color = colors['text_color']
             
             # Initialize pie chart
@@ -3033,8 +3161,10 @@ class ResticManagerWindow(QMainWindow):
                 ax.text(0.5, 0.5, 'Click "Refresh Dashboard" to load data', 
                        ha='center', va='center', transform=ax.transAxes,
                        color=text_color, fontsize=10)
-                ax.set_title('Repository Storage Distribution', 
-                            fontsize=11, pad=10, color=text_color, fontweight='bold')
+                ax.set_xticks([])
+                ax.set_yticks([])
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
                 self.repo_size_canvas.draw()
             
             # Initialize bar chart
@@ -3046,8 +3176,10 @@ class ResticManagerWindow(QMainWindow):
                 ax.text(0.5, 0.5, 'Click "Refresh Dashboard" to load data', 
                        ha='center', va='center', transform=ax.transAxes,
                        color=text_color, fontsize=10)
-                ax.set_title('Snapshots per Repository', 
-                            fontsize=11, pad=10, color=text_color, fontweight='bold')
+                ax.set_xticks([])
+                ax.set_yticks([])
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
                 self.snapshot_count_canvas.figure.tight_layout()
                 self.snapshot_count_canvas.draw()
                 
@@ -3063,10 +3195,10 @@ class ResticManagerWindow(QMainWindow):
             return
         
         try:
-            # Get new theme colors
-            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "dark"
+            # Get new theme colors — match card surface
+            current_theme = self.settings_manager.get("theme") if hasattr(self, 'settings_manager') else "slate"
             colors = themes.get_chart_colors(current_theme)
-            bg_color = colors['bg_color']
+            bg_color = colors.get('surface') or colors['bg_color']
             text_color = colors['text_color']
             
             # Update pie chart background
@@ -3092,6 +3224,7 @@ class ResticManagerWindow(QMainWindow):
     def create_repositories_page(self):
         """Create repositories management page"""
         page = QWidget()
+        page.setVisible(False)  # prevent top-level flash during splash processEvents
         layout = QVBoxLayout()
         page.setLayout(layout)
         
@@ -3103,7 +3236,6 @@ class ResticManagerWindow(QMainWindow):
         title_layout.addStretch()
         
         add_btn = QPushButton("Add Repository")
-        add_btn.setFixedWidth(120)
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(self.add_repository)
         title_layout.addWidget(add_btn)
@@ -3133,6 +3265,7 @@ class ResticManagerWindow(QMainWindow):
     def create_snapshots_page(self):
         """Create snapshots browser page"""
         page = QWidget()
+        page.setVisible(False)  # prevent top-level flash during splash processEvents
         layout = QVBoxLayout()
         page.setLayout(layout)
         
@@ -3150,7 +3283,6 @@ class ResticManagerWindow(QMainWindow):
         title_layout.addWidget(self.snapshot_repo_combo)
         
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedWidth(80)
         refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.clicked.connect(self.load_snapshots)
         title_layout.addWidget(refresh_btn)
@@ -3179,33 +3311,27 @@ class ResticManagerWindow(QMainWindow):
         details_layout.addWidget(self.snapshot_details)
         
         browse_content_btn = QPushButton("Browse Content")
-        browse_content_btn.setFixedWidth(150)
         browse_content_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_content_btn.clicked.connect(self.browse_snapshot_content)
         
         diff_btn = QPushButton("Diff with Previous")
-        diff_btn.setFixedWidth(150)
         diff_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         diff_btn.clicked.connect(self.diff_snapshots)
         
         copy_btn = QPushButton("Copy to Repository")
-        copy_btn.setFixedWidth(150)
         copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_btn.setToolTip("Copy this snapshot to another repository")
         copy_btn.clicked.connect(self.copy_snapshot_to_repository)
         
         forget_btn = QPushButton("Forget (Delete)")
-        forget_btn.setFixedWidth(150)
         forget_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         forget_btn.clicked.connect(self.forget_snapshot)
         
         prune_btn = QPushButton("Prune Repository")
-        prune_btn.setFixedWidth(150)
         prune_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         prune_btn.clicked.connect(self.prune_repository)
         
         unlock_btn = QPushButton("Unlock Repository")
-        unlock_btn.setFixedWidth(150)
         unlock_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         unlock_btn.clicked.connect(self.unlock_repository)
         
@@ -3236,6 +3362,7 @@ class ResticManagerWindow(QMainWindow):
     def create_restore_page(self):
         """Create file restore page"""
         page = QWidget()
+        page.setVisible(False)  # prevent top-level flash during splash processEvents
         layout = QVBoxLayout()
         page.setLayout(layout)
         
@@ -3276,7 +3403,6 @@ class ResticManagerWindow(QMainWindow):
         self.restore_path_input.setFixedWidth(400)
         path_layout.addWidget(self.restore_path_input)
         browse_btn = QPushButton("Browse Snapshot")
-        browse_btn.setFixedWidth(150)
         browse_btn.clicked.connect(self.browse_snapshot_files)
         path_layout.addWidget(browse_btn)
         
@@ -3297,7 +3423,6 @@ class ResticManagerWindow(QMainWindow):
         target_layout.addWidget(self.restore_target_input)
         
         self.target_browse_btn = QPushButton("Browse")
-        self.target_browse_btn.setFixedWidth(150)
         self.target_browse_btn.clicked.connect(self.browse_restore_target)
         target_layout.addWidget(self.target_browse_btn)
         
@@ -3318,7 +3443,6 @@ class ResticManagerWindow(QMainWindow):
         date_row.addWidget(self.restore_date_edit)
         
         find_date_btn = QPushButton("Find Snapshot")
-        find_date_btn.setFixedWidth(120)
         find_date_btn.setToolTip("Find snapshot closest to selected date")
         find_date_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         find_date_btn.clicked.connect(self.find_snapshot_by_date)
@@ -3344,7 +3468,6 @@ class ResticManagerWindow(QMainWindow):
         search_row.addWidget(self.global_search_input)
         
         search_btn = QPushButton("Search All Snapshots")
-        search_btn.setFixedWidth(150)
         search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         search_btn.clicked.connect(self.search_across_snapshots)
         search_row.addWidget(search_btn)
@@ -3372,12 +3495,10 @@ class ResticManagerWindow(QMainWindow):
         
         # Restore buttons
         restore_btn = QPushButton("Start Restore")
-        restore_btn.setFixedWidth(150)
         restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         restore_btn.clicked.connect(self.start_restore)
         
         self.mount_browse_btn = QPushButton("Browse Files")
-        self.mount_browse_btn.setFixedWidth(150)
         self.mount_browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mount_browse_btn.clicked.connect(self.mount_and_browse_snapshot)
         self.mount_browse_btn.setToolTip("Browse all snapshots in the repository and restore specific files")
@@ -3417,6 +3538,7 @@ class ResticManagerWindow(QMainWindow):
     def create_backup_page(self):
         """Create backup jobs management page"""
         page = QWidget()
+        page.setVisible(False)  # prevent top-level flash during splash processEvents
         layout = QVBoxLayout()
         page.setLayout(layout)
         
@@ -3528,10 +3650,14 @@ class ResticManagerWindow(QMainWindow):
             actions_layout.addWidget(delete_btn)
             
             self.backup_jobs_table.setCellWidget(row, 4, actions_widget)
+
+        if hasattr(self, "refresh_dashboard_jobs_table"):
+            self.refresh_dashboard_jobs_table()
     
     def create_retention_page(self):
         """Create retention policy page"""
         page = QWidget()
+        page.setVisible(False)  # prevent top-level flash during splash processEvents
         layout = QVBoxLayout()
         page.setLayout(layout)
         
@@ -3703,19 +3829,16 @@ class ResticManagerWindow(QMainWindow):
         task_btn_layout = QHBoxLayout()
         
         create_task_btn = QPushButton("Create Scheduled Task")
-        create_task_btn.setFixedWidth(150)
         create_task_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         create_task_btn.setToolTip("Create a Windows Task Scheduler task to run retention automatically")
         create_task_btn.clicked.connect(self.create_retention_scheduled_task)
         
         view_tasks_btn = QPushButton("View Tasks")
-        view_tasks_btn.setFixedWidth(150)
         view_tasks_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         view_tasks_btn.setToolTip("Open Task Scheduler to view scheduled tasks")
         view_tasks_btn.clicked.connect(self.open_task_scheduler)
         
         delete_task_btn = QPushButton("Delete Task")
-        delete_task_btn.setFixedWidth(150)
         delete_task_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_task_btn.setToolTip("Delete the scheduled retention task for this repository")
         delete_task_btn.clicked.connect(self.delete_retention_scheduled_task)
@@ -3749,13 +3872,11 @@ class ResticManagerWindow(QMainWindow):
         
         
         dry_run_btn = QPushButton("Dry Run (Preview)")
-        dry_run_btn.setFixedWidth(150)
         dry_run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         dry_run_btn.clicked.connect(lambda: self.apply_retention(dry_run=True))
         
         
         apply_btn = QPushButton("Apply Policy")
-        apply_btn.setFixedWidth(150)
         apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         apply_btn.clicked.connect(lambda: self.apply_retention(dry_run=False))
         
@@ -3784,6 +3905,7 @@ class ResticManagerWindow(QMainWindow):
     def create_logs_page(self):
         """Create logs viewer page"""
         page = QWidget()
+        page.setVisible(False)  # prevent top-level flash during splash processEvents
         layout = QVBoxLayout()
         page.setLayout(layout)
         
@@ -3811,6 +3933,7 @@ class ResticManagerWindow(QMainWindow):
     def create_settings_page(self):
         """Create settings page"""
         page = QWidget()
+        page.setVisible(False)  # prevent top-level flash during splash processEvents
         layout = QVBoxLayout()
         page.setLayout(layout)
         
@@ -3831,12 +3954,10 @@ class ResticManagerWindow(QMainWindow):
         self.restic_path_input.setFixedWidth(400)
         
         browse_restic_btn = QPushButton("Browse")
-        browse_restic_btn.setFixedWidth(100)
         browse_restic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_restic_btn.clicked.connect(self.browse_restic_path)
         
         test_restic_btn = QPushButton("Test")
-        test_restic_btn.setFixedWidth(100)
         test_restic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         test_restic_btn.clicked.connect(self.test_restic_path)
         test_restic_btn.setToolTip("Test if restic can be executed from this path")
@@ -3850,28 +3971,13 @@ class ResticManagerWindow(QMainWindow):
         
         # Theme
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems([
-            # Light themes
-            "light", "light-green", "light-blue",
-            # Classic dark themes
-            "dark", "dark-cyan", "dark-navy", "dark-green", "dark-purple", 
-            "dark-indigo", "dark-magenta",
-            # Special/Retro themes
-            "solarized-dark", "monokai-dark", "dracula", "nord-dark",
-            # Modern popular themes (2024-2026)
-            "tokyo-night", "catppuccin-mocha", "gruvbox-dark", "one-dark",
-            "rose-pine", "everforest", "kanagawa", "night-owl", "palenight",
-            "arctic", "horizon", "moonlight",
-            # IDE-inspired
-            "github-dark", "vscode-dark", "material-dark",
-            # Unique/Fun themes
-            "cyberpunk-neon", "matrix-green", "sunset-orange", 
-            # Minimal themes
-            "forest-moss", "cool-grey", "pure-black", "midnight-blue", "amoled-black"
-        ])
-        current_theme = self.settings_manager.get("theme")
-        self.theme_combo.setCurrentText(current_theme)
-        self.theme_combo.setFixedWidth(150)
+        self.theme_combo.addItems(themes.theme_display_names())
+        current_theme_id = themes.resolve_theme_id(self.settings_manager.get("theme"))
+        current_theme_name = themes.get_app_theme(current_theme_id).name
+        idx = self.theme_combo.findText(current_theme_name)
+        if idx >= 0:
+            self.theme_combo.setCurrentIndex(idx)
+        self.theme_combo.setFixedWidth(160)
         self.theme_combo.currentTextChanged.connect(self.change_theme)
         form_layout.addRow("Theme:", self.theme_combo)
         
@@ -3896,7 +4002,6 @@ class ResticManagerWindow(QMainWindow):
         self.temp_restore_path_input.setFixedWidth(400)
         
         browse_temp_restore_btn = QPushButton("Browse")
-        browse_temp_restore_btn.setFixedWidth(120)
         browse_temp_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         browse_temp_restore_btn.clicked.connect(self.browse_temp_restore_path)
         
@@ -3978,7 +4083,6 @@ class ResticManagerWindow(QMainWindow):
         password_exists = has_password  # Use the value from status check above
         
         self.set_password_btn = QPushButton("Set Password" if not password_exists else "Change Password")
-        self.set_password_btn.setFixedWidth(150)
         self.set_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.set_password_btn.clicked.connect(self.set_app_password)
         password_btn_layout.addWidget(self.set_password_btn)
@@ -3986,7 +4090,6 @@ class ResticManagerWindow(QMainWindow):
         password_btn_layout.addSpacing(10)
         
         self.remove_password_btn = QPushButton("Remove Password")
-        self.remove_password_btn.setFixedWidth(150)
         self.remove_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.remove_password_btn.clicked.connect(self.remove_app_password)
         self.remove_password_btn.setEnabled(password_exists)
@@ -4005,19 +4108,16 @@ class ResticManagerWindow(QMainWindow):
         buttons_layout.addStretch()
         
         save_btn = QPushButton("Save Settings")
-        save_btn.setFixedWidth(150)
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.clicked.connect(self.save_settings)
         buttons_layout.addWidget(save_btn)
         
         backup_btn = QPushButton("Backup Settings")
-        backup_btn.setFixedWidth(150)
         backup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         backup_btn.clicked.connect(self.backup_settings)
         buttons_layout.addWidget(backup_btn)
         
         restore_btn = QPushButton("Restore Settings")
-        restore_btn.setFixedWidth(150)
         restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         restore_btn.clicked.connect(self.restore_settings)
         buttons_layout.addWidget(restore_btn)
@@ -4043,12 +4143,10 @@ class ResticManagerWindow(QMainWindow):
 
         
         self.restic_check_btn = QPushButton("Check")
-        self.restic_check_btn.setFixedWidth(100)
         self.restic_check_btn.clicked.connect(self.check_restic_installation)
         
         
         self.restic_install_btn = QPushButton("Install")
-        self.restic_install_btn.setFixedWidth(100)
         self.restic_install_btn.clicked.connect(self.install_restic)
         self.restic_install_btn.setVisible(False)
         
@@ -4091,7 +4189,6 @@ class ResticManagerWindow(QMainWindow):
         
         
         copy_machine_id_btn = QPushButton("Copy")
-        copy_machine_id_btn.setFixedWidth(80)
         copy_machine_id_btn.clicked.connect(self.copy_machine_id)
 
         machine_id_layout = QHBoxLayout()
@@ -4774,16 +4871,13 @@ class ResticManagerWindow(QMainWindow):
         
         # Add expand/collapse buttons
         expand_all_btn = QPushButton("Expand All")
-        expand_all_btn.setFixedWidth(100)
         header_layout.addWidget(expand_all_btn)
         
         collapse_all_btn = QPushButton("Collapse All")
-        collapse_all_btn.setFixedWidth(100)
         header_layout.addWidget(collapse_all_btn)
         
         # Add refresh button
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedWidth(100)
         header_layout.addWidget(refresh_btn)
         
         layout.addLayout(header_layout)
@@ -5368,7 +5462,6 @@ class ResticManagerWindow(QMainWindow):
         layout.addLayout(stats_layout)
         
         close_btn = QPushButton("Close")
-        close_btn.setFixedWidth(120)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         
         close_btn_layout = QHBoxLayout()
@@ -5640,7 +5733,6 @@ class ResticManagerWindow(QMainWindow):
             cancel_btn = QPushButton("Cancel")
             cancel_btn.setEnabled(False)  # Disable for now - copy can't be easily cancelled
             cancel_btn.setCursor(Qt.CursorShape.ForbiddenCursor)
-            cancel_btn.setFixedWidth(120)
             cancel_btn.setToolTip("Copy operation cannot be cancelled once started")
             progress_layout.addWidget(cancel_btn)
             
@@ -5828,7 +5920,6 @@ class ResticManagerWindow(QMainWindow):
             # Add close button
             close_btn = QPushButton("Close")
             close_btn.setToolTip("Close this dialog. The prune operation will continue running in the background.")
-            close_btn.setFixedWidth(120)
             close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             
             close_layout = QHBoxLayout()
@@ -6749,16 +6840,13 @@ class ResticManagerWindow(QMainWindow):
         
         # Add expand/collapse buttons
         expand_all_btn = QPushButton("Expand All")
-        expand_all_btn.setFixedWidth(100)
         header_layout.addWidget(expand_all_btn)
         
         collapse_all_btn = QPushButton("Collapse All")
-        collapse_all_btn.setFixedWidth(100)
         header_layout.addWidget(collapse_all_btn)
         
         # Add refresh button
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedWidth(100)
         header_layout.addWidget(refresh_btn)
         
         layout.addLayout(header_layout)
@@ -6878,7 +6966,6 @@ class ResticManagerWindow(QMainWindow):
         
         copy_path_btn = QPushButton("Copy Selected Path(s)")
         copy_path_btn.setToolTip("Copy the full paths of selected files/folders to clipboard (or set in restore input if single selection)")
-        copy_path_btn.setFixedWidth(150)
         copy_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_path_btn.clicked.connect(lambda: self._copy_paths_to_restore_input(file_tree))
         btn_layout.addWidget(copy_path_btn)
@@ -6886,7 +6973,6 @@ class ResticManagerWindow(QMainWindow):
         btn_layout.addStretch()
         
         close_btn = QPushButton("Close")
-        close_btn.setFixedWidth(120)
         close_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(close_btn)
         
@@ -7216,7 +7302,6 @@ class ResticManagerWindow(QMainWindow):
         selector_layout.addWidget(snapshot_combo)
         
         refresh_snapshots_btn = QPushButton("Refresh List")
-        refresh_snapshots_btn.setFixedWidth(100)
         selector_layout.addWidget(refresh_snapshots_btn)
         selector_layout.addStretch()
         
@@ -7825,7 +7910,6 @@ class ResticManagerWindow(QMainWindow):
             
             cancel_btn = QPushButton("Cancel Backup")
             cancel_btn.setToolTip("Cancel the running backup job. This will stop the backup and unlock the repository.")
-            cancel_btn.setFixedWidth(120)
             cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             cancel_btn.clicked.connect(lambda: self._cancel_backup())
             buttons_layout.addWidget(cancel_btn)
@@ -7836,7 +7920,6 @@ class ResticManagerWindow(QMainWindow):
             close_btn = QPushButton("Close")
             close_btn.setEnabled(False)
             close_btn.setToolTip("Close this dialog. The backup will continue running in the background.")
-            close_btn.setFixedWidth(120)
             close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             close_btn.clicked.connect(self._backup_progress_dialog.close)
             buttons_layout.addWidget(close_btn)
@@ -7918,10 +8001,30 @@ class ResticManagerWindow(QMainWindow):
         else:
             # All repositories completed
             self.log(f"Backup job '{self._backup_job['name']}' completed for all {self._total_repos} repositories")
+            self._stamp_job_last_run(self._backup_job)
             if hasattr(self, '_backup_close_btn'):
                 self._backup_close_btn.setEnabled(True)
             if hasattr(self, '_backup_cancel_btn'):
                 self._backup_cancel_btn.setEnabled(False)
+
+    def _stamp_job_last_run(self, job) -> None:
+        """Record last successful run time on the job for dashboard relative times."""
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        job["last_run"] = stamp
+        if job.get("schedule") is None:
+            job["schedule"] = {"enabled": False}
+        job["schedule"]["last_run"] = stamp
+        jobs = self.settings_manager.get("backup_jobs") or []
+        for i, existing in enumerate(jobs):
+            if existing.get("name") == job.get("name"):
+                jobs[i] = job
+                break
+        self.settings_manager.set("backup_jobs", jobs)
+        self.settings_manager.save_settings()
+        if hasattr(self, "refresh_dashboard_jobs_table"):
+            self.refresh_dashboard_jobs_table()
+        if hasattr(self, "refresh_backup_jobs_list"):
+            self.refresh_backup_jobs_list()
     
     def _cancel_backup(self):
         """Cancel the running backup"""
@@ -8805,7 +8908,8 @@ try {{
     def save_settings(self):
         """Save application settings"""
         self.settings_manager.set("restic_path", self.restic_path_input.text())
-        self.settings_manager.set("theme", self.theme_combo.currentText())
+        theme_id = themes.resolve_theme_id(self.theme_combo.currentText())
+        self.settings_manager.set("theme", theme_id)
         self.settings_manager.set("auto_refresh_snapshots", self.auto_refresh_check.isChecked())
         self.settings_manager.set("snapshot_refresh_interval", self.refresh_interval_spin.value())
         self.settings_manager.set("temp_restore_path", self.temp_restore_path_input.text())
@@ -9438,7 +9542,6 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         machine_layout.addWidget(machine_display)
         
         copy_btn = QPushButton("Copy")
-        copy_btn.setFixedWidth(80)
         copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(machine_id))
         machine_layout.addWidget(copy_btn)
         
@@ -9516,7 +9619,29 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
     # Theme Methods
     def apply_theme(self, theme: str):
         """Apply a theme to the application - delegates to themes module."""
-        themes.apply_theme(self.app, self.settings_manager, theme)
+        theme_id = themes.apply_theme(self.app, self.settings_manager, theme, window=self)
+        app_theme = themes.get_app_theme(theme_id)
+        # Keep settings combo in sync with resolved id/name.
+        if hasattr(self, "theme_combo"):
+            name = app_theme.name
+            if self.theme_combo.currentText() != name:
+                self.theme_combo.blockSignals(True)
+                idx = self.theme_combo.findText(name)
+                if idx >= 0:
+                    self.theme_combo.setCurrentIndex(idx)
+                self.theme_combo.blockSignals(False)
+
+        if hasattr(self, "nav_sidebar"):
+            self.nav_sidebar.recolor(app_theme.muted, app_theme.accent)
+
+        if hasattr(self, "_jobs_table_hover"):
+            # Match stylesheet hover overlay for light/dark themes
+            from PyQt6.QtGui import QBrush, QColor
+            if themes._hex_luminance(app_theme.bg) > 0.55:
+                brush = QBrush(QColor(0, 0, 0, 18))
+            else:
+                brush = QBrush(QColor(255, 255, 255, 18))
+            self._jobs_table_hover.set_hover_brush(brush)
         
         # Refresh charts with new theme colors
         if MATPLOTLIB_AVAILABLE and hasattr(self, 'repo_size_canvas'):
@@ -9524,6 +9649,178 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         
         # Refresh status widgets if they exist
         self.refresh_status_widget_themes()
+
+    # ------------------------------------------------------------------
+    # Frameless window chrome (match ssh-terminal-client)
+    # ------------------------------------------------------------------
+    def changeEvent(self, event) -> None:  # noqa: N802
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "title_bar"):
+            self.title_bar.sync_max_button()
+            self._sync_window_chrome()
+        super().changeEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._sync_window_chrome()
+
+    def _sync_window_chrome(self) -> None:
+        """Square corners when maximized; rounded mask when floating."""
+        root = self.centralWidget()
+        if root is None or root.objectName() != "windowRoot":
+            return
+        maximized = self.isMaximized() or self.isFullScreen()
+        root.setProperty("maximized", "1" if maximized else "0")
+        root.style().unpolish(root)
+        root.style().polish(root)
+        if maximized:
+            root.clearMask()
+        else:
+            from PyQt6.QtCore import QRectF
+            from PyQt6.QtGui import QPainterPath, QRegion
+
+            radius = 10.0
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(root.rect()), radius, radius)
+            root.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        root.update()
+
+    def _hit_resize_edges(self, pos: QPoint) -> set[str]:
+        if self.isMaximized() or self.isFullScreen():
+            return set()
+        rect = self.rect()
+        edges: set[str] = set()
+        if pos.x() <= _WINDOW_EDGE:
+            edges.add("left")
+        if pos.x() >= rect.width() - _WINDOW_EDGE:
+            edges.add("right")
+        if pos.y() <= _WINDOW_EDGE:
+            edges.add("top")
+        if pos.y() >= rect.height() - _WINDOW_EDGE:
+            edges.add("bottom")
+        return edges
+
+    def _edges_to_qt(self, edges: set[str]) -> Qt.Edge:
+        qt_edges = Qt.Edge(0)
+        if "left" in edges:
+            qt_edges |= Qt.Edge.LeftEdge
+        if "right" in edges:
+            qt_edges |= Qt.Edge.RightEdge
+        if "top" in edges:
+            qt_edges |= Qt.Edge.TopEdge
+        if "bottom" in edges:
+            qt_edges |= Qt.Edge.BottomEdge
+        return qt_edges
+
+    def _cursor_for_edges(self, edges: set[str]):
+        if not edges:
+            return Qt.CursorShape.ArrowCursor
+        if edges == {"left"} or edges == {"right"}:
+            return Qt.CursorShape.SizeHorCursor
+        if edges == {"top"} or edges == {"bottom"}:
+            return Qt.CursorShape.SizeVerCursor
+        if edges == {"left", "top"} or edges == {"right", "bottom"}:
+            return Qt.CursorShape.SizeFDiagCursor
+        return Qt.CursorShape.SizeBDiagCursor
+
+    def _begin_edge_resize(self, edges: set[str]) -> bool:
+        handle = self.windowHandle()
+        if handle is None or not edges:
+            return False
+        qt_edges = self._edges_to_qt(edges)
+        if int(qt_edges) == 0:
+            return False
+        return bool(handle.startSystemResize(qt_edges))
+
+    def nativeEvent(self, eventType, message):  # noqa: N802
+        # Frameless windows don't get OS resize borders; answer WM_NCHITTEST
+        # so Windows still shows resize cursors over the edge.
+        try:
+            et = bytes(eventType)
+        except Exception:
+            et = b""
+        if (
+            wintypes is not None
+            and et == b"windows_generic_MSG"
+            and not self.isMaximized()
+            and not self.isFullScreen()
+        ):
+            try:
+                msg = wintypes.MSG.from_address(int(message))
+            except (TypeError, ValueError, OverflowError):
+                return False, 0
+            if msg.message == _WM_NCHITTEST:
+                pos = self.mapFromGlobal(QCursor.pos())
+                edges = self._hit_resize_edges(pos)
+                if not edges:
+                    return False, 0
+                if edges == {"left", "top"}:
+                    return True, _HTTOPLEFT
+                if edges == {"right", "top"}:
+                    return True, _HTTOPRIGHT
+                if edges == {"left", "bottom"}:
+                    return True, _HTBOTTOMLEFT
+                if edges == {"right", "bottom"}:
+                    return True, _HTBOTTOMRIGHT
+                if edges == {"left"}:
+                    return True, _HTLEFT
+                if edges == {"right"}:
+                    return True, _HTRIGHT
+                if edges == {"top"}:
+                    return True, _HTTOP
+                if edges == {"bottom"}:
+                    return True, _HTBOTTOM
+        return False, 0
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and not self.isMaximized():
+            edges = self._hit_resize_edges(event.position().toPoint())
+            if edges and self._begin_edge_resize(edges):
+                event.accept()
+                return
+            if edges:
+                self._resize_edges = edges
+                self._resize_origin = event.globalPosition().toPoint()
+                self._resize_geom = self.geometry()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        pos = event.position().toPoint()
+        if self._resize_edges and self._resize_origin is not None and self._resize_geom is not None:
+            delta = event.globalPosition().toPoint() - self._resize_origin
+            geom = self._resize_geom
+            x, y, w, h = geom.x(), geom.y(), geom.width(), geom.height()
+            min_w, min_h = self.minimumWidth(), self.minimumHeight()
+            if "left" in self._resize_edges:
+                new_w = max(min_w, w - delta.x())
+                x = x + (w - new_w)
+                w = new_w
+            if "right" in self._resize_edges:
+                w = max(min_w, w + delta.x())
+            if "top" in self._resize_edges:
+                new_h = max(min_h, h - delta.y())
+                y = y + (h - new_h)
+                h = new_h
+            if "bottom" in self._resize_edges:
+                h = max(min_h, h + delta.y())
+            self.setGeometry(x, y, w, h)
+            event.accept()
+            return
+
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            edges = self._hit_resize_edges(pos)
+            if edges:
+                self.setCursor(self._cursor_for_edges(edges))
+            else:
+                self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        self._resize_edges = set()
+        self._resize_origin = None
+        self._resize_geom = None
+        super().mouseReleaseEvent(event)
 
     def refresh_status_widget_themes(self):
         """Refresh the theme styling of all status widgets."""
@@ -9944,11 +10241,19 @@ def main():
         return run_job_cli(args.run_job)
 
     app = QApplication(sys.argv)
+    # Fusion honors stylesheets for combo popups / tabs on Windows.
+    app.setStyle("Fusion")
+    app.setFont(QFont(themes.prefer_ui_font(), 10))
     
     # Set application info
     app.setApplicationName("Restic Backup Manager")
     app.setApplicationVersion(VERSION)
     app.setOrganizationName("ResticManager")
+    app.setWindowIcon(themes.app_window_icon())
+
+    if DEBUG_MODE:
+        install_startup_window_probe(app)
+        startup_probe_phase("after QApplication")
 
     # Set up global exception handler to show crashes in a copyable popup
     def exception_hook(exc_type, exc_value, exc_traceback):
@@ -10038,10 +10343,13 @@ def main():
 
     # Load settings to get theme
     settings_manager = ResticSettingsManager()
-    current_theme = settings_manager.get("theme")
+    current_theme = themes.resolve_theme_id(settings_manager.get("theme"))
+    settings_manager.set("theme", current_theme)
     
-    splash_bg_color = themes.theme_splash_colors.get(current_theme, "#1a1b3a")
-    splash_text_color = themes.theme_text_colors.get(current_theme, "#ffffff")
+    splash_bg_color, splash_text_color = themes.theme_splash_colors_for(current_theme)
+    # Apply chrome stylesheet early so license/password dialogs match.
+    early_css = themes.build_stylesheet(themes.get_app_theme(current_theme))
+    app.setStyleSheet(early_css)
     
     # Create splash screen
     splash_pix = QPixmap(400, 200)
@@ -10057,6 +10365,7 @@ def main():
     )
     splash.show()
     app.processEvents()
+    startup_probe_phase("splash shown")
 
     # Check license before proceeding
     license_manager = LicenseManager()
@@ -10070,15 +10379,13 @@ def main():
         
         machine_id = license_manager.get_machine_id_for_licensing()
         license_dialog = LicenseDialog(machine_id=machine_id)
-        
-        # Apply basic styling to license dialog based on theme
-        if current_theme == "dark" or "dark" in current_theme:
-            license_dialog.setStyleSheet("QDialog { background-color: #2b2b2b; color: #ffffff; }")
+        license_dialog.setStyleSheet(early_css)
         
         result = license_dialog.exec()
         
         if result != QDialog.DialogCode.Accepted:
             # User cancelled - exit application
+            stop_startup_window_probe()
             return 0
         
         # Re-validate after activation
@@ -10089,6 +10396,7 @@ def main():
                 "License Activation Failed",
                 f"Could not activate license:\n{license_message}\n\nApplication will now exit."
             )
+            stop_startup_window_probe()
             return 1
         
         # Recreate splash screen after successful license activation
@@ -10136,20 +10444,13 @@ def main():
         
         while attempt < max_attempts:
             password_dialog = AppPasswordDialog()
-            
-            # Apply basic styling based on theme
-            if current_theme == "dark" or "dark" in current_theme:
-                password_dialog.setStyleSheet("""
-                    QDialog { background-color: #2b2b2b; color: #ffffff; }
-                    QLineEdit { background-color: #3b3b3b; color: #ffffff; border: 1px solid #555; padding: 5px; }
-                    QPushButton { background-color: #4a4a4a; color: #ffffff; border: 1px solid #666; padding: 5px 10px; }
-                    QPushButton:hover { background-color: #5a5a5a; }
-                """)
+            password_dialog.setStyleSheet(early_css)
             
             result = password_dialog.exec()
             
             if result != QDialog.DialogCode.Accepted:
                 # User cancelled - exit application
+                stop_startup_window_probe()
                 return 0
             
             # Verify password
@@ -10162,13 +10463,7 @@ def main():
                 remaining = max_attempts - attempt
                 if remaining > 0:
                     password_dialog = AppPasswordDialog()
-                    if current_theme == "dark" or "dark" in current_theme:
-                        password_dialog.setStyleSheet("""
-                            QDialog { background-color: #2b2b2b; color: #ffffff; }
-                            QLineEdit { background-color: #3b3b3b; color: #ffffff; border: 1px solid #555; padding: 5px; }
-                            QPushButton { background-color: #4a4a4a; color: #ffffff; border: 1px solid #666; padding: 5px 10px; }
-                            QPushButton:hover { background-color: #5a5a5a; }
-                        """)
+                    password_dialog.setStyleSheet(early_css)
                     password_dialog.set_error(f"Incorrect password. {remaining} attempt(s) remaining.")
                     password_dialog.show()
                     continue
@@ -10179,6 +10474,7 @@ def main():
                 "Authentication Failed",
                 "Maximum login attempts exceeded.\nApplication will now exit."
             )
+            stop_startup_window_probe()
             return 1
         
         # Recreate splash screen after successful authentication
@@ -10192,8 +10488,10 @@ def main():
         )
         splash.show()
         app.processEvents()
+        startup_probe_phase("splash after password")
 
     # Create window and pass splash for dynamic updates
+    startup_probe_phase("creating main window")
     window = ResticManagerWindow(app, splash)
     
     splash.finish(window)
@@ -10201,12 +10499,14 @@ def main():
     splash.deleteLater()  # Schedule splash for deletion
 
     
+    startup_probe_phase("showing main window")
     window.show()
     window.show()
     window.raise_()  # Bring window to front
     window.activateWindow()  # Make it the active window
 
     app.processEvents()  # Process all pending events to ensure splash is fully gone
+    stop_startup_window_probe()
     
     sys.exit(app.exec())
 

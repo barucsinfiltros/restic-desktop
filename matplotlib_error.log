@@ -1,0 +1,5 @@
+Matplotlib import failed: No module named 'matplotlib'
+Traceback (most recent call last):
+  File "C:\python_scripts\restic_mngr\restic_manager.py", line 83, in <module>
+    import matplotlib
+ModuleNotFoundError: No module named 'matplotlib'
