@@ -188,7 +188,7 @@ def create_settings_page(host: Any) -> QWidget:
     app_card.body.addWidget(_form_row("Restic path", restic_field, parent=app_card))
 
     host.theme_combo = QComboBox(app_card)
-    host.theme_combo.addItems(themes.theme_display_names())
+    themes.populate_theme_combo(host.theme_combo)
     current_theme_id = themes.resolve_theme_id(host.settings_manager.get("theme"))
     current_theme_name = themes.get_app_theme(current_theme_id).name
     idx = host.theme_combo.findText(current_theme_name)

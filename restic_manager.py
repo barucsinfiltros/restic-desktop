@@ -9490,6 +9490,8 @@ try {{
     
     def change_theme(self, theme):
         """Change application theme"""
+        if not theme or not str(theme).strip():
+            return
         self.apply_theme(theme)
     
     def save_settings(self):

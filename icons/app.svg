@@ -1,5 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
-  <rect x="4" y="8" width="56" height="48" rx="10" fill="#1a222c" stroke="#5a8cc8" stroke-width="3"/>
-  <path d="M18 28l8 6-8 6" stroke="#5a8cc8" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M30 40h16" stroke="#3dd68c" stroke-width="3.5" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <!-- App tile -->
+  <rect x="16" y="16" width="224" height="224" rx="52"
+        fill="#152033"/>
+  <rect x="16" y="16" width="224" height="224" rx="52"
+        fill="url(#tileGlow)"/>
+
+  <!-- Soft hexagon fill (vault) -->
+  <path d="M128 46 L198 86 V166 L128 206 L58 166 V86 Z"
+        fill="#3d8dff" fill-opacity="0.14"/>
+
+  <!-- Hexagon outline -->
+  <path d="M128 52 L192 89 V163 L128 200 L64 163 V89 Z"
+        stroke="#5db0ff" stroke-width="10" stroke-linejoin="round"/>
+
+  <!-- Layered backup plates -->
+  <path d="M88 104 C102 96 114 92 128 92 C142 92 154 96 168 104
+           C156 111 143 115 128 115 C113 115 100 111 88 104 Z"
+        fill="#9fd0ff"/>
+  <path d="M84 128 C100 118 113 114 128 114 C143 114 156 118 172 128
+           C158 136 144 141 128 141 C112 141 98 136 84 128 Z"
+        fill="#5db0ff"/>
+  <path d="M80 152 C98 140 112 135 128 135 C144 135 158 140 176 152
+           C160 162 145 168 128 168 C111 168 96 162 80 152 Z"
+        fill="#3d9af0"/>
+
+  <!-- Status badge (protected / healthy) -->
+  <circle cx="188" cy="188" r="36" fill="#152033"/>
+  <circle cx="188" cy="188" r="30" fill="#1f9d5c"/>
+  <path d="M174 188 L183 197 L204 176"
+        stroke="#e8fff2" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <defs>
+    <radialGradient id="tileGlow" cx="30%" cy="25%" r="75%">
+      <stop offset="0%" stop-color="#2a4060" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#152033" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
 </svg>

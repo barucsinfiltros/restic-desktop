@@ -365,6 +365,131 @@ APP_THEMES: dict[str, AppTheme] = {
         danger="#dc2626",
         ok="#166534",
     ),
+    # --- 2026 modern additions ---
+    "obsidian": AppTheme(
+        id="obsidian",
+        name="Obsidian",
+        bg="#050505",
+        sidebar="#0e0e10",
+        surface="#141416",
+        border="#26262c",
+        text="#ececf1",
+        muted="#8b8b96",
+        accent="#22d3ee",
+        accent_hover="#67e8f9",
+        accent_soft="rgba(34, 211, 238, 0.16)",
+        danger="#fb7185",
+        ok="#34d399",
+    ),
+    "nebula": AppTheme(
+        id="nebula",
+        name="Nebula",
+        bg="#0a0612",
+        sidebar="#140c1f",
+        surface="#1a1228",
+        border="#2e2142",
+        text="#efe6ff",
+        muted="#a894c4",
+        accent="#d946ef",
+        accent_hover="#e879f9",
+        accent_soft="rgba(217, 70, 239, 0.18)",
+        danger="#fb7185",
+        ok="#4ade80",
+    ),
+    "porcelain": AppTheme(
+        id="porcelain",
+        name="Porcelain",
+        bg="#f4f5f8",
+        sidebar="#e9ebf1",
+        surface="#ffffff",
+        border="#d0d4de",
+        text="#141820",
+        muted="#5c6575",
+        accent="#4f46e5",
+        accent_hover="#6366f1",
+        accent_soft="rgba(79, 70, 229, 0.12)",
+        danger="#dc2626",
+        ok="#0f6e37",
+    ),
+    "bloom": AppTheme(
+        id="bloom",
+        name="Bloom",
+        bg="#faf6f4",
+        sidebar="#f1e9e5",
+        surface="#fffbfa",
+        border="#e2d5cf",
+        text="#2a1f1c",
+        muted="#7a6862",
+        accent="#e11d48",
+        accent_hover="#fb7185",
+        accent_soft="rgba(225, 29, 72, 0.12)",
+        danger="#b91c1c",
+        ok="#166534",
+    ),
+    # High-contrast OLED black
+    "void": AppTheme(
+        id="void",
+        name="Void",
+        bg="#000000",
+        sidebar="#0a0a0a",
+        surface="#111111",
+        border="#2a2a2a",
+        text="#f5f5f5",
+        muted="#a0a0a0",
+        accent="#e8e8e8",
+        accent_hover="#ffffff",
+        accent_soft="rgba(255, 255, 255, 0.12)",
+        danger="#ff5c5c",
+        ok="#3dd68c",
+    ),
+    # Deep purple / violet accent
+    "iris": AppTheme(
+        id="iris",
+        name="Iris",
+        bg="#0c0a14",
+        sidebar="#161222",
+        surface="#1c1830",
+        border="#322a4a",
+        text="#ece8ff",
+        muted="#9b93b8",
+        accent="#8b5cf6",
+        accent_hover="#a78bfa",
+        accent_soft="rgba(139, 92, 246, 0.20)",
+        danger="#f472b6",
+        ok="#4ade80",
+    ),
+    # Warmer cream / parchment
+    "cream": AppTheme(
+        id="cream",
+        name="Cream",
+        bg="#f6efe4",
+        sidebar="#ebe2d4",
+        surface="#fbf7f0",
+        border="#d9cdb8",
+        text="#2c2418",
+        muted="#7a6c58",
+        accent="#b45309",
+        accent_hover="#d97706",
+        accent_soft="rgba(180, 83, 9, 0.14)",
+        danger="#b91c1c",
+        ok="#166534",
+    ),
+    # Cool high-contrast office white
+    "office": AppTheme(
+        id="office",
+        name="Office",
+        bg="#ffffff",
+        sidebar="#f0f2f5",
+        surface="#ffffff",
+        border="#c8cdd5",
+        text="#0a0a0a",
+        muted="#4b5563",
+        accent="#0052cc",
+        accent_hover="#1a66e0",
+        accent_soft="rgba(0, 82, 204, 0.10)",
+        danger="#c62828",
+        ok="#0f6e37",
+    ),
 }
 
 TERMINAL_THEMES: dict[str, TerminalTheme] = {
@@ -443,6 +568,42 @@ TERMINAL_THEMES: dict[str, TerminalTheme] = {
     "chalk": _term(
         "chalk", "Chalk",
         QColor(252, 252, 250), QColor(34, 34, 34), QColor(13, 148, 136, 140),
+        light=True,
+    ),
+    "obsidian": _term(
+        "obsidian", "Obsidian",
+        QColor(8, 8, 10), QColor(236, 236, 241), QColor(34, 211, 238, 150),
+    ),
+    "nebula": _term(
+        "nebula", "Nebula",
+        QColor(12, 8, 22), QColor(239, 230, 255), QColor(217, 70, 239, 150),
+    ),
+    "porcelain": _term(
+        "porcelain", "Porcelain",
+        QColor(255, 255, 255), QColor(20, 24, 32), QColor(79, 70, 229, 140),
+        light=True,
+    ),
+    "bloom": _term(
+        "bloom", "Bloom",
+        QColor(255, 251, 250), QColor(42, 31, 28), QColor(225, 29, 72, 140),
+        light=True,
+    ),
+    "void": _term(
+        "void", "Void",
+        QColor(0, 0, 0), QColor(245, 245, 245), QColor(232, 232, 232, 160),
+    ),
+    "iris": _term(
+        "iris", "Iris",
+        QColor(12, 10, 20), QColor(236, 232, 255), QColor(139, 92, 246, 150),
+    ),
+    "cream": _term(
+        "cream", "Cream",
+        QColor(251, 247, 240), QColor(44, 36, 24), QColor(180, 83, 9, 140),
+        light=True,
+    ),
+    "office": _term(
+        "office", "Office",
+        QColor(255, 255, 255), QColor(10, 10, 10), QColor(0, 82, 204, 140),
         light=True,
     ),
 }
@@ -2943,11 +3104,30 @@ def resolve_theme_id(theme: str | None) -> str:
 
 
 def theme_display_names() -> list[str]:
-    """Ordered theme names for the Settings combo box."""
-    # Dark first, then light — mirrors SSH client grouping.
+    """Ordered theme names for the Settings combo box (dark, then light)."""
+    dark, light = theme_name_groups()
+    return dark + light
+
+
+def theme_name_groups() -> tuple[list[str], list[str]]:
+    """Return (dark_names, light_names) for combo population."""
     dark = [t.name for t in APP_THEMES.values() if _hex_luminance(t.bg) <= 0.55]
     light = [t.name for t in APP_THEMES.values() if _hex_luminance(t.bg) > 0.55]
-    return dark + light
+    return dark, light
+
+
+def populate_theme_combo(combo) -> None:
+    """Fill a QComboBox with dark themes, a separator, then light themes."""
+    from PyQt6.QtWidgets import QComboBox
+
+    if not isinstance(combo, QComboBox):
+        return
+    dark, light = theme_name_groups()
+    combo.clear()
+    combo.addItems(dark)
+    if dark and light:
+        combo.insertSeparator(combo.count())
+    combo.addItems(light)
 
 
 def apply_theme(app, settings_manager, theme: str, window=None) -> str:
