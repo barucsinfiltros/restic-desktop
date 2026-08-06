@@ -1,8 +1,8 @@
 ### Potential Enhancements
 1. **Dashboard Enhancements**: ✅ PARTIAL (Phase 1 Complete)
-  - ✅ Display visual summaries (graphs or charts) for repository statuses - **IMPLEMENTED** (matplotlib pie/bar charts)
-    - ✅ Repository storage distribution (pie chart)
-    - ✅ Snapshot counts per repository (bar chart)
+  - ✅ Display visual summaries (graphs or charts) for repository statuses - **IMPLEMENTED** (QPainter doughnut/bar charts)
+    - ✅ Repository storage distribution (doughnut chart)
+    - ✅ Snapshot counts per repository (rounded bar chart)
   - ⏳ Space usage over time - **PENDING** (requires historical data collection - Phase 2)
   - ⏳ Success/failure of scheduled backups visualization - **PENDING** (requires tracking system - Phase 2)
 

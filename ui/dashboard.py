@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -13,40 +13,26 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from ui.cards import SectionCard, StatCard
+from ui.charts import DonutChart, RoundedBarChart
+from ui.table_helpers import SortableTableItem, TableRowHover, make_repo_icon_cell
 
-try:
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.figure import Figure
-
-    _MPL = True
-except Exception:
-    try:
-        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-        from matplotlib.figure import Figure
-
-        _MPL = True
-    except Exception:
-        _MPL = False
-        FigureCanvas = None  # type: ignore
-        Figure = None  # type: ignore
+import themes
 
 
 def create_dashboard_page(
     host: Any,
     *,
-    matplotlib_available: bool,
     on_refresh: Optional[Callable[[], None]] = None,
     on_view_logs: Optional[Callable[[], None]] = None,
 ) -> QWidget:
     """
     Build the modern dashboard and attach widgets onto ``host``
-    (``stats_labels``, chart canvases, ``jobs_table``, etc.).
+    (``stats_labels``, chart widgets, ``jobs_table``, etc.).
     """
     page = QWidget()
     # Top-level QWidgets are visible by default; hide until reparented into the stack
@@ -75,13 +61,14 @@ def create_dashboard_page(
     # Stat cards
     cards_row = QHBoxLayout()
     cards_row.setSpacing(12)
+    cards_row.setAlignment(Qt.AlignmentFlag.AlignTop)
     host.stat_cards = {}
     host.stats_labels = {}
 
     card_specs = [
         ("total_repos", "Repositories", "repository.svg", "#3b82f6", "Total configured"),
-        ("total_snapshots", "Snapshots", "snapshot.svg", "#22c55e", "Total snapshots"),
-        ("total_size", "Total Size", "storage.svg", "#a855f7", "Of all backups"),
+        ("total_snapshots", "Snapshots", "layers.svg", "#22c55e", "Total snapshots"),
+        ("total_size", "Total Size", "drive.svg", "#a855f7", "Of all backups"),
         ("status", "Status", "health.svg", "#22c55e", "Last backup"),
     ]
     for key, title_text, icon_name, accent, sub in card_specs:
@@ -95,41 +82,30 @@ def create_dashboard_page(
         host.stat_cards[key] = card
         # Back-compat: existing code updates stats_labels[key].setText(...)
         host.stats_labels[key] = card.value_label
-        cards_row.addWidget(card)
+        cards_row.addWidget(card, stretch=1)
     # Map last_backup updates onto status card value + subtitle
     host.stats_labels["last_backup"] = _StatusBridge(host)
     layout.addLayout(cards_row)
 
-    # Charts
-    if matplotlib_available and _MPL and FigureCanvas is not None:
-        charts_row = QHBoxLayout()
-        charts_row.setSpacing(12)
+    # Charts (QPainter — always available)
+    charts_row = QHBoxLayout()
+    charts_row.setSpacing(12)
 
-        size_card = SectionCard("Repository Storage Distribution", parent=page)
-        size_card.setObjectName("chartCard")
-        host.repo_size_canvas = FigureCanvas(Figure(figsize=(5.5, 3.2), dpi=100))
-        host.repo_size_canvas.setMinimumHeight(240)
-        host.repo_size_canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        size_card.body.addWidget(host.repo_size_canvas, stretch=1)
-        charts_row.addWidget(size_card, stretch=1)
+    size_card = SectionCard("Repository Storage Distribution", parent=page)
+    size_card.setObjectName("chartCard")
+    host.repo_size_chart = DonutChart(size_card)
+    host.repo_size_chart.setMinimumHeight(240)
+    size_card.body.addWidget(host.repo_size_chart, stretch=1)
+    charts_row.addWidget(size_card, stretch=1)
 
-        snap_card = SectionCard("Snapshots per Repository", parent=page)
-        snap_card.setObjectName("chartCard")
-        host.snapshot_count_canvas = FigureCanvas(Figure(figsize=(5.5, 3.2), dpi=100))
-        host.snapshot_count_canvas.setMinimumHeight(240)
-        host.snapshot_count_canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        snap_card.body.addWidget(host.snapshot_count_canvas, stretch=1)
-        charts_row.addWidget(snap_card, stretch=1)
+    snap_card = SectionCard("Snapshots per Repository", parent=page)
+    snap_card.setObjectName("chartCard")
+    host.snapshot_count_chart = RoundedBarChart(snap_card)
+    host.snapshot_count_chart.setMinimumHeight(240)
+    snap_card.body.addWidget(host.snapshot_count_chart, stretch=1)
+    charts_row.addWidget(snap_card, stretch=1)
 
-        layout.addLayout(charts_row, stretch=1)
-        # Chart draw is deferred until the page is in the stacked widget (avoids flash).
-    else:
-        # Keep attributes absent; existing code guards with hasattr
-        pass
+    layout.addLayout(charts_row, stretch=1)
 
     # Recent backup jobs table
     jobs_card = SectionCard("Recent Backup Jobs", parent=page)
@@ -143,9 +119,9 @@ def create_dashboard_page(
 
     host.dashboard_jobs_table = QTableWidget()
     host.dashboard_jobs_table.setObjectName("jobsTable")
-    host.dashboard_jobs_table.setColumnCount(6)
+    host.dashboard_jobs_table.setColumnCount(8)
     host.dashboard_jobs_table.setHorizontalHeaderLabels(
-        ["Repository", "Job Name", "Status", "Last Backup", "Snapshot ID", "Schedule"]
+        ["Repository", "Job Name", "Status", "Duration", "Last Backup", "Snapshot ID", "Size", "Schedule"]
     )
     host.dashboard_jobs_table.horizontalHeader().setStretchLastSection(True)
     host.dashboard_jobs_table.horizontalHeader().setSectionResizeMode(
@@ -154,10 +130,20 @@ def create_dashboard_page(
     host.dashboard_jobs_table.horizontalHeader().setSectionResizeMode(
         1, QHeaderView.ResizeMode.Stretch
     )
+    for col in (2, 3, 4, 5, 6):
+        host.dashboard_jobs_table.horizontalHeader().setSectionResizeMode(
+            col, QHeaderView.ResizeMode.ResizeToContents
+        )
+    host.dashboard_jobs_table.horizontalHeader().setSectionResizeMode(
+        7, QHeaderView.ResizeMode.ResizeToContents
+    )
+    host.dashboard_jobs_table.horizontalHeader().setDefaultAlignment(
+        Qt.AlignmentFlag.AlignLeading | Qt.AlignmentFlag.AlignVCenter
+    )
     jobs_header = host.dashboard_jobs_table.horizontalHeader()
     jobs_header.setSectionsClickable(True)
     jobs_header.setSortIndicatorShown(True)
-    jobs_header.setSortIndicator(3, Qt.SortOrder.DescendingOrder)
+    jobs_header.setSortIndicator(4, Qt.SortOrder.DescendingOrder)
     host.dashboard_jobs_table.setSortingEnabled(True)
     host.dashboard_jobs_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     host.dashboard_jobs_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -166,11 +152,18 @@ def create_dashboard_page(
     host.dashboard_jobs_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     host.dashboard_jobs_table.verticalHeader().setVisible(False)
     host.dashboard_jobs_table.setShowGrid(False)
+    host.dashboard_jobs_table.setWordWrap(False)
+    host.dashboard_jobs_table.setTextElideMode(Qt.TextElideMode.ElideNone)
     host.dashboard_jobs_table.setMinimumHeight(160)
-    host.dashboard_jobs_table.verticalHeader().setDefaultSectionSize(44)
+    host.dashboard_jobs_table.verticalHeader().setDefaultSectionSize(48)
     host.dashboard_jobs_table.setMouseTracking(True)
     host.dashboard_jobs_table.viewport().setMouseTracking(True)
-    host._jobs_table_hover = _JobsRowHover(host.dashboard_jobs_table)
+    host._jobs_table_hover = TableRowHover(
+        host.dashboard_jobs_table,
+        nudge_foreground=True,
+        paint_background=False,
+        lighten_amount=0.08,
+    )
 
     # Rounded inset shell so header + rows share one bordered box (mock style)
     jobs_shell = QFrame()
@@ -189,85 +182,6 @@ def create_dashboard_page(
     return page
 
 
-class _JobsSortItem(QTableWidgetItem):
-    """Table cell that sorts by UserRole when set (e.g. timestamps)."""
-
-    def __lt__(self, other: QTableWidgetItem) -> bool:  # type: ignore[override]
-        if other is None:
-            return False
-        left = self.data(Qt.ItemDataRole.UserRole)
-        right = other.data(Qt.ItemDataRole.UserRole)
-        if left is not None and right is not None:
-            try:
-                return left < right
-            except TypeError:
-                pass
-        return super().__lt__(other)
-
-
-class _JobsRowHover(QObject):
-    """Highlight the full table row on hover (Qt stylesheets are cell-only)."""
-
-    def __init__(self, table: QTableWidget):
-        super().__init__(table)
-        self._table = table
-        self._row = -1
-        self._hover = QBrush(QColor(255, 255, 255, 16))
-        table.viewport().installEventFilter(self)
-        table.destroyed.connect(self._on_table_destroyed)
-
-    def _on_table_destroyed(self, *_args) -> None:
-        self._table = None
-        self._row = -1
-
-    def set_hover_brush(self, brush: QBrush) -> None:
-        self._hover = brush
-
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        table = self._table
-        if table is None:
-            return False
-        try:
-            viewport = table.viewport()
-        except RuntimeError:
-            self._table = None
-            return False
-        if obj is not viewport:
-            return False
-        et = event.type()
-        if et == QEvent.Type.MouseMove:
-            index = table.indexAt(event.position().toPoint())
-            row = index.row() if index.isValid() else -1
-            if row != self._row:
-                self._apply(row)
-        elif et == QEvent.Type.Leave:
-            self._apply(-1)
-        return False
-
-    def _apply(self, row: int) -> None:
-        table = self._table
-        if table is None:
-            return
-        try:
-            cols = table.columnCount()
-        except RuntimeError:
-            self._table = None
-            return
-        prev = self._row
-        self._row = row
-        for r in (prev, row):
-            if r < 0:
-                continue
-            for c in range(cols):
-                item = table.item(r, c)
-                if item is None:
-                    continue
-                if r == row and not item.isSelected():
-                    item.setBackground(self._hover)
-                else:
-                    item.setBackground(QBrush())
-
-
 class _StatusBridge:
     """Adapt last_backup string updates onto the Status stat card."""
 
@@ -275,7 +189,7 @@ class _StatusBridge:
         self._host = host
 
     def setText(self, text: str) -> None:  # noqa: N802 — Qt naming
-        from ui.dashboard import format_relative_time
+        from ui.dashboard import format_relative_time, format_relative_time_short
 
         card = self._host.stat_cards.get("status")
         if not card:
@@ -288,7 +202,9 @@ class _StatusBridge:
                 card.set_subtitle("Refreshing…")
             return
         card.set_value("Healthy")
-        card.set_subtitle(f"Last Backup: {format_relative_time(text)}")
+        short = format_relative_time_short(text)
+        full = format_relative_time(text)
+        card.set_subtitle(f"Last Backup: {short}", tooltip=full)
 
 
 def _parse_timestamp(value: str):
@@ -359,19 +275,48 @@ def format_relative_time(value: str) -> str:
     return f"{relative} ({absolute})"
 
 
+def format_relative_time_short(value: str) -> str:
+    """Relative time only (no absolute timestamp) for compact table cells."""
+    full = format_relative_time(value)
+    if full in ("—", "Never") or " ago" not in full:
+        return full
+    return full.split(" (", 1)[0]
+
+
 def populate_jobs_table(host: Any) -> None:
     """Fill dashboard jobs table from settings_manager backup_jobs."""
     table = getattr(host, "dashboard_jobs_table", None)
     if table is None or not hasattr(host, "settings_manager"):
         return
     jobs = host.settings_manager.get("backup_jobs") or []
+    repositories = host.settings_manager.get("repositories") or []
+    if themes.ensure_repo_colors(repositories):
+        host.settings_manager.set("repositories", repositories)
+        host.settings_manager.save_settings()
     repo_last = getattr(host, "_repo_last_backup", {}) or {}
     repo_snaps = getattr(host, "_repo_last_snapshot", {}) or {}
+    repo_sizes = getattr(host, "_repo_sizes", {}) or {}
+
+    latest_runs: dict = {}
+    try:
+        import history_db
+
+        db_path = None
+        if hasattr(host, "_history_db_path"):
+            try:
+                db_path = host._history_db_path()
+            except Exception:
+                db_path = None
+        names = [j.get("name") for j in jobs if j.get("name")]
+        latest_runs = history_db.get_latest_job_runs_map(names, db_path=db_path)
+    except Exception:
+        latest_runs = {}
+
     header = table.horizontalHeader()
     sort_col = header.sortIndicatorSection()
     sort_order = header.sortIndicatorOrder()
     if sort_col < 0:
-        sort_col = 3
+        sort_col = 4
         sort_order = Qt.SortOrder.DescendingOrder
     # Reset row hover before rebuilding cells
     hover = getattr(host, "_jobs_table_hover", None)
@@ -379,8 +324,32 @@ def populate_jobs_table(host: Any) -> None:
         hover._apply(-1)
     was_sorting = table.isSortingEnabled()
     table.setSortingEnabled(False)
+    table.clearContents()
     table.setRowCount(len(jobs))
-    status_rank = {"Success": 3, "Scheduled": 2, "Ready": 1}
+    status_rank = {"Success": 4, "Failed": 3, "Scheduled": 2, "Ready": 1}
+    left = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+    try:
+        theme_id = themes.resolve_theme_id(host.settings_manager.get("theme"))
+        app_theme = themes.get_app_theme(theme_id)
+        # Soft secondary text: theme muted, nudged slightly toward primary for readability.
+        muted = themes._mix_hex(app_theme.muted, app_theme.text, 0.18)
+    except Exception:
+        muted = "#9aa3b2"
+    muted_color = QColor(muted)
+
+    def _format_size(nbytes: int) -> str:
+        fmt = getattr(host, "format_bytes", None)
+        if callable(fmt) and nbytes > 0:
+            return fmt(nbytes)
+        if nbytes <= 0:
+            return "—"
+        value = float(nbytes)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if value < 1024.0:
+                return f"{value:.2f} {unit}"
+            value /= 1024.0
+        return f"{value:.2f} PB"
+
     for row, job in enumerate(jobs):
         repos = job.get("repositories") or []
         if not repos and job.get("repository"):
@@ -398,11 +367,13 @@ def populate_jobs_table(host: Any) -> None:
         snap_full = job.get("last_snapshot_full_id") or ""
         best_live = ""
         best_live_snap = None
+        size_bytes = 0
         for name in repos:
             stamp = repo_last.get(name) or ""
             if stamp and (not best_live or stamp > best_live):
                 best_live = stamp
                 best_live_snap = repo_snaps.get(name)
+            size_bytes = max(size_bytes, int(repo_sizes.get(name) or 0))
         if best_live and (not last_run or best_live > str(last_run)):
             last_run = best_live
         if best_live_snap and best_live_snap.get("short_id"):
@@ -411,31 +382,107 @@ def populate_jobs_table(host: Any) -> None:
         if not last_run:
             last_run = "—"
         snap_text = snap_short or "—"
+        size_text = _format_size(size_bytes)
+
+        job_name = job.get("name", "—") or "—"
+        last_hist = latest_runs.get(job_name)
+        duration_text = "—"
+        duration_sec = -1.0
+        if last_hist is not None:
+            try:
+                import history_db as _history_db
+
+                duration_text = _history_db.format_duration(last_hist.get("duration_sec"))
+            except Exception:
+                duration_text = "—"
+            try:
+                duration_sec = float(last_hist.get("duration_sec"))
+            except (TypeError, ValueError):
+                duration_sec = -1.0
 
         status = "Scheduled" if schedule.get("enabled") else "Ready"
-        if last_run and last_run != "—":
-            status = "Success"
-        last_display = format_relative_time(str(last_run)) if last_run != "—" else "Never"
+        if last_hist is not None:
+            status = "Success" if last_hist.get("success") else "Failed"
+        last_display = (
+            format_relative_time_short(str(last_run)) if last_run != "—" else "Never"
+        )
         last_sort = 0.0
         if last_run and last_run != "—":
             parsed = _parse_timestamp(str(last_run))
             if parsed is not None:
                 last_sort = parsed.timestamp()
 
-        values = [repo_text, job.get("name", "—"), status, last_display, snap_text, sched_text]
+        # Repo cell text is hidden under the icon widget to avoid ghosted/ellided text.
+        values = [
+            "",
+            job_name,
+            status,
+            duration_text,
+            last_display,
+            snap_text,
+            size_text,
+            sched_text,
+        ]
         for col, value in enumerate(values):
-            item = _JobsSortItem(value)
-            if col == 2:
+            item = SortableTableItem(value)
+            # Force leading alignment (stylesheet text-align is unreliable on Fusion)
+            item.setTextAlignment(
+                Qt.AlignmentFlag.AlignLeading | Qt.AlignmentFlag.AlignVCenter
+            )
+            if col == 0:
+                item.setData(Qt.ItemDataRole.UserRole, repo_text.lower())
+            elif col == 2:
                 item.setData(Qt.ItemDataRole.UserRole, status_rank.get(status, 0))
             elif col == 3:
+                item.setData(Qt.ItemDataRole.UserRole, duration_sec)
+            elif col == 4:
                 item.setData(Qt.ItemDataRole.UserRole, last_sort)
+            elif col == 6:
+                item.setData(Qt.ItemDataRole.UserRole, size_bytes)
+            if col == 1:
+                item.setForeground(muted_color)
+                item.setData(TableRowHover.BASE_FG_ROLE, muted)
+                item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
             if col == 2 and status == "Success":
                 item.setForeground(Qt.GlobalColor.green)
-            if col == 3 and last_run and last_run != "—":
+                item.setData(TableRowHover.LOCKED_FG_ROLE, "#22c55e")
+            elif col == 2 and status == "Failed":
+                item.setForeground(QColor("#ef4444"))
+                item.setData(TableRowHover.LOCKED_FG_ROLE, "#ef4444")
+            if col == 3:
+                item.setForeground(muted_color)
+                item.setData(TableRowHover.BASE_FG_ROLE, muted)
+                item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
+            if col == 4 and last_run and last_run != "—":
+                item.setForeground(muted_color)
+                item.setData(TableRowHover.BASE_FG_ROLE, muted)
+                item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
                 item.setToolTip(str(last_run))
-            if col == 4 and snap_full:
+            elif col == 4:
+                item.setForeground(muted_color)
+                item.setData(TableRowHover.BASE_FG_ROLE, muted)
+                item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
+            if col == 5 and snap_full:
                 item.setToolTip(str(snap_full))
+            if col == 6:
+                item.setForeground(muted_color)
+                item.setData(TableRowHover.BASE_FG_ROLE, muted)
+                item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
+            if col == 7:
+                item.setForeground(muted_color)
+                item.setData(TableRowHover.BASE_FG_ROLE, muted)
+                item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
             table.setItem(row, col, item)
+
+        table.setCellWidget(
+            row,
+            0,
+            make_repo_icon_cell(
+                list(repos),
+                lambda n, repos=repositories: themes.repo_color_for_name(n, repos),
+                parent=table,
+            ),
+        )
     table.setSortingEnabled(was_sorting)
     if was_sorting:
         table.sortItems(sort_col, sort_order)

@@ -4,13 +4,22 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 ## What's New in Recent Updates
 
+### SQLite History Store ✨ NEW
+- 🗄️ **Job & dashboard history**: Append-only SQLite database (`restic_history.db`) beside `restic_settings.json`
+- ⏱️ **Run duration**: Every GUI, CLI (`--run-job`), and Windows scheduled backup records start/finish, duration, success/fail, and a short error summary
+- 📊 **Recent Backup Jobs**: New **Duration** column (`HH:MM:SS`); **Status** comes from the last recorded run (Success / Failed / Scheduled / Ready) — failed runs no longer look like Success
+- 💾 **Dashboard cache**: Refresh samples per-repo size/snapshot counts into `repo_stats` and upserts a `dashboard_cache` blob so the next launch paints cards and charts immediately
+- 🔁 **Scheduled Windows tasks**: Generated PowerShell scripts call `python restic_manager.py --record-job-run …` after restic exits (no SQLite in PowerShell)
+- 🛠️ **Stdlib only**: Uses Python’s built-in `sqlite3` (`history_db.py`) — no new package dependencies
+- 📌 **Settings stay JSON**: Config remains in `restic_settings.json`; history/time-series data lives in the DB
+
 ### Automated Backup Scheduling ✨ NEW
 - 📅 **Task Scheduler Integration**: Create scheduled tasks to automatically run backup jobs
 - 🪟 **Windows Task Scheduler**: One-click scheduled backup creation with `schtasks.exe`
 - ⏰ **Flexible Scheduling**: Choose Daily, Weekly, or Monthly backup runs
 - 🕐 **Custom Time Selection**: Pick exact time for backups (e.g., 2:00 AM for off-hours)
 - 📆 **Day Selection**: Specify which days to run (Weekly) or day of month (Monthly)
-- ⚙️ **Independent Operation**: Scheduled tasks run restic directly - no Python/GUI needed
+- ⚙️ **Independent Operation**: Scheduled tasks run restic directly; a short `--record-job-run` call logs history afterward
 - 🔒 **Secure Password Storage**: Uses Windows DPAPI to encrypt repository passwords
 - 📜 **Auto-Generated Scripts**: PowerShell scripts with complete restic commands
 - 🔐 **User-Specific Encryption**: Password files can only be decrypted by the Windows user who created them
@@ -77,7 +86,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 🚫 **No External Dependencies**: Works with standard restic installation - no WinFsp or FUSE required
 
 ### Performance & UX Improvements
-- ⚡ **Smart Dashboard Caching**: Dashboard loads instantly after first view - no more waiting when switching menus!
+- ⚡ **SQLite Dashboard Cache**: After the first Refresh, cards and charts restore from `restic_history.db` on startup (subtitle shows “Last refreshed: …”)
 - 🔓 **Non-Modal Backup Progress**: Continue using the app while backups run in the background
 - 🎚️ **Configurable Timeouts**: Set backup timeouts in hours (not seconds!) per job - no more 1-hour limit
 - 📜 **Scrollable Backup Dialog**: All options neatly organized in a scrollable interface
@@ -93,15 +102,15 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - GUI backups use optional `winotify` package
   - Works even when app is minimized
 
-### Dashboard Visual Charts ✨ NEW
-- 📊 **Interactive Charts**: Visual representation of repository data (optional matplotlib package)
-  - **Repository Storage Distribution**: Pie chart showing space usage across all repositories
-  - **Snapshot Distribution**: Bar chart displaying snapshot counts per repository
-  - **Real-time Updates**: Charts refresh automatically when clicking "Refresh Dashboard"
-  - **Color-Coded**: Professional color schemes for easy data interpretation
-  - **Responsive Design**: Charts resize with window and display human-readable sizes
-  - **No Data Handling**: Gracefully handles repositories with no data
-  - **Optional Feature**: Works without matplotlib installed (charts section hidden if not available)
+### Dashboard Visual Charts
+- 📊 **Interactive Charts**: Built-in QPainter charts (no extra chart package)
+  - **Repository Storage Distribution**: Doughnut chart with centre total and side legend
+  - **Snapshot Distribution**: Rounded gradient bars per repository
+  - **Real-time Updates**: Charts refresh when clicking "Refresh Dashboard"
+  - **Colour-Coded**: Deterministic per-repository colours shared with the jobs table
+  - **Startup from cache**: Last refresh is restored from SQLite so charts are not blank after relaunch
+  - **Empty State**: Clear prompt until the first successful refresh (or until cache exists)
+  - **Recent Backup Jobs**: Duration + accurate last-run Status from the history database
 
 ### Advanced Repository Verification & Maintenance ✨ NEW
 - 🔍 **Flexible Verification Levels**: Choose the right check for your needs
@@ -145,6 +154,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 #### Core Infrastructure
 - **Settings Manager**: JSON-based settings storage (restic_settings.json)
+- **History Database**: SQLite store (`restic_history.db`) for job runs, repo stats samples, and dashboard cache (`history_db.py`)
 - **License System**: Machine-bound license key activation (NEW v1.3.0)
   - Cross-platform machine ID generation (Windows, Linux, macOS)
   - HMAC-SHA256 cryptographic signatures prevent forgery
@@ -190,13 +200,13 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 - **8 Main Pages**:
   1. **Dashboard** - Statistics, repository stats, and recent activity overview
-     - **Smart Caching**: Dashboard loads instantly after first view
-     - **Manual Refresh**: "Refresh Dashboard" button to update stats on demand
-     - **Visual Charts** ✨ NEW: Interactive charts showing repository data (requires matplotlib)
-       - Repository storage distribution (pie chart)
+     - **SQLite cache**: Cards/charts restore from last refresh on startup
+     - **Manual Refresh**: "Refresh Dashboard" updates live stats and rewrites the cache
+     - **Visual Charts**: Built-in doughnut + bar charts for repository storage and snapshots
+       - Repository storage distribution (donut chart)
        - Snapshot counts per repository (bar chart)
        - Real-time updates with dashboard refresh
-     - No delays when switching between menus
+     - **Recent Backup Jobs**: Duration, Status (from last job run), Size, Last Backup, Schedule
   2. Repositories - Manage backup repositories
   3. Snapshots - Browse, view, restore, and manage snapshots
   4. Restore Files - Restore from backups
@@ -441,7 +451,8 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - **Pause After Completion**: Keep window open after backup finishes for result review (optional)
 - **Windows Task Scheduler Integration**:
   - **One-Click Creation**: Creates scheduled task via `schtasks.exe` command
-  - **Independent Execution**: Generated PowerShell scripts run restic directly (no Python/GUI needed)
+  - **Independent Execution**: Generated PowerShell scripts run restic directly
+  - **History recording**: After restic exits, scripts call `restic_manager.py --record-job-run` so duration/success land in SQLite (brief Python invoke; backup itself still uses restic)
   - **Auto-Generated Scripts**: Complete backup command in PowerShell script format
   - **Script Storage**: Scripts saved in `scheduled_tasks/` folder with job name
   - **Secure Password Storage**: Uses Windows DPAPI to encrypt repository passwords
@@ -563,14 +574,13 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
    - NOTE: **Backup scheduling is now implemented!** See Schedule section in Backup Job Editor
    - NOTE: **Retention scheduling also implemented!** See Retention Policy page for automated cleanup scheduling
 
-6. **Enhanced Dashboard** (Partially Complete)
-   - ✅ Smart caching for instant loading
-   - ✅ Manual refresh button for on-demand updates
-   - Calculate total repositories
-   - Count total snapshots across all repos
-   - Calculate total backup size
-   - Show last backup time
-   - Repository health status indicators
+6. **Enhanced Dashboard** ✅ MOSTLY COMPLETE
+   - ✅ SQLite dashboard cache (startup paint without Refresh)
+   - ✅ Manual refresh button for on-demand updates + repo_stats samples
+   - ✅ Total repositories / snapshots / size / last backup
+   - ✅ Recent Backup Jobs with Duration and accurate Status
+   - Repository health status indicators (follow-up)
+   - Trend charts over time (schema ready via `repo_stats` / `job_runs`)
 
 #### Low Priority
 
@@ -586,8 +596,12 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 ```
 restic_manager.py              # Main application
-restic_settings.json           # Settings (auto-created)
+history_db.py                  # SQLite history helpers (job runs, repo stats, dashboard cache)
+restic_settings.json           # Settings / config (auto-created)
+restic_history.db              # Job history + dashboard cache (auto-created beside settings)
 license.key                    # License key (created after activation)
+scheduled_tasks/               # Generated Windows backup PowerShell scripts + DPAPI password files
+ui/                            # Dashboard, charts, cards, sidebar, repositories, etc.
 
 # License System (v1.3.0)
 license_generator.py           # CLI license generator (KEEP SECURE!)
@@ -598,7 +612,7 @@ LICENSE_SYSTEM.md              # Complete license documentation
 LICENSE_QUICKSTART.md          # Quick start for license system
 
 # Documentation
-RESTIC_MANAGER_README.md       # This file
+README.md                      # This file
 ```
 
 **Security Note:** The `license_generator.py` and `license_generator_gui.py` files should be kept secure and NOT distributed to end users. They are administrator/developer tools only.
@@ -613,12 +627,9 @@ Already installed in your environment:
 Optional (for Windows toast notifications):
 - winotify (for backup completion notifications on Windows)
 
-Optional (for dashboard visual charts):
-- matplotlib (for repository size and snapshot distribution charts)
-
 To install optional packages:
 ```powershell
-.\env\Scripts\python.exe -m pip install winotify matplotlib
+.\env\Scripts\python.exe -m pip install winotify
 ```
 
 Additional requirement:
@@ -638,6 +649,18 @@ To install cryptography:
 # Run the application
 python restic_manager.py
 ```
+
+### CLI helpers (no GUI)
+
+```powershell
+# Run a backup job by name (cron / automation)
+python restic_manager.py --run-job "My Job Name"
+
+# Record a completed run into restic_history.db (used by Windows scheduled scripts)
+python restic_manager.py --record-job-run "My Job Name" --repo-name "MyRepo" --duration 120 --success 1 --exit-code 0 --source scheduled
+```
+
+Job runs from the GUI, `--run-job`, and `--record-job-run` all write to the same history database.
 
 ## Configuration
 
@@ -746,7 +769,7 @@ You can create scheduled tasks to run backup jobs automatically:
 - Scheduled tasks run independently - no need to keep the app open
 - Repository passwords are securely encrypted using Windows DPAPI
 - PowerShell scripts are generated in `scheduled_tasks/` folder
-- Tasks run restic directly (no Python/GUI overhead)
+- Tasks run restic directly; after exit they briefly invoke Python `--record-job-run` to log duration/success into `restic_history.db`
 - Multi-repository jobs: Only the first repository is backed up via schedule
 - **Pause after completion**: Keeps window open to review success/failure
 
@@ -804,9 +827,11 @@ If you accidentally backed up to the wrong repository:
 ### Viewing Repository Stats
 
 1. Click **Dashboard** in the sidebar
-2. **Fast Loading**: Dashboard shows cached data instantly
-3. Under **Repository Statistics**, select a repository
-4. Click **Refresh Stats** to see comprehensive repository information:
+2. **Fast Loading**: After at least one Refresh, cards/charts restore from `restic_history.db` on the next launch
+3. Click **Refresh Dashboard** (title bar) to update live stats and rewrite the cache
+4. **Recent Backup Jobs** shows Duration and last-run Status from the history DB
+5. Under **Repository Statistics**, select a repository
+6. Click **Refresh Stats** to see comprehensive repository information:
    - Snapshots count
    - Last backup date
    - Total files count
@@ -1101,9 +1126,10 @@ def prune_repository(self):
 
 ## Key Design Decisions
 
-1. **Settings Storage**: Simple JSON file (similar to your client_gui_full.py)
+1. **Settings Storage**: Simple JSON file for configuration only
    - Added `backup_jobs` array for persistent job storage
    - Each job stores full configuration (paths, tags, excludes, advanced options)
+   - **History / time-series** (durations, failures, dashboard samples) live in SQLite `restic_history.db` via `history_db.py`
 
 2. **Password Security**: Fernet encryption with PBKDF2HMAC key derivation
    - Machine-specific encryption (prevents password portability across machines)

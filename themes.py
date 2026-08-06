@@ -582,6 +582,11 @@ def build_stylesheet(theme: AppTheme) -> str:
     # Theme-tinted lifts (not flat grey) for translucent header / shell feel.
     header_wash = t.accent_soft
     shell_bg = _mix_hex(t.surface, t.bg, 0.35)
+    # Soft jobs-row selection (accent_soft was far too loud).
+    jobs_sel = soft_hex_rgba(t.accent, 0.10) if not light else soft_hex_rgba(t.accent, 0.08)
+    jobs_header_wash = _mix_hex(shell_bg, t.surface, 0.55)
+    jobs_header_wash = _mix_hex(jobs_header_wash, t.accent, 0.04)
+    jobs_header_text = _mix_hex(t.muted, t.bg, 0.25)
     # Thin overlay-style scrollbars (no system chrome / arrow buttons).
     sb_track = "transparent"
     sb_handle = "rgba(0, 0, 0, 0.22)" if light else "rgba(255, 255, 255, 0.18)"
@@ -1995,17 +2000,25 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: {t.sidebar};
             border-right: 1px solid {t.border};
         }}
+        #navHeaderRow {{
+            background: transparent;
+            border: none;
+        }}
+        #navLogo {{
+            background: transparent;
+            border: none;
+        }}
         #navBrand {{
             color: {t.text};
             font-size: 15px;
             font-weight: 700;
             letter-spacing: 0.2px;
-            padding: 0 4px;
+            padding: 2px 0 0 0;
         }}
         #navVersion {{
             color: {t.muted};
             font-size: 11px;
-            padding: 0 4px 4px 4px;
+            padding: 2px 0 0 0;
         }}
         #navFooter {{
             color: {t.muted};
@@ -2033,9 +2046,9 @@ def build_stylesheet(theme: AppTheme) -> str:
             border-radius: 8px;
             padding: 8px 10px;
             text-align: left;
-            font-size: 13px;
+            font-size: 15px;
             font-weight: 500;
-            min-height: 36px;
+            min-height: 38px;
         }}
         QPushButton#navBtn:hover {{
             background-color: {hover};
@@ -2051,7 +2064,7 @@ def build_stylesheet(theme: AppTheme) -> str:
         QPushButton#navBtn:pressed {{
             background-color: {t.accent_soft};
         }}
-        #contentArea, #dashboardPage {{
+        #contentArea, #dashboardPage, #repositoriesPage, #snapshotsPage {{
             background-color: {t.bg};
         }}
         #pageTitle {{
@@ -2092,14 +2105,71 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: transparent;
             border: none;
         }}
+        QPushButton#dangerLinkBtn {{
+            background-color: transparent;
+            color: {t.danger};
+            border: none;
+            padding: 4px 2px;
+            font-size: 12px;
+            font-weight: 600;
+            min-height: 0;
+        }}
+        QPushButton#dangerLinkBtn:hover {{
+            color: {t.text};
+            background-color: transparent;
+            border: none;
+        }}
+        QPushButton#dangerBtn {{
+            background-color: transparent;
+            color: {t.danger};
+            border: 1px solid {t.danger};
+            padding: 3px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            min-width: 72px;
+            min-height: 22px;
+        }}
+        QPushButton#dangerBtn:hover {{
+            background-color: {t.danger};
+            color: #eef3f8;
+            border-color: {t.danger};
+        }}
+        #repoActions {{
+            background: transparent;
+            border: none;
+        }}
+        #repoNameCell, #repoBadgesCell, #repoIconCell {{
+            background: transparent;
+            border: none;
+        }}
+        #repoNameLabel {{
+            color: {t.text};
+            background: transparent;
+            border: none;
+            font-size: 12px;
+        }}
+        #repoSwatch {{
+            border: none;
+            border-radius: 3px;
+        }}
+        #repoIconChip {{
+            border: none;
+            border-radius: 8px;
+        }}
+        #repoBadge {{
+            background: transparent;
+            border: none;
+        }}
         #statCard {{
             background-color: {t.surface};
             border: 1px solid {t.border};
-            border-radius: 12px;
+            border-radius: 14px;
         }}
         #statCardIcon {{
             background-color: {t.accent_soft};
-            border-radius: 10px;
+            border: none;
+            border-radius: 14px;
         }}
         #statCardValue {{
             color: {t.text};
@@ -2126,12 +2196,12 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 15px;
             font-weight: 600;
         }}
-        #jobsTableShell {{
+        #jobsTableShell, #repoTableShell, #snapshotsTableShell {{
             background-color: {shell_bg};
             border: 1px solid {t.border};
             border-radius: 10px;
         }}
-        QTableWidget#jobsTable {{
+        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable {{
             background-color: transparent;
             border: none;
             border-radius: 0;
@@ -2142,31 +2212,45 @@ def build_stylesheet(theme: AppTheme) -> str:
             selection-background-color: {t.accent_soft};
             selection-color: {t.text};
         }}
-        QTableWidget#jobsTable::item {{
+        QTableWidget#jobsTable {{
+            selection-background-color: {jobs_sel};
+            selection-color: {t.muted};
+        }}
+        QTableWidget#jobsTable::item, QTableWidget#repoTable::item, QTableWidget#snapshotsTable::item {{
             background-color: transparent;
             padding: 10px 8px;
             border: none;
             border-bottom: 1px solid {t.border};
+            text-align: left;
+        }}
+        QTableWidget#jobsTable::item {{
+            /* Fusion adds a small item inset; use 4px so text lines up with 8px header padding */
+            padding: 8px 8px 8px 4px;
         }}
         QTableWidget#jobsTable::item:selected {{
+            background-color: {jobs_sel};
+            border-bottom: 1px solid {t.border};
+        }}
+        QTableWidget#repoTable::item:selected, QTableWidget#snapshotsTable::item:selected {{
             background-color: {t.accent_soft};
             color: {t.text};
             border-bottom: 1px solid {t.border};
         }}
-        QTableWidget#jobsTable QHeaderView {{
+        QTableWidget#jobsTable QHeaderView, QTableWidget#repoTable QHeaderView, QTableWidget#snapshotsTable QHeaderView {{
             background-color: transparent;
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
         }}
         QTableWidget#jobsTable QHeaderView::section {{
-            background-color: {header_wash};
-            color: {t.muted};
+            background-color: {jobs_header_wash};
+            color: {jobs_header_text};
             border: none;
             border-bottom: 1px solid {t.border};
             border-right: none;
-            padding: 10px 8px;
-            font-size: 11px;
+            padding: 10px 8px 10px 8px;
+            font-size: 12px;
             font-weight: 600;
+            text-align: left;
         }}
         QTableWidget#jobsTable QHeaderView::section:hover {{
             color: {t.text};
@@ -2179,9 +2263,136 @@ def build_stylesheet(theme: AppTheme) -> str:
             border-top-right-radius: 10px;
         }}
         QTableWidget#jobsTable QTableCornerButton::section {{
+            background-color: {jobs_header_wash};
+            border: none;
+            border-top-left-radius: 10px;
+        }}
+        QWidget#repoIconCell {{
+            background: transparent;
+            margin: 0;
+            padding: 0;
+        }}
+        QTableWidget#jobsTable QLabel#repoNameLabel {{
+            background: transparent;
+            padding: 0;
+            margin: 0;
+        }}
+        QTableWidget#repoTable QHeaderView::section, QTableWidget#snapshotsTable QHeaderView::section {{
+            background-color: {header_wash};
+            color: {t.muted};
+            border: none;
+            border-bottom: 1px solid {t.border};
+            border-right: none;
+            padding: 10px 8px;
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        QTableWidget#repoTable QHeaderView::section:hover, QTableWidget#snapshotsTable QHeaderView::section:hover {{
+            color: {t.text};
+            background-color: {hover};
+        }}
+        QTableWidget#repoTable QHeaderView::section:first, QTableWidget#snapshotsTable QHeaderView::section:first {{
+            border-top-left-radius: 10px;
+        }}
+        QTableWidget#repoTable QHeaderView::section:last, QTableWidget#snapshotsTable QHeaderView::section:last {{
+            border-top-right-radius: 10px;
+        }}
+        QTableWidget#repoTable QTableCornerButton::section, QTableWidget#snapshotsTable QTableCornerButton::section {{
             background-color: {header_wash};
             border: none;
             border-top-left-radius: 10px;
+        }}
+        QTextEdit#snapshotDetails {{
+            background-color: transparent;
+            border: none;
+            border-radius: 0;
+            color: {t.text};
+            padding: 0;
+            font-size: 12px;
+            min-height: 0px;
+            max-height: 16777215px;
+        }}
+        #browseMetaStrip {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        #browseMetaLabel {{
+            color: {t.muted};
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        #browseMetaValue {{
+            color: {t.text};
+            font-size: 13px;
+        }}
+        QTreeWidget#browseFileTree {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+            color: {t.text};
+            outline: none;
+            alternate-background-color: transparent;
+            show-decoration-selected: 1;
+        }}
+        QTreeWidget#browseFileTree::item {{
+            padding: 4px 6px;
+            border: none;
+            min-height: 24px;
+        }}
+        QTreeWidget#browseFileTree::item:selected {{
+            background-color: {t.accent_soft};
+            color: {t.text};
+        }}
+        QTreeWidget#browseFileTree::item:hover {{
+            background-color: {hover};
+        }}
+        QTreeWidget#browseFileTree QHeaderView::section {{
+            background-color: {header_wash};
+            color: {t.muted};
+            border: none;
+            border-bottom: 1px solid {t.border};
+            padding: 8px 6px;
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        QLineEdit#browseSearch {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+            padding: 6px 10px;
+            color: {t.text};
+        }}
+        QLineEdit#browseSearch:focus {{
+            border-color: {t.accent};
+        }}
+        QPlainTextEdit#diffOutput {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+            color: {t.text};
+            padding: 10px;
+            font-size: 12px;
+        }}
+        #diffStatAdded {{
+            color: #3dd68c;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #diffStatModified {{
+            color: #e8b84a;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #diffStatRemoved {{
+            color: {t.danger};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #copyNote {{
+            color: #e8b84a;
+            font-size: 12px;
+            padding-top: 4px;
         }}
         /* Title lives inside the frame — Fusion clips border-straddling titles. */
         QGroupBox {{
@@ -2384,7 +2595,7 @@ theme_text_colors = {
 
 
 def get_chart_colors(theme: str):
-    """Matplotlib chart colors derived from the active AppTheme."""
+    """Dashboard chart chrome colours derived from the active AppTheme."""
     t = get_app_theme(resolve_theme_id(theme))
     is_light = _hex_luminance(t.bg) > 0.55
     return {
@@ -2398,6 +2609,98 @@ def get_chart_colors(theme: str):
         "surface": t.surface,
         "muted": t.muted,
     }
+
+
+# Fixed palette for repository identity (Grafana-style; not user-configurable).
+REPO_COLOR_PALETTE: tuple[str, ...] = (
+    "#3b82f6",  # blue
+    "#f97316",  # orange
+    "#ef4444",  # red
+    "#06b6d4",  # cyan
+    "#22c55e",  # green
+    "#a855f7",  # purple
+    "#eab308",  # yellow
+    "#ec4899",  # pink
+    "#14b8a6",  # teal
+    "#8b5cf6",  # violet
+    "#f59e0b",  # amber
+    "#64748b",  # slate
+)
+
+
+def soft_hex_rgba(hex_color: str, alpha: float = 0.18) -> str:
+    """Return an rgba() stylesheet color from a hex accent."""
+    c = _parse_hex_color(hex_color) or QColor("#3b82f6")
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha:.2f})"
+
+
+def _normalize_repo_hex(value: str | None) -> str | None:
+    c = _parse_hex_color(value or "")
+    if c is None:
+        return None
+    return f"#{c.red():02x}{c.green():02x}{c.blue():02x}"
+
+
+def _palette_index_for_name(name: str) -> int:
+    import hashlib
+
+    digest = hashlib.md5((name or "").encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % len(REPO_COLOR_PALETTE)
+
+
+def ensure_repo_colors(repositories: list | None) -> bool:
+    """Assign missing ``color`` values on repository dicts. Returns True if changed."""
+    if not repositories:
+        return False
+
+    used: set[str] = set()
+    for repo in repositories:
+        if not isinstance(repo, dict):
+            continue
+        existing = _normalize_repo_hex(repo.get("color"))
+        if existing:
+            used.add(existing.lower())
+
+    changed = False
+    for repo in repositories:
+        if not isinstance(repo, dict):
+            continue
+        existing = _normalize_repo_hex(repo.get("color"))
+        if existing:
+            if repo.get("color") != existing:
+                repo["color"] = existing
+                changed = True
+            continue
+
+        name = str(repo.get("name") or "")
+        start = _palette_index_for_name(name)
+        chosen = None
+        for offset in range(len(REPO_COLOR_PALETTE)):
+            candidate = REPO_COLOR_PALETTE[(start + offset) % len(REPO_COLOR_PALETTE)]
+            if candidate.lower() not in used:
+                chosen = candidate
+                break
+        if chosen is None:
+            chosen = REPO_COLOR_PALETTE[start]
+        repo["color"] = chosen
+        used.add(chosen.lower())
+        changed = True
+    return changed
+
+
+def repo_color_for_name(name: str, repositories: list | None = None) -> str:
+    """Return the stored colour for a repository name, or a stable palette fallback."""
+    key = (name or "").strip()
+    if repositories:
+        for repo in repositories:
+            if not isinstance(repo, dict):
+                continue
+            if (repo.get("name") or "").strip() == key:
+                stored = _normalize_repo_hex(repo.get("color"))
+                if stored:
+                    return stored
+                break
+    return REPO_COLOR_PALETTE[_palette_index_for_name(key)]
 
 
 STYLESHEET_SCROLL = ""  # Scrollbars are included in build_stylesheet().

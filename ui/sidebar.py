@@ -39,18 +39,20 @@ class NavSidebar(QFrame):
     def __init__(
         self,
         *,
-        app_name: str = "Restic Manager",
+        app_name: str = "Restic Backup Manager",
         version: str = "",
         year: str = "",
         muted: str = "#8b95a5",
+        accent: str = "#5a8cc8",
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("navSidebar")
-        self.setFixedWidth(240)
+        self.setFixedWidth(248)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
         self._muted = muted
+        self._accent = accent
         self.menu_buttons: list[QPushButton] = []
         self._page_to_button: dict[int, QPushButton] = {}
 
@@ -58,14 +60,34 @@ class NavSidebar(QFrame):
         root.setContentsMargins(14, 18, 14, 14)
         root.setSpacing(6)
 
+        header = QWidget(self)
+        header.setObjectName("navHeaderRow")
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(2, 0, 2, 0)
+        header_row.setSpacing(10)
+
+        self._logo_label = QLabel(header)
+        self._logo_label.setObjectName("navLogo")
+        self._logo_label.setFixedSize(36, 36)
+        self._logo_label.setPixmap(tinted_icon("nav_logo.svg", accent, 36).pixmap(36, 36))
+        header_row.addWidget(self._logo_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(0)
+
         brand = QLabel(app_name)
         brand.setObjectName("navBrand")
-        root.addWidget(brand)
+        brand.setWordWrap(True)
+        title_col.addWidget(brand)
 
         if version:
             ver = QLabel(version)
             ver.setObjectName("navVersion")
-            root.addWidget(ver)
+            title_col.addWidget(ver)
+
+        header_row.addLayout(title_col, stretch=1)
+        root.addWidget(header)
 
         root.addSpacing(10)
 
@@ -112,15 +134,16 @@ class NavSidebar(QFrame):
         # Default selection
         if 0 in self._page_to_button:
             self.set_active_page(0)
+            self.recolor(muted, accent)
 
     def _make_nav_btn(self, label: str, page_idx: int, icon_name: str) -> QPushButton:
         btn = QPushButton(f"  {label}")
         btn.setObjectName("navBtn")
         btn.setCheckable(page_idx >= 0)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setIcon(tinted_icon(icon_name, self._muted, 18))
-        btn.setIconSize(QSize(18, 18))
-        btn.setMinimumHeight(40)
+        btn.setIcon(tinted_icon(icon_name, self._muted, 20))
+        btn.setIconSize(QSize(20, 20))
+        btn.setMinimumHeight(42)
         btn.clicked.connect(lambda _checked=False, idx=page_idx: self.page_requested.emit(idx))
         self.menu_buttons.append(btn)
         if page_idx >= 0:
@@ -134,7 +157,9 @@ class NavSidebar(QFrame):
     def recolor(self, muted: str, accent: str) -> None:
         """Refresh icon tints after a theme change."""
         self._muted = muted
+        self._accent = accent
+        self._logo_label.setPixmap(tinted_icon("nav_logo.svg", accent, 36).pixmap(36, 36))
         all_items = PRIMARY_NAV + SECONDARY_NAV
         for btn, (_label, page_idx, icon_name) in zip(self.menu_buttons, all_items):
             color = accent if page_idx >= 0 and btn.isChecked() else muted
-            btn.setIcon(tinted_icon(icon_name, color, 18))
+            btn.setIcon(tinted_icon(icon_name, color, 20))

@@ -22,6 +22,7 @@ class TitleBar(QWidget):
     """Drag to move, double-click to maximize, min / max / close controls."""
 
     refresh_clicked = pyqtSignal()
+    add_repository_clicked = pyqtSignal()
 
     def __init__(
         self,
@@ -62,24 +63,27 @@ class TitleBar(QWidget):
 
         row.addStretch(1)
 
-        self._refresh_btn = QPushButton("  Refresh Dashboard")
-        self._refresh_btn.setObjectName("titleBarActionBtn")
-        self._refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._refresh_btn.setToolTip("Refresh Dashboard")
-        self._refresh_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._refresh_btn.setFlat(True)
-        self._refresh_btn.setFixedHeight(28)
-        try:
-            from ui.icons import tinted_icon
-            self._refresh_btn.setIcon(tinted_icon("refresh.svg", "#8b95a5", 16))
-            self._refresh_btn.setIconSize(QSize(16, 16))
-        except Exception:
-            pass
-        self._refresh_btn.clicked.connect(self.refresh_clicked.emit)
+        # Page-context actions (main window only) — same flat style as each other
+        self._refresh_btn = self._make_action_btn(
+            "  Refresh Dashboard",
+            "Refresh Dashboard",
+            "refresh.svg",
+            self.refresh_clicked.emit,
+        )
+        self._add_repo_btn = self._make_action_btn(
+            "  Add Repository",
+            "Add Repository",
+            "add.svg",
+            self.add_repository_clicked.emit,
+        )
+        row.addWidget(self._refresh_btn)
+        row.addWidget(self._add_repo_btn)
         if show_refresh:
-            row.addWidget(self._refresh_btn)
+            # Default page is Dashboard — show refresh, hide add
+            self.set_page_context(0)
         else:
             self._refresh_btn.hide()
+            self._add_repo_btn.hide()
 
         self._min_btn = QPushButton("–")
         self._min_btn.setObjectName("titleBarBtn")
@@ -116,6 +120,39 @@ class TitleBar(QWidget):
             self._max_btn.hide()
         row.addWidget(self._close_btn)
 
+    def _make_action_btn(self, text: str, tooltip: str, icon_name: str, on_click) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName("titleBarActionBtn")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setToolTip(tooltip)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setFlat(True)
+        btn.setFixedHeight(28)
+        try:
+            from ui.icons import tinted_icon
+            btn.setIcon(tinted_icon(icon_name, "#8b95a5", 16))
+            btn.setIconSize(QSize(16, 16))
+        except Exception:
+            pass
+        btn.clicked.connect(on_click)
+        return btn
+
+    def set_page_context(self, page_index: int) -> None:
+        """Show title-bar actions for the active page; hide elsewhere."""
+        # 0 = Dashboard, 1 = Repositories, 2 = Snapshots
+        show_refresh = page_index in (0, 2)
+        self._refresh_btn.setVisible(show_refresh)
+        self._add_repo_btn.setVisible(page_index == 1)
+        if page_index == 2:
+            self._refresh_btn.setText("  Refresh Snapshots")
+            self._refresh_btn.setToolTip("Refresh Snapshots")
+        else:
+            self._refresh_btn.setText("  Refresh Dashboard")
+            self._refresh_btn.setToolTip("Refresh Dashboard")
+        if page_index != 0:
+            self._status.clear()
+            self._status.hide()
+
     def set_title(self, title: str) -> None:
         self._title.setText(title)
 
@@ -130,10 +167,17 @@ class TitleBar(QWidget):
             pass
         if busy:
             self._refresh_btn.setText("  Refreshing…")
-            self._status.setText("Updating dashboard")
+            tip = self._refresh_btn.toolTip() or ""
+            self._status.setText(
+                "Updating snapshots" if "Snapshots" in tip else "Updating dashboard"
+            )
             self._status.show()
         else:
-            self._refresh_btn.setText("  Refresh Dashboard")
+            tip = self._refresh_btn.toolTip() or ""
+            if "Snapshots" in tip:
+                self._refresh_btn.setText("  Refresh Snapshots")
+            else:
+                self._refresh_btn.setText("  Refresh Dashboard")
             self._status.clear()
             self._status.hide()
 

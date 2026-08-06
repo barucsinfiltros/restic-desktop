@@ -2,13 +2,27 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ui.icons import tinted_icon
 
+_ICON_CHIP = 56
+_ICON_GLYPH = 30
+
+
+def _soft_bg(hex_color: str, alpha: float = 0.18) -> str:
+    """Return an rgba() stylesheet color from a hex accent."""
+    c = QColor(hex_color)
+    if not c.isValid():
+        c = QColor("#5a8cc8")
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha:.2f})"
+
 
 class StatCard(QFrame):
-    """Metric card: icon chip + large value + muted label."""
+    """Metric card: large tinted icon chip + value / label / subtitle."""
+
+    _CARD_HEIGHT = 112
 
     def __init__(
         self,
@@ -21,20 +35,20 @@ class StatCard(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("statCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumHeight(96)
+        self.setFixedHeight(self._CARD_HEIGHT)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(16, 14, 16, 14)
-        row.setSpacing(14)
+        row.setContentsMargins(18, 14, 18, 14)
+        row.setSpacing(16)
 
         self._chip = QLabel(self)
         self._chip.setObjectName("statCardIcon")
-        self._chip.setFixedSize(40, 40)
+        self._chip.setFixedSize(_ICON_CHIP, _ICON_CHIP)
         self._chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        if icon_name:
-            self._chip.setPixmap(tinted_icon(icon_name, accent, 20).pixmap(20, 20))
-        row.addWidget(self._chip, 0, Qt.AlignmentFlag.AlignTop)
+        self._chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row.addWidget(self._chip, 0, Qt.AlignmentFlag.AlignVCenter)
 
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
@@ -53,6 +67,9 @@ class StatCard(QFrame):
 
         self.subtitle_label = QLabel(subtitle, self)
         self.subtitle_label.setObjectName("statCardSubtitle")
+        # Keep one line so refresh text cannot grow the card / skew the row.
+        self.subtitle_label.setWordWrap(False)
+        self.subtitle_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         col.addWidget(self.subtitle_label)
         self.subtitle_label.setVisible(bool(subtitle))
 
@@ -61,20 +78,34 @@ class StatCard(QFrame):
 
         self._accent = accent
         self._icon_name = icon_name
+        self._apply_icon()
+
+    def _apply_icon(self) -> None:
+        self._chip.setStyleSheet(
+            f"QLabel#statCardIcon {{"
+            f"  background-color: {_soft_bg(self._accent)};"
+            f"  border: none;"
+            f"  border-radius: 14px;"
+            f"}}"
+        )
+        if self._icon_name:
+            self._chip.setPixmap(
+                tinted_icon(self._icon_name, self._accent, _ICON_GLYPH).pixmap(
+                    _ICON_GLYPH, _ICON_GLYPH
+                )
+            )
 
     def set_value(self, text: str) -> None:
         self.value_label.setText(text)
 
-    def set_subtitle(self, text: str) -> None:
+    def set_subtitle(self, text: str, *, tooltip: str = "") -> None:
         self.subtitle_label.setText(text)
         self.subtitle_label.setVisible(bool(text))
+        self.subtitle_label.setToolTip(tooltip or text or "")
 
     def set_accent(self, color: str) -> None:
         self._accent = color
-        if self._icon_name:
-            self._chip.setPixmap(
-                tinted_icon(self._icon_name, color, 20).pixmap(20, 20)
-            )
+        self._apply_icon()
 
 
 class SectionCard(QFrame):
