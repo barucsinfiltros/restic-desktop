@@ -2238,7 +2238,7 @@ def build_stylesheet(theme: AppTheme) -> str:
             color: #eef3f8;
             border-color: {t.danger};
         }}
-        #repoActions {{
+        #repoActions, #snapshotActions, #jobActions {{
             background: transparent;
             border: none;
         }}
@@ -2311,12 +2311,12 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 15px;
             font-weight: 600;
         }}
-        #jobsTableShell, #repoTableShell, #snapshotsTableShell, #restoreSearchTableShell {{
+        #jobsTableShell, #repoTableShell, #snapshotsTableShell, #backupJobsTableShell, #restoreSearchTableShell {{
             background-color: {shell_bg};
             border: 1px solid {t.border};
             border-radius: 10px;
         }}
-        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable, QTableWidget#restoreSearchTable {{
+        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable, QTableWidget#backupJobsTable, QTableWidget#restoreSearchTable {{
             background-color: transparent;
             border: none;
             border-radius: 0;
@@ -2327,23 +2327,23 @@ def build_stylesheet(theme: AppTheme) -> str:
             selection-background-color: {t.accent_soft};
             selection-color: {t.text};
         }}
-        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable, QTableWidget#restoreSearchTable {{
+        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable, QTableWidget#backupJobsTable, QTableWidget#restoreSearchTable {{
             selection-background-color: {jobs_sel};
             selection-color: {t.muted};
         }}
-        QTableWidget#jobsTable::item, QTableWidget#repoTable::item, QTableWidget#snapshotsTable::item, QTableWidget#restoreSearchTable::item {{
+        QTableWidget#jobsTable::item, QTableWidget#repoTable::item, QTableWidget#snapshotsTable::item, QTableWidget#backupJobsTable::item, QTableWidget#restoreSearchTable::item {{
             background-color: transparent;
             border: none;
             border-bottom: 1px solid {t.border};
             text-align: left;
-            /* Fusion adds a small item inset; use 4px so text lines up with 8px header padding */
-            padding: 8px 8px 8px 4px;
+            /* Fusion paints text in a tight rect; keep bottom padding >= top so descenders aren't clipped */
+            padding: 4px 8px 10px 4px;
         }}
-        QTableWidget#jobsTable::item:selected, QTableWidget#repoTable::item:selected, QTableWidget#snapshotsTable::item:selected, QTableWidget#restoreSearchTable::item:selected {{
+        QTableWidget#jobsTable::item:selected, QTableWidget#repoTable::item:selected, QTableWidget#snapshotsTable::item:selected, QTableWidget#backupJobsTable::item:selected, QTableWidget#restoreSearchTable::item:selected {{
             background-color: {jobs_sel};
             border-bottom: 1px solid {t.border};
         }}
-        QTableWidget#jobsTable QHeaderView, QTableWidget#repoTable QHeaderView, QTableWidget#snapshotsTable QHeaderView, QTableWidget#restoreSearchTable QHeaderView {{
+        QTableWidget#jobsTable QHeaderView, QTableWidget#repoTable QHeaderView, QTableWidget#snapshotsTable QHeaderView, QTableWidget#backupJobsTable QHeaderView, QTableWidget#restoreSearchTable QHeaderView {{
             background-color: transparent;
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
@@ -2351,6 +2351,7 @@ def build_stylesheet(theme: AppTheme) -> str:
         QTableWidget#jobsTable QHeaderView::section,
         QTableWidget#repoTable QHeaderView::section,
         QTableWidget#snapshotsTable QHeaderView::section,
+        QTableWidget#backupJobsTable QHeaderView::section,
         QTableWidget#restoreSearchTable QHeaderView::section {{
             background-color: {jobs_header_wash};
             color: {jobs_header_text};
@@ -2365,6 +2366,7 @@ def build_stylesheet(theme: AppTheme) -> str:
         QTableWidget#jobsTable QHeaderView::section:hover,
         QTableWidget#repoTable QHeaderView::section:hover,
         QTableWidget#snapshotsTable QHeaderView::section:hover,
+        QTableWidget#backupJobsTable QHeaderView::section:hover,
         QTableWidget#restoreSearchTable QHeaderView::section:hover {{
             color: {t.text};
             background-color: {hover};
@@ -2372,18 +2374,21 @@ def build_stylesheet(theme: AppTheme) -> str:
         QTableWidget#jobsTable QHeaderView::section:first,
         QTableWidget#repoTable QHeaderView::section:first,
         QTableWidget#snapshotsTable QHeaderView::section:first,
+        QTableWidget#backupJobsTable QHeaderView::section:first,
         QTableWidget#restoreSearchTable QHeaderView::section:first {{
             border-top-left-radius: 10px;
         }}
         QTableWidget#jobsTable QHeaderView::section:last,
         QTableWidget#repoTable QHeaderView::section:last,
         QTableWidget#snapshotsTable QHeaderView::section:last,
+        QTableWidget#backupJobsTable QHeaderView::section:last,
         QTableWidget#restoreSearchTable QHeaderView::section:last {{
             border-top-right-radius: 10px;
         }}
         QTableWidget#jobsTable QTableCornerButton::section,
         QTableWidget#repoTable QTableCornerButton::section,
         QTableWidget#snapshotsTable QTableCornerButton::section,
+        QTableWidget#backupJobsTable QTableCornerButton::section,
         QTableWidget#restoreSearchTable QTableCornerButton::section {{
             background-color: {jobs_header_wash};
             border: none;
@@ -2396,7 +2401,8 @@ def build_stylesheet(theme: AppTheme) -> str:
         }}
         QTableWidget#jobsTable QLabel#repoNameLabel,
         QTableWidget#repoTable QLabel#repoNameLabel,
-        QTableWidget#snapshotsTable QLabel#repoNameLabel {{
+        QTableWidget#snapshotsTable QLabel#repoNameLabel,
+        QTableWidget#backupJobsTable QLabel#repoNameLabel {{
             background: transparent;
             padding: 0;
             margin: 0;

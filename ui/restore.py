@@ -86,7 +86,7 @@ def create_restore_page(host: Any) -> QWidget:
     layout.setContentsMargins(24, 20, 24, 20)
     layout.setSpacing(16)
 
-    # Header (same pattern as Snapshots / Repositories)
+    # Header (page actions live on the window title bar)
     header = QHBoxLayout()
     header.setSpacing(12)
     title_col = QVBoxLayout()
@@ -100,23 +100,6 @@ def create_restore_page(host: Any) -> QWidget:
     subtitle.setObjectName("pageSubtitle")
     title_col.addWidget(subtitle)
     header.addLayout(title_col, stretch=1)
-
-    host.mount_browse_btn = QPushButton("Browse Files")
-    host.mount_browse_btn.setObjectName("dialogSecondary")
-    host.mount_browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    host.mount_browse_btn.setMinimumHeight(34)
-    host.mount_browse_btn.setToolTip(
-        "Browse all snapshots in the repository and restore specific files"
-    )
-    host.mount_browse_btn.clicked.connect(host.mount_and_browse_snapshot)
-    header.addWidget(host.mount_browse_btn, 0)
-
-    restore_btn = QPushButton("Start Restore")
-    restore_btn.setObjectName("dialogPrimary")
-    restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    restore_btn.setMinimumHeight(34)
-    restore_btn.clicked.connect(host.start_restore)
-    header.addWidget(restore_btn, 0)
     layout.addLayout(header)
 
     # ── Configuration card ──────────────────────────────────────────

@@ -23,6 +23,9 @@ class TitleBar(QWidget):
 
     refresh_clicked = pyqtSignal()
     add_repository_clicked = pyqtSignal()
+    add_backup_job_clicked = pyqtSignal()
+    browse_files_clicked = pyqtSignal()
+    start_restore_clicked = pyqtSignal()
 
     def __init__(
         self,
@@ -76,14 +79,38 @@ class TitleBar(QWidget):
             "add.svg",
             self.add_repository_clicked.emit,
         )
+        self._add_job_btn = self._make_action_btn(
+            "  New Job",
+            "New Backup Job",
+            "add.svg",
+            self.add_backup_job_clicked.emit,
+        )
+        self._browse_files_btn = self._make_action_btn(
+            "  Browse Files",
+            "Browse all snapshots in the repository and restore specific files",
+            "layers.svg",
+            self.browse_files_clicked.emit,
+        )
+        self._start_restore_btn = self._make_action_btn(
+            "  Start Restore",
+            "Start Restore",
+            "restore.svg",
+            self.start_restore_clicked.emit,
+        )
         row.addWidget(self._refresh_btn)
         row.addWidget(self._add_repo_btn)
+        row.addWidget(self._add_job_btn)
+        row.addWidget(self._browse_files_btn)
+        row.addWidget(self._start_restore_btn)
         if show_refresh:
             # Default page is Dashboard — show refresh, hide add
             self.set_page_context(0)
         else:
             self._refresh_btn.hide()
             self._add_repo_btn.hide()
+            self._add_job_btn.hide()
+            self._browse_files_btn.hide()
+            self._start_restore_btn.hide()
 
         self._min_btn = QPushButton("–")
         self._min_btn.setObjectName("titleBarBtn")
@@ -139,10 +166,13 @@ class TitleBar(QWidget):
 
     def set_page_context(self, page_index: int) -> None:
         """Show title-bar actions for the active page; hide elsewhere."""
-        # 0 = Dashboard, 1 = Repositories, 2 = Snapshots
+        # 0 = Dashboard, 1 = Repositories, 2 = Snapshots, 3 = Restore, 4 = Backup Jobs
         show_refresh = page_index in (0, 2)
         self._refresh_btn.setVisible(show_refresh)
         self._add_repo_btn.setVisible(page_index == 1)
+        self._add_job_btn.setVisible(page_index == 4)
+        self._browse_files_btn.setVisible(page_index == 3)
+        self._start_restore_btn.setVisible(page_index == 3)
         if page_index == 2:
             self._refresh_btn.setText("  Refresh Snapshots")
             self._refresh_btn.setToolTip("Refresh Snapshots")

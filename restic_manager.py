@@ -35,8 +35,10 @@ from ui import (
     NavSidebar,
     create_dashboard_page,
     create_repositories_page,
+    create_backup_jobs_page,
     populate_jobs_table,
     populate_repository_table,
+    populate_backup_jobs_table,
 )
 from ui.snapshots import (
     create_snapshots_page as build_snapshots_page_ui,
@@ -2926,6 +2928,9 @@ class ResticManagerWindow(QMainWindow):
         )
         self.title_bar.refresh_clicked.connect(self._title_bar_refresh)
         self.title_bar.add_repository_clicked.connect(self.add_repository)
+        self.title_bar.add_backup_job_clicked.connect(self.add_backup_job)
+        self.title_bar.browse_files_clicked.connect(self.mount_and_browse_snapshot)
+        self.title_bar.start_restore_clicked.connect(self.start_restore)
         root_layout.addWidget(self.title_bar)
 
         body = QWidget()
@@ -3523,120 +3528,13 @@ class ResticManagerWindow(QMainWindow):
     
     def create_backup_page(self):
         """Create backup jobs management page"""
-        page = QWidget()
-        page.setVisible(False)  # prevent top-level flash during splash processEvents
-        layout = QVBoxLayout()
-        page.setLayout(layout)
-        
-        # Title and buttons
-        header_layout = QHBoxLayout()
-        title = QLabel("Backup Jobs")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        
-        new_job_btn = QPushButton("New Job")
-        new_job_btn.clicked.connect(self.add_backup_job)
-        header_layout.addWidget(new_job_btn)
-        
-        layout.addLayout(header_layout)
-        
-        # Jobs table
-        self.backup_jobs_table = QTableWidget()
-        self.backup_jobs_table.setColumnCount(5)
-        self.backup_jobs_table.setHorizontalHeaderLabels(["Job Name", "Repository", "Paths", "Schedule", "Actions"])
-        self.backup_jobs_table.horizontalHeader().setStretchLastSection(False)
-        self.backup_jobs_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.backup_jobs_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.backup_jobs_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.backup_jobs_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.backup_jobs_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.backup_jobs_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.backup_jobs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.backup_jobs_table)
-        
-        # Refresh jobs list
+        page = create_backup_jobs_page(self)
         self.refresh_backup_jobs_list()
-        
         self.stacked_widget.addWidget(page)
     
     def refresh_backup_jobs_list(self):
         """Refresh the backup jobs table"""
-        self.backup_jobs_table.setRowCount(0)
-        jobs = self.settings_manager.get("backup_jobs")
-        
-        for job in jobs:
-            row = self.backup_jobs_table.rowCount()
-            self.backup_jobs_table.insertRow(row)
-            
-            # Job name
-            self.backup_jobs_table.setItem(row, 0, QTableWidgetItem(job.get("name", "")))
-            
-            # Repository (handle both single and multiple repositories)
-            repositories = job.get("repositories", [])
-            if not repositories:
-                # Backwards compatibility with old single "repository" field
-                repo = job.get("repository", "")
-                repositories = [repo] if repo else []
-            
-            repo_text = ""
-            if repositories:
-                if len(repositories) == 1:
-                    repo_text = repositories[0]
-                else:
-                    repo_text = f"{repositories[0]} +{len(repositories)-1} more"
-            self.backup_jobs_table.setItem(row, 1, QTableWidgetItem(repo_text))
-            
-            # Paths (show count and first path)
-            paths = job.get("paths", [])
-            paths_text = f"{len(paths)} path(s)"
-            if paths:
-                paths_text += f": {paths[0]}"
-                if len(paths) > 1:
-                    paths_text += f" +{len(paths)-1} more"
-            self.backup_jobs_table.setItem(row, 2, QTableWidgetItem(paths_text))
-            
-            # Schedule status
-            schedule = job.get("schedule")
-            if schedule and schedule.get("enabled"):
-                freq = schedule.get("frequency", "daily").capitalize()
-                time = schedule.get("time", "00:00")
-                if freq == "Weekly":
-                    days = schedule.get("days", [])
-                    days_str = ", ".join(days) if days else "All days"
-                    schedule_text = f"â° {freq} at {time}\n({days_str})"
-                elif freq == "Monthly":
-                    day_of_month = schedule.get("day_of_month", 1)
-                    schedule_text = f"â° {freq} at {time}\n(Day {day_of_month})"
-                else:
-                    schedule_text = f"â° {freq} at {time}"
-            else:
-                schedule_text = "Manual"
-            self.backup_jobs_table.setItem(row, 3, QTableWidgetItem(schedule_text))
-            
-            # Actions buttons
-            actions_widget = QWidget()
-            actions_layout = QHBoxLayout()
-            actions_layout.setContentsMargins(4, 2, 4, 2)
-            actions_widget.setLayout(actions_layout)
-            
-            run_btn = QPushButton("Run")
-            run_btn.setFixedWidth(60)
-            run_btn.clicked.connect(lambda checked, j=job: self.run_backup_job(j))
-            actions_layout.addWidget(run_btn)
-            
-            edit_btn = QPushButton("Edit")
-            edit_btn.setFixedWidth(60)
-            edit_btn.clicked.connect(lambda checked, j=job: self.edit_backup_job(j))
-            actions_layout.addWidget(edit_btn)
-            
-            delete_btn = QPushButton("Delete")
-            delete_btn.setFixedWidth(60)
-            delete_btn.clicked.connect(lambda checked, j=job: self.delete_backup_job(j))
-            actions_layout.addWidget(delete_btn)
-            
-            self.backup_jobs_table.setCellWidget(row, 4, actions_widget)
-
+        populate_backup_jobs_table(self)
         if hasattr(self, "refresh_dashboard_jobs_table"):
             self.refresh_dashboard_jobs_table()
     
@@ -8488,25 +8386,48 @@ class ResticManagerWindow(QMainWindow):
     
     def delete_backup_job(self, job):
         """Delete a backup job"""
-        reply = QMessageBox.question(
-            self, "Delete Job",
-            f"Are you sure you want to delete the backup job '{job['name']}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            # Delete scheduled task first
-            self.scheduler_manager.delete_scheduled_task(job["name"])
-            
-            jobs = self.settings_manager.get("backup_jobs")
-            jobs = [j for j in jobs if j["name"] != job["name"]]
-            self.settings_manager.set("backup_jobs", jobs)
-            self.settings_manager.save_settings()
-            self.refresh_backup_jobs_list()
-            if hasattr(self, "refresh_dashboard_jobs_table"):
-                self.refresh_dashboard_jobs_table()
-            self.log(f"Deleted backup job and scheduled task: {job['name']}")
-    
+        name = job.get("name") or "—"
+        repositories = job.get("repositories") or []
+        if not repositories and job.get("repository"):
+            repositories = [job.get("repository")]
+        repo_text = ", ".join(repositories) if repositories else "—"
+        schedule = job.get("schedule") or {}
+        if schedule.get("enabled"):
+            freq = (schedule.get("frequency") or "daily").capitalize()
+            time = schedule.get("time") or "00:00"
+            schedule_text = f"{freq} at {time}"
+        else:
+            schedule_text = "Manual"
+        paths = job.get("paths") or []
+        paths_text = f"{len(paths)} path(s)" if paths else "None"
+
+        if not self._framed_confirm(
+            title="Delete Job",
+            heading=f"Delete backup job “{name}”?",
+            body="This removes the job from Restic Manager and deletes any scheduled task for it. Existing snapshots are not deleted.",
+            note="This cannot be undone. Recreate the job if you need it again.",
+            meta=[
+                ("Job", name),
+                ("Repository", repo_text),
+                ("Schedule", schedule_text),
+                ("Paths", paths_text),
+            ],
+            confirm_label="Delete",
+            danger=True,
+        ):
+            return
+
+        self.scheduler_manager.delete_scheduled_task(job["name"])
+
+        jobs = self.settings_manager.get("backup_jobs")
+        jobs = [j for j in jobs if j["name"] != job["name"]]
+        self.settings_manager.set("backup_jobs", jobs)
+        self.settings_manager.save_settings()
+        self.refresh_backup_jobs_list()
+        if hasattr(self, "refresh_dashboard_jobs_table"):
+            self.refresh_dashboard_jobs_table()
+        self.log(f"Deleted backup job and scheduled task: {job['name']}")
+
     def run_backup_job(self, job):
         """Run a backup job (supports multiple repositories)"""
         # Get repository/repositories list
