@@ -29,6 +29,7 @@ class TitleBar(QWidget):
     dry_run_retention_clicked = pyqtSignal()
     apply_retention_clicked = pyqtSignal()
     clear_logs_clicked = pyqtSignal()
+    save_settings_clicked = pyqtSignal()
 
     def __init__(
         self,
@@ -118,6 +119,12 @@ class TitleBar(QWidget):
             "clear.svg",
             self.clear_logs_clicked.emit,
         )
+        self._save_settings_btn = self._make_action_btn(
+            "  Save Settings",
+            "Save application settings",
+            "settings.svg",
+            self.save_settings_clicked.emit,
+        )
         row.addWidget(self._refresh_btn)
         row.addWidget(self._add_repo_btn)
         row.addWidget(self._add_job_btn)
@@ -126,6 +133,7 @@ class TitleBar(QWidget):
         row.addWidget(self._dry_run_retention_btn)
         row.addWidget(self._apply_retention_btn)
         row.addWidget(self._clear_logs_btn)
+        row.addWidget(self._save_settings_btn)
         if show_refresh:
             # Default page is Dashboard — show refresh, hide add
             self.set_page_context(0)
@@ -138,6 +146,7 @@ class TitleBar(QWidget):
             self._dry_run_retention_btn.hide()
             self._apply_retention_btn.hide()
             self._clear_logs_btn.hide()
+            self._save_settings_btn.hide()
 
         self._min_btn = QPushButton("–")
         self._min_btn.setObjectName("titleBarBtn")
@@ -194,7 +203,7 @@ class TitleBar(QWidget):
     def set_page_context(self, page_index: int) -> None:
         """Show title-bar actions for the active page; hide elsewhere."""
         # 0 = Dashboard, 1 = Repositories, 2 = Snapshots, 3 = Restore,
-        # 4 = Backup Jobs, 5 = Retention Policy, 6 = Logs
+        # 4 = Backup Jobs, 5 = Retention Policy, 6 = Logs, 7 = Settings
         show_refresh = page_index in (0, 2)
         self._refresh_btn.setVisible(show_refresh)
         self._add_repo_btn.setVisible(page_index == 1)
@@ -204,6 +213,7 @@ class TitleBar(QWidget):
         self._dry_run_retention_btn.setVisible(page_index == 5)
         self._apply_retention_btn.setVisible(page_index == 5)
         self._clear_logs_btn.setVisible(page_index == 6)
+        self._save_settings_btn.setVisible(page_index == 7)
         if page_index == 2:
             self._refresh_btn.setText("  Refresh Snapshots")
             self._refresh_btn.setToolTip("Refresh Snapshots")

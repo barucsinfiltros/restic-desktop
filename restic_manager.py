@@ -38,6 +38,7 @@ from ui import (
     create_backup_jobs_page,
     create_retention_page,
     create_logs_page as build_logs_page_ui,
+    create_settings_page as build_settings_page_ui,
     populate_jobs_table,
     populate_repository_table,
     populate_backup_jobs_table,
@@ -2941,6 +2942,7 @@ class ResticManagerWindow(QMainWindow):
             lambda: self.apply_retention(dry_run=False)
         )
         self.title_bar.clear_logs_clicked.connect(self.clear_logs)
+        self.title_bar.save_settings_clicked.connect(self.save_settings)
         root_layout.addWidget(self.title_bar)
 
         body = QWidget()
@@ -3561,347 +3563,7 @@ class ResticManagerWindow(QMainWindow):
     
     def create_settings_page(self):
         """Create settings page"""
-        page = QWidget()
-        page.setVisible(False)  # prevent top-level flash during splash processEvents
-        layout = QVBoxLayout()
-        page.setLayout(layout)
-        
-        # Title
-        title = QLabel("Settings")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        
-        
-        # Settings form
-        form_group = QGroupBox("Application Settings")
-        form_layout = QFormLayout()
-        form_group.setLayout(form_layout)
-        
-        # Restic path
-        
-        self.restic_path_input = QLineEdit()
-        self.restic_path_input.setText(self.settings_manager.get("restic_path"))
-        self.restic_path_input.setFixedWidth(400)
-        
-        browse_restic_btn = QPushButton("Browse")
-        browse_restic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        browse_restic_btn.clicked.connect(self.browse_restic_path)
-        
-        test_restic_btn = QPushButton("Test")
-        test_restic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        test_restic_btn.clicked.connect(self.test_restic_path)
-        test_restic_btn.setToolTip("Test if restic can be executed from this path")
-        
-        restic_path_layout = QHBoxLayout()
-        restic_path_layout.addWidget(self.restic_path_input)
-        restic_path_layout.addWidget(browse_restic_btn)
-        restic_path_layout.addWidget(test_restic_btn)
-        restic_path_layout.addStretch()
-        form_layout.addRow("Restic Path:", restic_path_layout)
-        
-        # Theme
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems(themes.theme_display_names())
-        current_theme_id = themes.resolve_theme_id(self.settings_manager.get("theme"))
-        current_theme_name = themes.get_app_theme(current_theme_id).name
-        idx = self.theme_combo.findText(current_theme_name)
-        if idx >= 0:
-            self.theme_combo.setCurrentIndex(idx)
-        self.theme_combo.setFixedWidth(160)
-        self.theme_combo.currentTextChanged.connect(self.change_theme)
-        form_layout.addRow("Theme:", self.theme_combo)
-        
-        # Auto refresh snapshots
-        self.auto_refresh_check = QCheckBox()
-        self.auto_refresh_check.setChecked(self.settings_manager.get("auto_refresh_snapshots"))
-        form_layout.addRow("Auto Refresh Snapshots:", self.auto_refresh_check)
-        
-        # Refresh interval
-        self.refresh_interval_spin = QSpinBox()
-        self.refresh_interval_spin.setMinimum(10)
-        self.refresh_interval_spin.setMaximum(3600)
-        self.refresh_interval_spin.setValue(self.settings_manager.get("snapshot_refresh_interval"))
-        self.refresh_interval_spin.setSuffix(" seconds")
-        self.refresh_interval_spin.setFixedWidth(120)
-        form_layout.addRow("Refresh Interval:", self.refresh_interval_spin)
-
-        # Log retention
-        self.log_retention_spin = QSpinBox()
-        self.log_retention_spin.setMinimum(1)
-        self.log_retention_spin.setMaximum(365)
-        try:
-            retention_days = int(self.settings_manager.get("log_retention_days") or 30)
-        except (TypeError, ValueError):
-            retention_days = 30
-        self.log_retention_spin.setValue(max(1, min(365, retention_days)))
-        self.log_retention_spin.setSuffix(" days")
-        self.log_retention_spin.setFixedWidth(120)
-        self.log_retention_spin.setToolTip(
-            "How long to keep application activity logs in the history database"
-        )
-        form_layout.addRow("Log Retention:", self.log_retention_spin)
-        
-        # Temporary restore location
-        self.temp_restore_path_input = QLineEdit()
-        temp_restore_default = self.settings_manager.get("temp_restore_path")
-        self.temp_restore_path_input.setText(temp_restore_default)
-        self.temp_restore_path_input.setFixedWidth(400)
-        
-        browse_temp_restore_btn = QPushButton("Browse")
-        browse_temp_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        browse_temp_restore_btn.clicked.connect(self.browse_temp_restore_path)
-        
-        temp_restore_layout = QHBoxLayout()
-        temp_restore_layout.addWidget(self.temp_restore_path_input)
-        temp_restore_layout.addWidget(browse_temp_restore_btn)
-        temp_restore_layout.addStretch()
-        form_layout.addRow("Temp Restore Path:", temp_restore_layout)
-        
-        # Help text for temp restore path
-        temp_restore_help = QLabel("Used for 'Restore to original location' feature (files are moved automatically)")
-        temp_restore_help.setStyleSheet("color: gray; font-style: italic; font-size: 9pt;")
-        temp_restore_help.setWordWrap(True)
-        form_layout.addRow("", temp_restore_help)
-        
-        layout.addWidget(title)
-        layout.addWidget(form_group)
-        
-        # Security Settings
-        security_group = QGroupBox("Security Settings - Application Password")
-        security_layout = QVBoxLayout()
-        security_group.setLayout(security_layout)
-        
-        # Status display
-        status_container = QHBoxLayout()
-        status_label = QLabel("Password Protection Status:")
-        status_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        status_container.addWidget(status_label)
-        
-        self.password_status_label = QLabel()
-        has_password = False
-        storage_location = ""
-        
-        if sys.platform == "win32":
-            # Windows: Registry only
-            reg_hash = retrieve_from_registry("AppPasswordHash")
-            reg_salt = retrieve_from_registry("AppPasswordSalt")
-            if reg_hash and reg_salt:
-                has_password = True
-                storage_location = " (Registry)"
-        else:
-            # Non-Windows: JSON storage
-            if self.settings_manager.get("app_password_hash"):
-                has_password = True
-                storage_location = " (Settings file)"
-        
-        if has_password:
-            self.password_status_label.setText(f"🔒 ACTIVE - Password required at startup{storage_location}")
-            self.password_status_label.setStyleSheet("color: green; font-weight: bold;")
-        else:
-            self.password_status_label.setText("🔓 INACTIVE")
-            self.password_status_label.setStyleSheet("color: orange; font-weight: bold;")
-        status_container.addWidget(self.password_status_label)
-        status_container.addStretch()
-        security_layout.addLayout(status_container)
-        
-        security_layout.addSpacing(10)
-        
-        # Help text
-        storage_info = ""
-        if sys.platform == "win32":
-            storage_info = "Password hash is stored in Windows Registry (HKCU\\Software\\ResticManager) for enhanced security. "
-        
-        password_help = QLabel(
-            f"⚠️ Security Note: {storage_info}"
-            f"Password protection is enforced by cryptographic hashing. "
-            f"To disable password protection, you must authenticate and use the 'Remove Password' button below."
-        )
-        password_help.setStyleSheet("color: gray; font-style: italic; font-size: 9pt; padding: 5px; background-color: rgba(255, 165, 0, 0.1); border-radius: 3px;")
-        password_help.setWordWrap(True)
-        security_layout.addWidget(password_help)
-        
-        security_layout.addSpacing(10)
-        
-        # Buttons
-        password_btn_layout = QHBoxLayout()
-        
-        # Check if password exists (Registry or JSON)
-        password_exists = has_password  # Use the value from status check above
-        
-        self.set_password_btn = QPushButton("Set Password" if not password_exists else "Change Password")
-        self.set_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.set_password_btn.clicked.connect(self.set_app_password)
-        password_btn_layout.addWidget(self.set_password_btn)
-        
-        password_btn_layout.addSpacing(10)
-        
-        self.remove_password_btn = QPushButton("Remove Password")
-        self.remove_password_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.remove_password_btn.clicked.connect(self.remove_app_password)
-        self.remove_password_btn.setEnabled(password_exists)
-        password_btn_layout.addWidget(self.remove_password_btn)
-        
-        password_btn_layout.addStretch()
-        
-        security_layout.addLayout(password_btn_layout)
-        
-        
-        
-        
-        
-        # Buttons layout (Save, Backup, Restore)
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addStretch()
-        
-        save_btn = QPushButton("Save Settings")
-        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        save_btn.clicked.connect(self.save_settings)
-        buttons_layout.addWidget(save_btn)
-        
-        backup_btn = QPushButton("Backup Settings")
-        backup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        backup_btn.clicked.connect(self.backup_settings)
-        buttons_layout.addWidget(backup_btn)
-        
-        restore_btn = QPushButton("Restore Settings")
-        restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        restore_btn.clicked.connect(self.restore_settings)
-        buttons_layout.addWidget(restore_btn)
-        
-        buttons_layout.addStretch()
-        
-        
-        # System Dependencies Section
-        deps_group = QGroupBox("System Dependencies")
-        deps_layout = QVBoxLayout()
-        deps_group.setLayout(deps_layout)
-        
-        # Info label
-        info_label = QLabel("Check and install required system dependencies:")
-        info_label.setWordWrap(True)
-        deps_layout.addWidget(info_label)
-        
-        # Restic status
-
-        self.restic_status_label = QLabel("Click 'Check' to verify installation")
-        self.restic_status_label.setMinimumWidth(200)
-        self.restic_status_label.setStyleSheet("color: gray; font-style: italic;")
-
-        
-        self.restic_check_btn = QPushButton("Check")
-        self.restic_check_btn.clicked.connect(self.check_restic_installation)
-        
-        
-        self.restic_install_btn = QPushButton("Install")
-        self.restic_install_btn.clicked.connect(self.install_restic)
-        self.restic_install_btn.setVisible(False)
-        
-        restic_status_layout = QHBoxLayout()
-        restic_status_layout.addWidget(QLabel("Restic:"))
-        restic_status_layout.addWidget(self.restic_status_label)
-        restic_status_layout.addStretch()
-        restic_status_layout.addWidget(self.restic_check_btn)
-        restic_status_layout.addWidget(self.restic_install_btn)
-
-        
-        deps_layout.addLayout(restic_status_layout)
-        
-        
-        
-        # Don't auto-check on page load - let users click "Check" manually
-        # Auto-checking can cause UI hangs if restic is not properly configured
-        # QTimer.singleShot(100, self.check_restic_installation)
-        
-        # License Management Section
-        license_group = QGroupBox("License Information")
-
-        
-        # License status
-        self.license_status_label = QLabel()
-        self.license_status_label.setWordWrap(True)
-        
-        
-        # Machine ID display
-
-        self.machine_id_display = QLineEdit()
-        self.machine_id_display.setFixedWidth(400)
-        self.machine_id_display.setReadOnly(True)
-        self.machine_id_display.setFont(QFont("Courier", 9))
-        
-        machine_id_display_layout = QHBoxLayout()
-        machine_id_display_layout.addWidget(self.machine_id_display)
-        machine_id_display_layout.addStretch()
-        
-        
-        
-        copy_machine_id_btn = QPushButton("Copy")
-        copy_machine_id_btn.clicked.connect(self.copy_machine_id)
-
-        machine_id_layout = QHBoxLayout()
-        machine_id_layout.addWidget(QLabel("Machine ID:"))
-        machine_id_layout.addLayout(machine_id_display_layout)
-        machine_id_layout.addWidget(copy_machine_id_btn)
-        machine_id_layout.addStretch()
-        
-        
-        # License action buttons
-        
-        
-        update_license_btn = QPushButton("Update License Key")
-        update_license_btn.setFixedWidth(180)
-        update_license_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        update_license_btn.clicked.connect(self.update_license_key)
-        
-        
-        refresh_license_btn = QPushButton("Refresh Status")
-        refresh_license_btn.setFixedWidth(180)
-        refresh_license_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_license_btn.clicked.connect(self.refresh_license_status)
-        
-        license_btn_layout = QHBoxLayout()
-        license_btn_layout.addSpacing(81)  # Align with other buttons
-        license_btn_layout.addWidget(update_license_btn)
-        license_btn_layout.addSpacing(33)
-        license_btn_layout.addWidget(refresh_license_btn)
-        license_btn_layout.addStretch()
-        
-        license_layout = QVBoxLayout()
-        license_group.setLayout(license_layout)
-        license_layout.addWidget(self.license_status_label)
-        license_layout.addLayout(machine_id_layout)
-        license_layout.addLayout(license_btn_layout)
-        
-        
-        
-        # Initialize license display
-        self.refresh_license_status()
-        
-        
-        
-        # Version info
-        version_group = QGroupBox("About")
-        version_layout = QVBoxLayout()
-        version_group.setLayout(version_layout)
-        
-        version_info = QLabel(
-            f"Restic Backup Manager {VERSION}\n"
-            f"© {YEAR}\n\n"
-            "A PyQt6 GUI for managing Restic backups"
-        )
-        version_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        version_layout.addWidget(version_info)
-        
-        layout.addWidget(title)
-        layout.addWidget(form_group)
-        layout.addLayout(buttons_layout)
-        layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
-        layout.addWidget(security_group)
-        layout.addWidget(deps_group)
-        layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
-        layout.addWidget(license_group)
-        layout.addStretch()
-        layout.addWidget(version_group)
-        
+        page = build_settings_page_ui(self)
         self.stacked_widget.addWidget(page)
     
     # Repository Management Methods
@@ -9849,8 +9511,13 @@ try {{
         self.set_password_btn.setText("Change Password")
         self.remove_password_btn.setEnabled(True)
         status_suffix = " (Registry)" if sys.platform == "win32" else " (Settings file)"
-        self.password_status_label.setText(f"🔒 ACTIVE")
-        self.password_status_label.setStyleSheet("color: green; font-weight: bold;")
+        from ui.settings import set_settings_status
+
+        set_settings_status(
+            self.password_status_label,
+            f"Active — required at startup{status_suffix}",
+            "ok",
+        )
         
         QMessageBox.information(
             self,
@@ -9922,8 +9589,9 @@ try {{
         # Update UI
         self.set_password_btn.setText("Set Password")
         self.remove_password_btn.setEnabled(False)
-        self.password_status_label.setText("🔓 INACTIVE")
-        self.password_status_label.setStyleSheet("color: orange; font-weight: bold;")
+        from ui.settings import set_settings_status
+
+        set_settings_status(self.password_status_label, "Inactive", "warn")
         
         QMessageBox.information(
             self,
@@ -10079,8 +9747,9 @@ try {{
                 return
             
             self.log("Starting restic installation check...")
-            self.restic_status_label.setText("Checking...")
-            self.restic_status_label.setStyleSheet("")
+            from ui.settings import set_settings_status
+
+            set_settings_status(self.restic_status_label, "Checking…", "muted")
             self.restic_check_btn.setEnabled(False)
             self.restic_install_btn.setVisible(False)
             QApplication.processEvents()
@@ -10108,35 +9777,46 @@ try {{
             if result.returncode == 0 and result.stdout:
                 # Extract version
                 version_line = result.stdout.strip().split('\n')[0]
-                self.restic_status_label.setText(f"✓ Installed: {version_line}")
-                self.restic_status_label.setStyleSheet("color: green; font-weight: bold;")
+                from ui.settings import set_settings_status
+
+                set_settings_status(
+                    self.restic_status_label,
+                    f"Installed: {version_line}",
+                    "ok",
+                )
                 self.restic_install_btn.setVisible(False)
                 self.log(f"Restic check SUCCESS: {version_line}")
             else:
                 # Command ran but failed
                 error_msg = result.stderr if result.stderr else "Command returned error"
-                self.restic_status_label.setText("✗ Check failed")
-                self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+                from ui.settings import set_settings_status
+
+                set_settings_status(self.restic_status_label, "Check failed", "err")
                 self.restic_install_btn.setVisible(True)
                 self.log(f"Restic check FAILED: {error_msg}")
         
         except subprocess.TimeoutExpired:
-            self.restic_status_label.setText("✗ Check timed out")
-            self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+            from ui.settings import set_settings_status
+
+            set_settings_status(self.restic_status_label, "Check timed out", "err")
             self.restic_install_btn.setVisible(True)
             self.log("Restic check TIMEOUT after 10 seconds")
         
         except FileNotFoundError as e:
-            self.restic_status_label.setText("✗ Not found in PATH")
-            self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+            from ui.settings import set_settings_status
+
+            set_settings_status(self.restic_status_label, "Not found in PATH", "err")
             self.restic_install_btn.setVisible(True)
             self.log(f"Restic executable NOT FOUND: {restic_path}")
             self.log(f"FileNotFoundError: {str(e)}")
             self.log("Try: 1) Installing restic, or 2) Setting full path in Settings (e.g., C:\\\\Program Files\\\\restic\\\\restic.exe)")
         
         except Exception as e:
-            self.restic_status_label.setText(f"✗ Error: {str(e)[:30]}")
-            self.restic_status_label.setStyleSheet("color: red; font-weight: bold;")
+            from ui.settings import set_settings_status
+
+            set_settings_status(
+                self.restic_status_label, f"Error: {str(e)[:30]}", "err"
+            )
             self.restic_install_btn.setVisible(True)
             self.log(f"Restic check EXCEPTION: {type(e).__name__}: {str(e)}")
             import traceback
@@ -10329,12 +10009,12 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         
         # Update status label with color coding
         if hasattr(self, 'license_status_label'):
+            from ui.settings import set_settings_status
+
             if is_valid:
-                self.license_status_label.setText(f"✓ {message}")
-                self.license_status_label.setStyleSheet("color: green; font-weight: bold;")
+                set_settings_status(self.license_status_label, message, "ok")
             else:
-                self.license_status_label.setText(f"✗ {message}")
-                self.license_status_label.setStyleSheet("color: red; font-weight: bold;")
+                set_settings_status(self.license_status_label, message, "err")
     
     def copy_machine_id(self):
         """Copy machine ID to clipboard"""

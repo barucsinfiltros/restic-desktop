@@ -2500,6 +2500,78 @@ def build_stylesheet(theme: AppTheme) -> str:
             background: transparent;
             border: none;
         }}
+        #settingsScroll, #settingsScrollContent {{
+            background: transparent;
+            border: none;
+        }}
+        #settingsFormLabel {{
+            color: {t.muted};
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
+        #settingsFormRow {{
+            background: transparent;
+            border: none;
+        }}
+        #settingsHint {{
+            color: {t.muted};
+            font-size: 11px;
+            background: transparent;
+            border: none;
+        }}
+        #settingsNote {{
+            color: {t.muted};
+            font-size: 11px;
+            padding: 10px 12px;
+            background-color: {t.accent_soft};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+        }}
+        #settingsStatusStrip {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        #settingsStatusOk {{
+            color: {t.ok};
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
+        #settingsStatusWarn {{
+            color: #e8b84a;
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
+        #settingsStatusErr {{
+            color: {t.danger};
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
+        #settingsStatusMuted {{
+            color: {t.muted};
+            font-size: 12px;
+            background: transparent;
+            border: none;
+        }}
+        #settingsMachineId {{
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 11px;
+        }}
+        #settingsAbout {{
+            color: {t.muted};
+            font-size: 12px;
+            background: transparent;
+            border: none;
+            padding: 8px;
+        }}
         QPlainTextEdit#retentionLog, QPlainTextEdit#backupProgressLog, QPlainTextEdit#appLog {{
             background-color: transparent;
             border: none;
