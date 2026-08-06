@@ -1,6 +1,6 @@
 ﻿"""
 Restic Backup Manager - GUI Application for managing Restic backups
-Version: 2.0.0
+Version: 2.0.2
 
 Build with PyInstaller (preferred — uses restic_manager.spec):
   pyinstaller restic_manager.spec
@@ -108,7 +108,7 @@ except ImportError:
     wintypes = None
 
 # Version and debug settings
-VERSION = "v2.0.0"
+VERSION = "v2.0.2"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 _STARTUP_WINDOW_PROBE = None  # installed when --debug; traces flash windows
