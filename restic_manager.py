@@ -1,6 +1,6 @@
 ﻿"""
 Restic Backup Manager - GUI Application for managing Restic backups
-Version: 1.0.0
+Version: 2.0.0
 
 Build with PyInstaller (preferred — uses restic_manager.spec):
   pyinstaller restic_manager.spec
