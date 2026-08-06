@@ -1383,6 +1383,117 @@ class ResticWorker(QThread):
 #         self.should_stop = True
 
 
+# ---------------------------------------------------------------------------
+# Repository location helpers (local path / restic SFTP URL)
+# ---------------------------------------------------------------------------
+
+def build_sftp_repo_url(
+    host: str,
+    username: str,
+    remote_path: str,
+    port: int = 22,
+    absolute: bool = True,
+) -> str:
+    """Build a restic SFTP repository location string."""
+    host = (host or "").strip()
+    username = (username or "").strip()
+    remote_path = (remote_path or "").strip().replace("\\", "/")
+    port = int(port or 22)
+    userinfo = f"{username}@" if username else ""
+
+    if absolute:
+        path = remote_path if remote_path.startswith("/") else f"/{remote_path}"
+    else:
+        path = remote_path.lstrip("/") or "."
+
+    if port != 22:
+        # Non-default port requires URL syntax. Absolute paths need // after host.
+        # e.g. sftp://user@host:2222//srv/repo  (path already starts with /)
+        return f"sftp://{userinfo}{host}:{port}/{path}"
+    if absolute:
+        return f"sftp:{userinfo}{host}:{path}"
+    return f"sftp:{userinfo}{host}:{path}"
+
+
+def parse_sftp_location(location: str) -> dict:
+    """Best-effort parse of a restic SFTP location into form fields."""
+    out = {
+        "host": "",
+        "port": 22,
+        "username": "",
+        "remote_path": "",
+        "absolute": True,
+    }
+    loc = (location or "").strip()
+    if not loc:
+        return out
+    try:
+        if loc.startswith("sftp://"):
+            from urllib.parse import urlparse
+
+            u = urlparse(loc)
+            out["host"] = u.hostname or ""
+            out["port"] = int(u.port or 22)
+            out["username"] = u.username or ""
+            raw = u.path or ""
+            # /relative  or  //absolute (urlparse may collapse // to /)
+            if raw.startswith("//"):
+                out["absolute"] = True
+                out["remote_path"] = raw[1:]  # keep leading /
+            elif loc.startswith("sftp://") and "//" in loc.split("@")[-1]:
+                # urlparse often turns //path into /path — detect original
+                after = loc.split("://", 1)[-1]
+                hostpart, _, pathbit = after.partition("/")
+                if pathbit.startswith("/"):
+                    out["absolute"] = True
+                    out["remote_path"] = "/" + pathbit.lstrip("/")
+                else:
+                    out["absolute"] = False
+                    out["remote_path"] = pathbit
+            else:
+                out["absolute"] = raw.startswith("/")
+                out["remote_path"] = raw if out["absolute"] else raw.lstrip("/")
+            if not out["remote_path"] and raw:
+                out["remote_path"] = raw
+        elif loc.startswith("sftp:"):
+            body = loc[5:]
+            if "@" in body:
+                user, _, rest = body.partition("@")
+                out["username"] = user
+            else:
+                rest = body
+            host, _, path = rest.partition(":")
+            out["host"] = host
+            if path.startswith("/"):
+                out["absolute"] = True
+                out["remote_path"] = path
+            else:
+                out["absolute"] = False
+                out["remote_path"] = path
+    except Exception:
+        pass
+    return out
+
+
+def sftp_cli_options(ssh_key: str = "") -> List[str]:
+    """Extra restic CLI options for SFTP (non-default SSH identity file)."""
+    key = (ssh_key or "").strip()
+    if not key:
+        return []
+    # restic docs: passwordless SSH is required; BatchMode avoids interactive prompts
+    key_safe = key.replace('"', "")
+    return ["-o", f'sftp.args=-o BatchMode=yes -e none -i "{key_safe}"']
+
+
+def repo_restic_prefix(repo: Optional[dict]) -> List[str]:
+    """Return ``-r <location>`` plus any SFTP SSH options for this repo."""
+    repo = repo or {}
+    args = ["-r", repo.get("path") or ""]
+    if (repo.get("type") or "").lower() == "sftp":
+        args.extend(sftp_cli_options(repo.get("ssh_key") or ""))
+    return args
+
+
 # Repository Dialog
 class RepositoryDialog(FramedDialog):
     """Dialog for adding/editing repositories"""
@@ -1397,7 +1508,7 @@ class RepositoryDialog(FramedDialog):
         self._test_result: Optional[bool] = None
         self._test_error: str = ""
         
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
         self.body_layout.setContentsMargins(16, 12, 16, 16)
         layout = self.body_layout
         
@@ -1406,7 +1517,6 @@ class RepositoryDialog(FramedDialog):
         form_layout.setHorizontalSpacing(14)
         form_layout.setVerticalSpacing(10)
         try:
-            # Prefer expanding fields so the right-side buttons don't get squeezed.
             form_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)  # type: ignore[attr-defined]
         except Exception:
             pass
@@ -1421,32 +1531,138 @@ class RepositoryDialog(FramedDialog):
         # Repository type
         self.type_combo = QComboBox()
         self.type_combo.setMinimumHeight(34)
-        self.type_combo.setMinimumWidth(120)
-        self.type_combo.addItems(["local", "sftp", "s3", "b2", "azure", "gs", "rest"])
-        if existing_repo:
-            self.type_combo.setCurrentText(existing_repo.get("type", "local"))
+        self.type_combo.setMinimumWidth(180)
+        self._repo_type_options = [
+            ("local", "Local folder"),
+            ("sftp", "SFTP (NAS / remote)"),
+        ]
+        for type_id, label in self._repo_type_options:
+            self.type_combo.addItem(label, type_id)
+        current_type = (existing_repo or {}).get("type", "local") or "local"
+        known_ids = {t for t, _ in self._repo_type_options}
+        if current_type not in known_ids:
+            self.type_combo.addItem(current_type, current_type)
+        idx = self.type_combo.findData(current_type)
+        if idx >= 0:
+            self.type_combo.setCurrentIndex(idx)
         form_layout.addRow("Type:", self.type_combo)
-        
-        # Repository path/URL
+
+        # --- Local path ---
         self.path_input = QLineEdit()
         self.path_input.setMinimumHeight(34)
-        if existing_repo:
+        if existing_repo and current_type == "local":
             self.path_input.setText(existing_repo.get("path", ""))
-        form_layout.addRow("Path/URL:", self.path_input)
+        self.path_input.setPlaceholderText("e.g. D:\\Backups\\restic-repo")
+        self._path_label = QLabel("Path:")
+        form_layout.addRow(self._path_label, self.path_input)
+
+        # --- SFTP connection fields ---
+        self.sftp_host_input = QLineEdit()
+        self.sftp_host_input.setMinimumHeight(34)
+        self.sftp_host_input.setPlaceholderText("nas.local or 192.168.1.10")
+        form_layout.addRow("Host:", self.sftp_host_input)
+        self._sftp_host_label = form_layout.labelForField(self.sftp_host_input)
+
+        self.sftp_port_spin = QSpinBox()
+        self.sftp_port_spin.setMinimumHeight(34)
+        self.sftp_port_spin.setRange(1, 65535)
+        self.sftp_port_spin.setValue(22)
+        self.sftp_port_spin.setFixedWidth(100)
+        form_layout.addRow("Port:", self.sftp_port_spin)
+        self._sftp_port_label = form_layout.labelForField(self.sftp_port_spin)
+
+        self.sftp_user_input = QLineEdit()
+        self.sftp_user_input.setMinimumHeight(34)
+        self.sftp_user_input.setPlaceholderText("SSH username")
+        form_layout.addRow("Username:", self.sftp_user_input)
+        self._sftp_user_label = form_layout.labelForField(self.sftp_user_input)
+
+        self.sftp_remote_input = QLineEdit()
+        self.sftp_remote_input.setMinimumHeight(34)
+        self.sftp_remote_input.setPlaceholderText("/volume1/backups/restic or backups/restic")
+        form_layout.addRow("Remote path:", self.sftp_remote_input)
+        self._sftp_remote_label = form_layout.labelForField(self.sftp_remote_input)
+
+        self.sftp_absolute_check = QCheckBox("Absolute path on server")
+        self.sftp_absolute_check.setChecked(True)
+        self.sftp_absolute_check.setToolTip(
+            "On: path starts at the server root (e.g. /volume1/...).\n"
+            "Off: path is relative to the SSH user's home directory."
+        )
+        form_layout.addRow("", self.sftp_absolute_check)
+
+        key_row = QWidget()
+        key_layout = QHBoxLayout(key_row)
+        key_layout.setContentsMargins(0, 0, 0, 0)
+        key_layout.setSpacing(8)
+        self.sftp_key_input = QLineEdit()
+        self.sftp_key_input.setMinimumHeight(34)
+        self.sftp_key_input.setPlaceholderText("Optional — leave blank for default ~/.ssh keys")
+        key_browse = QPushButton("Browse")
+        key_browse.setObjectName("dialogSecondary")
+        key_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        key_browse.setFixedHeight(34)
+        key_browse.clicked.connect(self._browse_ssh_key)
+        key_layout.addWidget(self.sftp_key_input, 1)
+        key_layout.addWidget(key_browse)
+        form_layout.addRow("SSH key:", key_row)
+        self._sftp_key_label = form_layout.labelForField(key_row)
+
+        self.sftp_hint = QLabel(
+            "Restic uses SSH key login (not an SSH password). Set up key access "
+            "to your NAS first. The repository password below encrypts backup data — "
+            "it is separate from SSH."
+        )
+        self.sftp_hint.setWordWrap(True)
+        self.sftp_hint.setObjectName("mutedLabel")
+        form_layout.addRow("", self.sftp_hint)
+
+        # Prefill SFTP from existing repo
+        if existing_repo and current_type == "sftp":
+            parsed = parse_sftp_location(existing_repo.get("path") or "")
+            self.sftp_host_input.setText(
+                existing_repo.get("sftp_host") or parsed["host"]
+            )
+            self.sftp_port_spin.setValue(
+                int(existing_repo.get("sftp_port") or parsed["port"] or 22)
+            )
+            self.sftp_user_input.setText(
+                existing_repo.get("sftp_user") or parsed["username"]
+            )
+            self.sftp_remote_input.setText(
+                existing_repo.get("sftp_remote_path") or parsed["remote_path"]
+            )
+            abs_flag = existing_repo.get("sftp_absolute")
+            if abs_flag is None:
+                abs_flag = parsed["absolute"]
+            self.sftp_absolute_check.setChecked(bool(abs_flag))
+            self.sftp_key_input.setText(existing_repo.get("ssh_key") or "")
+
+        # Keep references for show/hide (labels may be None on some Qt builds)
+        self._sftp_rows = [
+            (self._sftp_host_label, self.sftp_host_input),
+            (self._sftp_port_label, self.sftp_port_spin),
+            (self._sftp_user_label, self.sftp_user_input),
+            (self._sftp_remote_label, self.sftp_remote_input),
+            (None, self.sftp_absolute_check),
+            (self._sftp_key_label, key_row),
+            (None, self.sftp_hint),
+        ]
         
-        # Password
+        # Repository encryption password
         self.password_input = QLineEdit()
         self.password_input.setMinimumHeight(34)
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         if existing_repo and existing_repo.get("password"):
             decrypted = self.password_manager.decrypt(existing_repo.get("password"))
             self.password_input.setText(decrypted)
-        form_layout.addRow("Password:", self.password_input)
+        form_layout.addRow("Repo password:", self.password_input)
         
-        # Show password checkbox
         self.show_password_check = QCheckBox("Show password")
         self.show_password_check.stateChanged.connect(self.toggle_password_visibility)
         form_layout.addRow("", self.show_password_check)
+
+        self.type_combo.currentIndexChanged.connect(self._on_repo_type_changed)
 
         # Card wrapper so the form matches the rest of the modern dashboard UI.
         form_card = QFrame()
@@ -1456,7 +1672,6 @@ class RepositoryDialog(FramedDialog):
         form_card_layout.setSpacing(8)
         form_card_layout.addLayout(form_layout)
 
-        # Keep init option inside the card so it isn't cramped against the footer.
         if not existing_repo:
             form_card_layout.addSpacing(8)
             self.init_repo_check = QCheckBox("Initialize repository now")
@@ -1465,7 +1680,7 @@ class RepositoryDialog(FramedDialog):
 
         layout.addWidget(form_card)
         
-        # Footer actions — compact, same row as OK/Cancel
+        # Footer actions
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
         button_layout.setContentsMargins(0, 14, 0, 0)
@@ -1483,6 +1698,7 @@ class RepositoryDialog(FramedDialog):
         browse_btn.setToolTip("Browse for a local repository folder")
         browse_btn.clicked.connect(self.browse_path)
         button_layout.addWidget(browse_btn)
+        self._browse_btn = browse_btn
 
         generate_btn = QPushButton("Generate")
         generate_btn.setObjectName("dialogSecondary")
@@ -1506,10 +1722,61 @@ class RepositoryDialog(FramedDialog):
         button_layout.addWidget(ok_btn)
 
         layout.addLayout(button_layout)
+        self._on_repo_type_changed()
     
+    def _repo_type_id(self) -> str:
+        data = self.type_combo.currentData()
+        if data:
+            return str(data)
+        return self.type_combo.currentText().strip().lower() or "local"
+
+    def _set_row_visible(self, label, widget, visible: bool):
+        if label is not None:
+            label.setVisible(visible)
+        if widget is not None:
+            widget.setVisible(visible)
+
+    def _on_repo_type_changed(self, *_args):
+        """Show local vs SFTP fields for the selected backend."""
+        repo_type = self._repo_type_id()
+        is_local = repo_type == "local"
+        is_sftp = repo_type == "sftp"
+
+        self._set_row_visible(self._path_label, self.path_input, is_local or not is_sftp)
+        for label, widget in self._sftp_rows:
+            self._set_row_visible(label, widget, is_sftp)
+
+        if is_local:
+            self.path_input.setPlaceholderText("e.g. D:\\Backups\\restic-repo")
+        elif not is_sftp:
+            self.path_input.setPlaceholderText("Restic repository URL / path")
+        self._sync_browse_enabled()
+
+    def _sync_browse_enabled(self):
+        browse = getattr(self, "_browse_btn", None)
+        if browse is None:
+            return
+        is_local = self._repo_type_id() == "local"
+        browse.setEnabled(is_local)
+        browse.setToolTip(
+            "Browse for a local repository folder"
+            if is_local
+            else "Browse is only available for local folders"
+        )
+
+    def _browse_ssh_key(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select SSH private key",
+            os.path.expanduser("~/.ssh"),
+            "All files (*.*)",
+        )
+        if path:
+            self.sftp_key_input.setText(path)
+
     def browse_path(self):
         """Browse for local repository path"""
-        if self.type_combo.currentText() == "local":
+        if self._repo_type_id() == "local":
             directory = QFileDialog.getExistingDirectory(self, "Select Repository Directory")
             if directory:
                 self.path_input.setText(directory)
@@ -1520,19 +1787,52 @@ class RepositoryDialog(FramedDialog):
             self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
         else:
             self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+
+    def _build_location(self) -> str:
+        """Resolved restic -r location from the current form."""
+        if self._repo_type_id() != "sftp":
+            return self.path_input.text().strip()
+        return build_sftp_repo_url(
+            self.sftp_host_input.text(),
+            self.sftp_user_input.text(),
+            self.sftp_remote_input.text(),
+            port=self.sftp_port_spin.value(),
+            absolute=self.sftp_absolute_check.isChecked(),
+        )
+
+    def _validate_form(self) -> Optional[str]:
+        if not self.name_input.text().strip():
+            return "Please enter a repository name."
+        if self._repo_type_id() == "sftp":
+            if not self.sftp_host_input.text().strip():
+                return "Please enter the SFTP host."
+            if not self.sftp_user_input.text().strip():
+                return "Please enter the SSH username."
+            if not self.sftp_remote_input.text().strip():
+                return "Please enter the remote path for the repository."
+        elif not self.path_input.text().strip():
+            return "Please enter a repository path."
+        if not self.password_input.text():
+            return "Please enter a repository password."
+        return None
+
+    def accept(self):
+        err = self._validate_form()
+        if err:
+            QMessageBox.warning(self, "Repository", err)
+            return
+        super().accept()
     
     def test_connection(self):
         """Test repository connection"""
-        # Get path and password from form
-        path = self.path_input.text().strip()
+        err = self._validate_form()
+        if err:
+            QMessageBox.warning(self, "Test Connection", err)
+            return
+
+        path = self._build_location()
         password = self.password_input.text()
         
-        # Validate path
-        if not path:
-            QMessageBox.warning(self, "Test Connection", "Please enter a repository path.")
-            return
-        
-        # Show progress dialog (framed to match app chrome)
         self._test_progress, _, _ = make_framed_progress_dialog(
             self,
             "Testing Connection",
@@ -1542,11 +1842,11 @@ class RepositoryDialog(FramedDialog):
         self._test_progress.show()
         QApplication.processEvents()
         
-        # Test connection using restic snapshots command
         env = {"RESTIC_PASSWORD": password} if password else {}
         args = ["-r", path, "snapshots", "--latest", "1"]
+        if self._repo_type_id() == "sftp":
+            args[2:2] = sftp_cli_options(self.sftp_key_input.text())
         
-        # Get restic_cmd from parent window
         restic_cmd = self.parent().restic_cmd
         
         self._test_worker = ResticWorker(restic_cmd, args, env, timeout=30)
@@ -1586,13 +1886,33 @@ class RepositoryDialog(FramedDialog):
         encrypted_password = ""
         if self.password_input.text():
             encrypted_password = self.password_manager.encrypt(self.password_input.text())
-        
+
+        repo_type = self._repo_type_id()
         data = {
-            "name": self.name_input.text(),
-            "type": self.type_combo.currentText(),
-            "path": self.path_input.text(),
+            "name": self.name_input.text().strip(),
+            "type": repo_type,
+            "path": self._build_location(),
             "password": encrypted_password,
         }
+
+        if repo_type == "sftp":
+            data["sftp_host"] = self.sftp_host_input.text().strip()
+            data["sftp_port"] = int(self.sftp_port_spin.value())
+            data["sftp_user"] = self.sftp_user_input.text().strip()
+            data["sftp_remote_path"] = self.sftp_remote_input.text().strip()
+            data["sftp_absolute"] = self.sftp_absolute_check.isChecked()
+            data["ssh_key"] = self.sftp_key_input.text().strip()
+        else:
+            # Drop stale SFTP fields when switching back to local
+            for key in (
+                "sftp_host",
+                "sftp_port",
+                "sftp_user",
+                "sftp_remote_path",
+                "sftp_absolute",
+                "ssh_key",
+            ):
+                data.pop(key, None)
 
         # Preserve identity colour + prior check metadata on edit.
         if self.existing_repo:
@@ -3707,7 +4027,7 @@ class ResticManagerWindow(QMainWindow):
                 # Initialize repository in background
                 password = self.settings_manager.password_manager.decrypt(repo_data["password"]) if repo_data.get("password") else ""
                 env = {"RESTIC_PASSWORD": password} if password else {}
-                args = ["-r", repo_data["path"], "init"]
+                args = repo_restic_prefix(repo_data) + ["init"]
                 
                 # Log to output
                 output_text.appendPlainText(f"Starting initialization...\nRepository: {repo_data['path']}\n")
@@ -3873,7 +4193,7 @@ class ResticManagerWindow(QMainWindow):
         QApplication.processEvents()
 
         env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", path, "snapshots", "--latest", "1"]
+        args = repo_restic_prefix(repo) + ["snapshots", "--latest", "1"]
         worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
 
         def _done(success, stdout, stderr, idx=index, repo_name=name, dlg=progress):

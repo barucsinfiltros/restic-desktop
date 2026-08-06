@@ -740,6 +740,9 @@ def build_stylesheet(theme: AppTheme) -> str:
     light = _hex_luminance(t.bg) > 0.55
     hover = "rgba(0, 0, 0, 0.06)" if light else "rgba(255, 255, 255, 0.07)"
     hover_strong = "rgba(0, 0, 0, 0.10)" if light else "rgba(255, 255, 255, 0.10)"
+    # Combo popup selection must use solid accent + contrasting text.
+    # Soft rgba + light Windows system highlight often yields white-on-white.
+    on_accent = "#111827" if _hex_luminance(t.accent) > 0.55 else "#ffffff"
     # Theme-tinted lifts (not flat grey) for translucent header / shell feel.
     header_wash = t.accent_soft
     shell_bg = _mix_hex(t.surface, t.bg, 0.35)
@@ -1469,23 +1472,27 @@ def build_stylesheet(theme: AppTheme) -> str:
             color: {t.text};
             border: 1px solid {t.border};
             outline: none;
-            selection-background-color: {t.accent_soft};
-            selection-color: {t.text};
+            selection-background-color: {t.accent};
+            selection-color: {on_accent};
             padding: 4px;
         }}
         QComboBox QAbstractItemView::item {{
             color: {t.text};
-            background-color: {t.surface};
+            background-color: transparent;
             padding: 4px 8px;
             min-height: 22px;
         }}
         QComboBox QAbstractItemView::item:selected {{
+            background-color: {t.accent};
+            color: {on_accent};
+        }}
+        QComboBox QAbstractItemView::item:hover {{
             background-color: {t.accent_soft};
             color: {t.text};
         }}
-        QComboBox QAbstractItemView::item:hover {{
-            background-color: {hover};
-            color: {t.text};
+        QComboBox QAbstractItemView::item:selected:hover {{
+            background-color: {t.accent};
+            color: {on_accent};
         }}
         QComboBox::drop-down {{
             subcontrol-origin: border;
@@ -1641,6 +1648,10 @@ def build_stylesheet(theme: AppTheme) -> str:
         }}
         QLabel {{
             color: {t.text};
+        }}
+        QLabel#mutedLabel {{
+            color: {t.muted};
+            font-size: 12px;
         }}
         QMessageBox, QDialog {{
             background-color: {t.sidebar};
@@ -2215,7 +2226,12 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: {t.surface};
             color: {t.text};
             border: 1px solid {t.border};
-            selection-background-color: {t.accent_soft};
+            selection-background-color: {t.accent};
+            selection-color: {on_accent};
+        }}
+        #systemLogDialog QComboBox QAbstractItemView::item:selected {{
+            background-color: {t.accent};
+            color: {on_accent};
         }}
         #systemLogDialog QLineEdit {{
             background-color: {t.surface};
