@@ -46,6 +46,7 @@ from ui.snapshots import (
     snapshot_short_id_from_row,
     update_snapshots_summary,
 )
+from ui.restore import create_restore_page as build_restore_page_ui
 
 # Import Windows toast notifications (optional)
 try:
@@ -552,6 +553,87 @@ def make_framed_progress_dialog(
     dlg.body_layout.addWidget(bar)
 
     return dlg, label, bar
+
+
+def show_framed_message(
+    parent,
+    title: str,
+    message: str,
+    *,
+    kind: str = "warning",
+    buttons: str = "ok",
+    min_width: int = 420,
+) -> bool:
+    """
+    Framed alert dialog matching app chrome.
+
+    kind: \"info\" | \"warning\" | \"error\"
+    buttons: \"ok\" | \"yes_no\"
+    Returns True for OK/Yes, False for No/Cancel.
+    """
+    dlg = FramedDialog(
+        title,
+        parent,
+        show_maximize=False,
+        show_minimize=False,
+        modal=True,
+    )
+    dlg.setMinimumWidth(min_width)
+    dlg.setMaximumWidth(max(min_width + 120, 560))
+    dlg.body_layout.setContentsMargins(20, 16, 20, 20)
+    dlg.body_layout.setSpacing(14)
+
+    heading = title
+
+    title_lbl = QLabel(heading)
+    title_lbl.setObjectName("pageTitle")
+    title_lbl.setStyleSheet("font-size: 18px;")
+    title_lbl.setWordWrap(True)
+    dlg.body_layout.addWidget(title_lbl)
+
+    body = QLabel(message)
+    body.setObjectName("pageSubtitle")
+    body.setWordWrap(True)
+    dlg.body_layout.addWidget(body)
+
+    footer = QHBoxLayout()
+    footer.setSpacing(8)
+    footer.addStretch(1)
+
+    accepted = {"value": False}
+
+    if buttons == "yes_no":
+        no_btn = QPushButton("No")
+        no_btn.setObjectName("dialogSecondary")
+        no_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        no_btn.clicked.connect(dlg.reject)
+        footer.addWidget(no_btn)
+
+        yes_btn = QPushButton("Yes")
+        yes_btn.setObjectName("dialogPrimary")
+        yes_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def _yes() -> None:
+            accepted["value"] = True
+            dlg.accept()
+
+        yes_btn.clicked.connect(_yes)
+        footer.addWidget(yes_btn)
+    else:
+        ok_btn = QPushButton("OK")
+        ok_btn.setObjectName("dialogPrimary")
+        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def _ok() -> None:
+            accepted["value"] = True
+            dlg.accept()
+
+        ok_btn.clicked.connect(_ok)
+        footer.addWidget(ok_btn)
+
+    dlg.body_layout.addLayout(footer)
+    dlg.exec()
+    return bool(accepted["value"])
 
 
 def make_rounded_splash(
@@ -3436,178 +3518,7 @@ class ResticManagerWindow(QMainWindow):
     
     def create_restore_page(self):
         """Create file restore page"""
-        page = QWidget()
-        page.setVisible(False)  # prevent top-level flash during splash processEvents
-        layout = QVBoxLayout()
-        page.setLayout(layout)
-        
-        # Title
-        title = QLabel("Restore Files")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        
-        # Restore form
-        form_group = QGroupBox("Restore Configuration")
-        form_layout = QFormLayout()
-        form_group.setLayout(form_layout)
-        
-        # Repository selection
-        self.restore_repo_combo = QComboBox()
-        self.restore_repo_combo.setFixedWidth(400)
-        
-        # Snapshot selection with quick access buttons
-        snapshot_row = QHBoxLayout()
-        self.restore_snapshot_combo = QComboBox()
-        self.restore_snapshot_combo.setFixedWidth(325)
-        self.restore_repo_combo.currentTextChanged.connect(self.load_snapshots_for_restore)
-        snapshot_row.addWidget(self.restore_snapshot_combo)
-        
-        # Latest snapshot button
-        latest_btn = QPushButton("Latest")
-        latest_btn.setFixedWidth(70)
-        latest_btn.setToolTip("Jump to the most recent snapshot")
-        latest_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        latest_btn.clicked.connect(self.select_latest_snapshot)
-        snapshot_row.addWidget(latest_btn)
-        snapshot_row.addStretch()
-        
-        
-        # Path to restore
-        path_layout = QHBoxLayout()
-        self.restore_path_input = QLineEdit()
-        self.restore_path_input.setPlaceholderText("Leave empty to restore all files")
-        self.restore_path_input.setFixedWidth(400)
-        path_layout.addWidget(self.restore_path_input)
-        browse_btn = QPushButton("Browse Snapshot")
-        browse_btn.clicked.connect(self.browse_snapshot_files)
-        path_layout.addWidget(browse_btn)
-        
-        
-        # Restore to original location checkbox
-        self.restore_to_original_check = QCheckBox("Restore to original location")
-        self.restore_to_original_check.setToolTip("When checked, files will be restored to their original paths from the snapshot")
-        self.restore_to_original_check.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.restore_to_original_check.stateChanged.connect(self._on_restore_to_original_changed)
-        
-        
-        
-        # Target directory
-        target_layout = QHBoxLayout()
-        self.restore_target_input = QLineEdit()
-        self.restore_target_input.setPlaceholderText("Select target directory for restore")
-        self.restore_target_input.setFixedWidth(400)
-        target_layout.addWidget(self.restore_target_input)
-        
-        self.target_browse_btn = QPushButton("Browse")
-        self.target_browse_btn.clicked.connect(self.browse_restore_target)
-        target_layout.addWidget(self.target_browse_btn)
-        
-        
-        
-        form_layout.addRow("Repository:", self.restore_repo_combo)
-        form_layout.addRow("Snapshot:", snapshot_row)
-        
-        # Date-based quick restore
-        date_row = QHBoxLayout()
-        date_row.addWidget(QLabel("Quick Select by Date:"))
-        date_row.addSpacing(60)
-
-        self.restore_date_edit = QDateEdit()
-        self.restore_date_edit.setDate(QDate.currentDate())
-        self.restore_date_edit.setCalendarPopup(True)
-        self.restore_date_edit.setFixedWidth(200)
-        date_row.addWidget(self.restore_date_edit)
-        
-        find_date_btn = QPushButton("Find Snapshot")
-        find_date_btn.setToolTip("Find snapshot closest to selected date")
-        find_date_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        find_date_btn.clicked.connect(self.find_snapshot_by_date)
-        date_row.addWidget(find_date_btn)
-        date_row.addStretch()
-        
-        form_layout.addRow("", date_row)
-        form_layout.addRow("Path to Restore:", path_layout)
-        form_layout.addItem(QSpacerItem(20, 10, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
-        form_layout.addRow("", self.restore_to_original_check)
-        form_layout.addRow("Restore To:", target_layout)
-        
-        # Global search section
-        search_group = QGroupBox("Search Across All Snapshots")
-        search_layout = QVBoxLayout()
-        search_group.setLayout(search_layout)
-        
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Find file/folder:"))
-        self.global_search_input = QLineEdit()
-        self.global_search_input.setPlaceholderText("Enter filename or path  pattern (e.g., *.pdf, my_document.txt, /path/to/folder)")
-        self.global_search_input.setFixedWidth(400)
-        search_row.addWidget(self.global_search_input)
-        
-        search_btn = QPushButton("Search All Snapshots")
-        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        search_btn.clicked.connect(self.search_across_snapshots)
-        search_row.addWidget(search_btn)
-        search_row.addStretch()
-        
-        search_layout.addLayout(search_row)
-        
-        # Search results table
-        from PyQt6.QtWidgets import QHeaderView
-        self.search_results_table = QTableWidget()
-        self.search_results_table.setColumnCount(6)
-        self.search_results_table.setHorizontalHeaderLabels(["File/Folder", "Path", "Snapshot ID", "Date/Time", "Size", "Action"])
-        self.search_results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.search_results_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        self.search_results_table.setMaximumHeight(200)
-        #self.search_results_table.setFixedHeight(300)
-        self.search_results_table.setVisible(False)  # Hidden until search is performed
-        search_layout.addWidget(self.search_results_table)
-        
-        
-        
-        # Restore buttons
-        restore_btn = QPushButton("Start Restore")
-        restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        restore_btn.clicked.connect(self.start_restore)
-        
-        self.mount_browse_btn = QPushButton("Browse Files")
-        self.mount_browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mount_browse_btn.clicked.connect(self.mount_and_browse_snapshot)
-        self.mount_browse_btn.setToolTip("Browse all snapshots in the repository and restore specific files")
-        
-        restore_layout = QHBoxLayout()
-        restore_layout.addStretch()
-        restore_layout.addWidget(self.mount_browse_btn)
-        restore_layout.addSpacing(10)
-        restore_layout.addWidget(restore_btn)
-        restore_layout.addStretch()
-        
-        
-        
-        # Progress
-        self.restore_progress = QProgressBar()
-        self.restore_progress.setVisible(False)
-        
-        
-        # Log output
-        log_group = QGroupBox("Restore Log")
-        log_layout = QVBoxLayout()
-        log_group.setLayout(log_layout)
-        
-        self.restore_log = QPlainTextEdit()
-        self.restore_log.setReadOnly(True)
-        log_layout.addWidget(self.restore_log)
-        
-        layout.addWidget(title)
-        layout.addWidget(form_group)
-        layout.addWidget(search_group)
-        layout.addLayout(restore_layout)
-        layout.addWidget(self.restore_progress)
-        layout.addWidget(log_group)
-        
+        page = build_restore_page_ui(self)
         self.stacked_widget.addWidget(page)
     
     def create_backup_page(self):
@@ -7342,11 +7253,21 @@ class ResticManagerWindow(QMainWindow):
         """Search for files/folders across all snapshots"""
         search_pattern = self.global_search_input.text().strip()
         if not search_pattern:
-            QMessageBox.warning(self, "No Search Term", "Please enter a filename or path pattern to search for.")
+            show_framed_message(
+                self,
+                "No Search Term",
+                "Please enter a filename or path pattern to search for.",
+                kind="warning",
+            )
             return
         
         if not hasattr(self, '_restore_snapshots_cache') or not self._restore_snapshots_cache:
-            QMessageBox.warning(self, "No Snapshots", "No snapshots loaded. Please select a repository first.")
+            show_framed_message(
+                self,
+                "No Snapshots",
+                "No snapshots loaded. Please select a repository first.",
+                kind="warning",
+            )
             return
         
         repo_name = self.restore_repo_combo.currentText()
@@ -7427,6 +7348,7 @@ class ResticManagerWindow(QMainWindow):
                 
                 # Add restore button
                 restore_btn = QPushButton("Restore")
+                restore_btn.setObjectName("dialogSecondary")
                 restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 restore_btn.clicked.connect(lambda checked, r=result: self._restore_from_search(r))
                 self.search_results_table.setCellWidget(row, 5, restore_btn)
@@ -7434,7 +7356,12 @@ class ResticManagerWindow(QMainWindow):
             self.log(f"Found {len(results)} match(es) across {len(self._restore_snapshots_cache)} snapshots")
         else:
             self.search_results_table.setVisible(False)
-            QMessageBox.information(self, "No Results", f"No files matching '{search_pattern}' found in any snapshot.")
+            show_framed_message(
+                self,
+                "No Results",
+                f"No files matching “{search_pattern}” found in any snapshot.",
+                kind="info",
+            )
             self.log(f"No matches found for '{search_pattern}'")
     
     def _restore_from_search(self, result):
@@ -7452,15 +7379,16 @@ class ResticManagerWindow(QMainWindow):
         # Set the path to restore
         self.restore_path_input.setText(file_path)
         
-        # Show message
-        QMessageBox.information(
+        show_framed_message(
             self,
             "Ready to Restore",
             f"Selected file for restore:\n\n"
             f"File: {result['name']}\n"
             f"Path: {file_path}\n"
             f"Snapshot: {result['snapshot_id']}\n\n"
-            f"Please select a restore location and click 'Start Restore'."
+            "Choose a restore location and click Start Restore.",
+            kind="info",
+            min_width=460,
         )
         
         self.log(f"Prepared to restore: {file_path} from snapshot {result['snapshot_id']}")
@@ -7472,7 +7400,12 @@ class ResticManagerWindow(QMainWindow):
         snapshot_text = self.restore_snapshot_combo.currentText()
         
         if not repo_name or snapshot_text == "Select a snapshot" or not snapshot_text:
-            QMessageBox.warning(self, "Selection Required", "Please select a repository and snapshot first")
+            show_framed_message(
+                self,
+                "Selection Required",
+                "Please select a repository and snapshot first.",
+                kind="warning",
+            )
             return
         
         # Get snapshot ID
@@ -7490,144 +7423,198 @@ class ResticManagerWindow(QMainWindow):
             snapshot_time = parts[1] if len(parts) > 1 else "Unknown"
             snapshot_host = parts[2] if len(parts) > 2 else "Unknown"
             snapshot_paths = parts[3] if len(parts) > 3 else "Unknown"
-        except:
+        except Exception:
             snapshot_time = snapshot_host = snapshot_paths = "Unknown"
         
         # Build snapshot data
         snapshot_data = {
             "id": snapshot_id,
-            "short_id": snapshot_id[:8] if len(snapshot_id) > 8 else snapshot_id,
+            "short_id": snapshot_id[:8] if len(str(snapshot_id)) > 8 else snapshot_id,
             "time": snapshot_time,
             "hostname": snapshot_host,
-            "paths": [snapshot_paths]
+            "paths": [snapshot_paths],
         }
         
-        # Show dialog with file tree (reuse the browse_snapshot_content dialog logic)
+        # Show dialog with file tree (same chrome as Browse Files / Snapshot Content)
         self._show_snapshot_browser_for_restore(snapshot_id, snapshot_data, repo, password, repo_name)
     
     def _show_snapshot_browser_for_restore(self, snapshot_id, snapshot_data, repo, password, repo_name):
-        """Show snapshot browser dialog for restore page"""
-        # Create dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Browse Snapshot - {snapshot_id[:8]}")
-        dialog.setMinimumSize(900, 650)
-        
-        layout = QVBoxLayout()
-        dialog.setLayout(layout)
-        
-        # Snapshot info table
-        info_table = QTableWidget()
-        info_table.setRowCount(1)
-        info_table.setColumnCount(4)
-        info_table.setHorizontalHeaderLabels(["Snapshot ID", "Time", "Host", "Paths"])
-        info_table.verticalHeader().setVisible(False)
-        info_table.setMaximumHeight(80)
-        info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        
-        # Populate snapshot info
+        """Show framed snapshot browser for picking a restore path."""
+        short_id = str(snapshot_data.get("short_id") or str(snapshot_id)[:8])
         snapshot_time = snapshot_data.get("time", "Unknown")
         snapshot_host = snapshot_data.get("hostname", "Unknown")
-        snapshot_paths = ", ".join(snapshot_data.get("paths", []))
-        
-        info_table.setItem(0, 0, QTableWidgetItem(snapshot_id[:8]))
-        info_table.setItem(0, 1, QTableWidgetItem(snapshot_time))
-        info_table.setItem(0, 2, QTableWidgetItem(snapshot_host))
-        info_table.setItem(0, 3, QTableWidgetItem(snapshot_paths))
-        
-        info_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        info_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        info_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        info_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        
-        layout.addWidget(info_table)
-        
-        # Header
+        snapshot_paths = ", ".join(snapshot_data.get("paths") or []) or "—"
+
+        dialog = FramedDialog(
+            f"Browse Snapshot — {short_id}",
+            self,
+            show_maximize=True,
+            show_minimize=False,
+        )
+        dialog.setMinimumSize(960, 680)
+        dialog.body_layout.setContentsMargins(16, 12, 16, 16)
+        dialog.body_layout.setSpacing(12)
+        layout = dialog.body_layout
+
+        dialog._repo = repo
+        dialog._password = password or ""
+        dialog._full_id = snapshot_id
+        dialog._all_files = []
+        dialog._file_tree_items = {}
+
+        # Meta strip
+        meta = QFrame()
+        meta.setObjectName("browseMetaStrip")
+        meta_row = QHBoxLayout(meta)
+        meta_row.setContentsMargins(14, 10, 14, 10)
+        meta_row.setSpacing(20)
+
+        def _meta_pair(label: str, value: str) -> QVBoxLayout:
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            lab = QLabel(label)
+            lab.setObjectName("browseMetaLabel")
+            val = QLabel(value)
+            val.setObjectName("browseMetaValue")
+            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            val.setWordWrap(True)
+            col.addWidget(lab)
+            col.addWidget(val)
+            return col
+
+        meta_row.addLayout(_meta_pair("Snapshot ID", short_id))
+        meta_row.addLayout(_meta_pair("Time", str(snapshot_time)))
+        meta_row.addLayout(_meta_pair("Host", str(snapshot_host)))
+        meta_row.addLayout(_meta_pair("Repository", repo_name or "—"), stretch=1)
+        layout.addWidget(meta)
+
+        # File browser card
+        browser_card = QFrame()
+        browser_card.setObjectName("sectionCard")
+        browser_layout = QVBoxLayout(browser_card)
+        browser_layout.setContentsMargins(14, 12, 14, 12)
+        browser_layout.setSpacing(10)
+
         header_layout = QHBoxLayout()
-        header_layout.addWidget(QLabel("<b>File Browser</b>"))
-        header_layout.addStretch()
-        
-        # Add size format selector
-        size_format_label = QLabel("Size:")
+        header_layout.setSpacing(8)
+        browser_title = QLabel("File Browser")
+        browser_title.setObjectName("sectionCardTitle")
+        header_layout.addWidget(browser_title)
+        header_layout.addStretch(1)
+
+        size_format_label = QLabel("Size")
+        size_format_label.setObjectName("pageSubtitle")
         header_layout.addWidget(size_format_label)
-        
+
         size_format_combo = QComboBox()
         size_format_combo.addItems(["Bytes", "KB", "MB", "GB", "Auto"])
         size_format_combo.setCurrentText("Auto")
-        size_format_combo.setFixedWidth(80)
+        size_format_combo.setFixedWidth(90)
+        size_format_combo.setMinimumHeight(28)
         size_format_combo.setToolTip("Choose how file sizes are displayed")
         header_layout.addWidget(size_format_combo)
-        
-        header_layout.addSpacing(10)
-        
-        # Add expand/collapse buttons
-        expand_all_btn = QPushButton("Expand All")
-        header_layout.addWidget(expand_all_btn)
-        
-        collapse_all_btn = QPushButton("Collapse All")
-        header_layout.addWidget(collapse_all_btn)
-        
-        # Add refresh button
-        refresh_btn = QPushButton("Refresh")
-        header_layout.addWidget(refresh_btn)
-        
-        layout.addLayout(header_layout)
-        
-        # Search controls
-        search_layout = QHBoxLayout()
-        search_layout.addWidget(QLabel("Search:"))
-        
+
+        def _tool_btn(text: str) -> QPushButton:
+            btn = QPushButton(text)
+            btn.setObjectName("dialogSecondary")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(28)
+            header_layout.addWidget(btn)
+            return btn
+
+        expand_all_btn = _tool_btn("Expand All")
+        collapse_all_btn = _tool_btn("Collapse All")
+        refresh_btn = _tool_btn("Refresh")
+        browser_layout.addLayout(header_layout)
+
         search_input = QLineEdit()
-        search_input.setPlaceholderText("Search files/folders...")
-        search_input.setFixedWidth(450)
-        search_input.setToolTip("Enter text to filter the tree view")
-        search_layout.addWidget(search_input)
-        
-        search_layout.addStretch()
-        layout.addLayout(search_layout)
-        
-        # File tree view
+        search_input.setObjectName("browseSearch")
+        search_input.setPlaceholderText("Search files and folders…")
+        search_input.setMinimumHeight(32)
+        search_input.setClearButtonEnabled(True)
+        browser_layout.addWidget(search_input)
+
         file_tree = QTreeWidget()
+        file_tree.setObjectName("browseFileTree")
         file_tree.setHeaderLabels(["Name", "Type", "Size", "Modified", "Permissions"])
-        file_tree.setColumnWidth(0, 400)
+        file_tree.setColumnWidth(0, 420)
         file_tree.setColumnWidth(1, 80)
         file_tree.setColumnWidth(2, 100)
         file_tree.setColumnWidth(3, 150)
         file_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         file_tree.setSortingEnabled(True)
-        file_tree.setAlternatingRowColors(True)
-        layout.addWidget(file_tree)
-        
-        # Status label
-        status_label = QLabel("Loading files...")
-        layout.addWidget(status_label)
-        
-        # Store all files for filtering
-        dialog._all_files = []
-        dialog._file_tree_items = {}  # Map path -> QTreeWidgetItem
-        
-        # Filter function
+        file_tree.setAlternatingRowColors(False)
+        file_tree.setRootIsDecorated(True)
+        file_tree.setUniformRowHeights(True)
+        file_tree.setAnimated(True)
+        file_tree.setIndentation(18)
+        file_tree.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        file_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        browse_header = file_tree.header()
+        browse_header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeading | Qt.AlignmentFlag.AlignVCenter
+        )
+        browse_header.setStretchLastSection(True)
+
+        tree_shell = QFrame()
+        tree_shell.setObjectName("browseFileTreeShell")
+        tree_shell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        tree_shell_layout = QVBoxLayout(tree_shell)
+        tree_shell_layout.setContentsMargins(0, 0, 0, 0)
+        tree_shell_layout.setSpacing(0)
+        tree_shell_layout.addWidget(file_tree)
+        browser_layout.addWidget(tree_shell, stretch=1)
+        layout.addWidget(browser_card, stretch=1)
+
+        file_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        file_tree.customContextMenuRequested.connect(
+            lambda pos, tree=file_tree, dlg=dialog: self._show_restore_path_browse_context_menu(
+                tree, pos, dlg
+            )
+        )
+
+        # Footer
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        status_label = QLabel("Loading files…")
+        status_label.setObjectName("pageSubtitle")
+        footer.addWidget(status_label, stretch=1)
+
+        use_path_btn = QPushButton("Use Selected Path")
+        use_path_btn.setObjectName("dialogSecondary")
+        use_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        use_path_btn.setToolTip("Set the selected path in the restore form")
+        use_path_btn.clicked.connect(
+            lambda: self._copy_paths_to_restore_input(file_tree, dialog=dialog)
+        )
+        footer.addWidget(use_path_btn)
+
+        copy_path_btn = QPushButton("Copy Path(s)")
+        copy_path_btn.setObjectName("dialogSecondary")
+        copy_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_path_btn.clicked.connect(lambda: self._copy_selected_tree_paths(file_tree, quiet=True))
+        footer.addWidget(copy_path_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("dialogPrimary")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(dialog.accept)
+        footer.addWidget(close_btn)
+        layout.addLayout(footer)
+
         def filter_tree():
-            """Filter tree view based on search text"""
             search_text = search_input.text().strip().lower()
-            
+
             def check_item_matches(item, text):
-                """Check if item or any child matches search text"""
                 if not text:
                     return True
-                
-                # Check item text
-                item_text = item.text(0).lower()
-                if text in item_text:
+                if text in item.text(0).lower():
                     return True
-                
-                # Check children
                 for i in range(item.childCount()):
                     if check_item_matches(item.child(i), text):
                         return True
-                
                 return False
-            
-            # Filter all root items
+
             visible_count = 0
             for i in range(file_tree.topLevelItemCount()):
                 item = file_tree.topLevelItem(i)
@@ -7635,87 +7622,104 @@ class ResticManagerWindow(QMainWindow):
                 item.setHidden(not matches)
                 if matches:
                     visible_count += 1
-                    # Expand to show matching children
                     if search_text:
                         item.setExpanded(True)
-            
-            # Update status
+
             if search_text:
                 status_label.setText(f"Showing {visible_count} matching items")
             else:
-                status_label.setText(f"Loaded {len(dialog._all_files)} files and folders")
-        
-        # Connect search
+                status_label.setText(
+                    f"Loaded {len(getattr(dialog, '_all_files', []) or [])} files and folders"
+                )
+
         search_input.textChanged.connect(filter_tree)
-        
-        # Connect expand/collapse buttons
         expand_all_btn.clicked.connect(file_tree.expandAll)
         collapse_all_btn.clicked.connect(file_tree.collapseAll)
-        
-        # Function to update all file sizes in the tree
+
         def update_tree_sizes():
-            """Update all size displays in the tree according to selected format"""
             format_mode = size_format_combo.currentText()
-            
+
             def update_item_size(item):
-                """Recursively update item and children sizes"""
-                # Update this item's size
                 raw_size = item.data(2, Qt.ItemDataRole.UserRole + 1)
-                if raw_size:
-                    formatted = self.format_size(raw_size, format_mode)
-                    item.setText(2, formatted)
-                
-                # Update children
+                if raw_size not in (None, "", "0"):
+                    item.setText(2, self.format_size(raw_size, format_mode))
                 for i in range(item.childCount()):
                     update_item_size(item.child(i))
-            
-            # Update all root items
+
             for i in range(file_tree.topLevelItemCount()):
                 update_item_size(file_tree.topLevelItem(i))
-        
-        # Connect size format combo
+
         size_format_combo.currentTextChanged.connect(lambda: update_tree_sizes())
-        
-        # Store filter function reference
-        dialog._filter_files = filter_tree
-        
-        # Connect refresh button
-        refresh_btn.clicked.connect(lambda: self._load_snapshot_content(file_tree, snapshot_id, repo, password, status_label, dialog))
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        
-        copy_path_btn = QPushButton("Copy Selected Path(s)")
-        copy_path_btn.setToolTip("Copy the full paths of selected files/folders to clipboard (or set in restore input if single selection)")
-        copy_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        copy_path_btn.clicked.connect(lambda: self._copy_paths_to_restore_input(file_tree))
-        btn_layout.addWidget(copy_path_btn)
-        
-        btn_layout.addStretch()
-        
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.accept)
-        btn_layout.addWidget(close_btn)
-        
-        layout.addLayout(btn_layout)
-        
-        # Store references for the worker callback
+        refresh_btn.clicked.connect(
+            lambda: self._load_snapshot_content(
+                file_tree, snapshot_id, repo, password, status_label, dialog
+            )
+        )
+
         dialog._file_list = file_tree
         dialog._status_label = status_label
-        dialog._repo = repo
-        dialog._password = password
-        dialog._full_id = snapshot_id
-        
-        # Load snapshot content
+        dialog._filter_files = filter_tree
+
         self._load_snapshot_content(file_tree, snapshot_id, repo, password, status_label, dialog)
-        
-        self.log(f"Browsing content of snapshot {snapshot_id[:8]}")
+        self.log(f"Browsing content of snapshot {short_id}")
         dialog.exec()
+
+    def _show_restore_path_browse_context_menu(self, file_tree, pos, dialog):
+        """Context menu for Browse Snapshot: use path / copy / restore."""
+        item = file_tree.itemAt(pos)
+        if item is not None and not item.isSelected():
+            file_tree.clearSelection()
+            item.setSelected(True)
+            file_tree.setCurrentItem(item)
+
+        selected = file_tree.selectedItems()
+        has_selection = bool(selected)
+        can_expand = any(it.childCount() > 0 for it in selected) if selected else False
+
+        menu = RoundedMenu(file_tree)
+        use_act = menu.addAction("Use selected path")
+        use_act.setEnabled(has_selection)
+        copy_act = menu.addAction("Copy path(s)")
+        copy_act.setEnabled(has_selection)
+        menu.addSeparator()
+        restore_act = menu.addAction("Restore selected…")
+        restore_act.setEnabled(has_selection)
+        restore_orig_act = menu.addAction("Restore to original location…")
+        restore_orig_act.setEnabled(has_selection)
+        menu.addSeparator()
+        expand_act = menu.addAction("Expand")
+        expand_act.setEnabled(can_expand)
+        collapse_act = menu.addAction("Collapse")
+        collapse_act.setEnabled(can_expand)
+
+        chosen = menu.exec(file_tree.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen is use_act:
+            self._copy_paths_to_restore_input(file_tree, dialog=dialog)
+        elif chosen is copy_act:
+            self._copy_selected_tree_paths(file_tree, quiet=True)
+        elif chosen is restore_act:
+            self._restore_selected_from_snapshot_browser(file_tree, dialog, to_original=False)
+        elif chosen is restore_orig_act:
+            self._restore_selected_from_snapshot_browser(file_tree, dialog, to_original=True)
+        elif chosen is expand_act:
+            for it in selected:
+                it.setExpanded(True)
+        elif chosen is collapse_act:
+            for it in selected:
+                it.setExpanded(False)
     
-    def _copy_paths_to_restore_input(self, file_tree):
+    def _copy_paths_to_restore_input(self, file_tree, dialog=None):
         """Copy selected file paths from tree to restore path input"""
         selected_items = file_tree.selectedItems()
         if not selected_items:
+            show_framed_message(
+                dialog or self,
+                "No Selection",
+                "Please select a file or folder first.",
+                kind="warning",
+            )
             return
         
         # Get paths from selected items
@@ -7725,18 +7729,31 @@ class ResticManagerWindow(QMainWindow):
             if path:
                 paths.append(path)
         
-        if paths:
-            # If single file, put in restore path input
-            # If multiple, copy to clipboard
-            if len(paths) == 1:
-                self.restore_path_input.setText(paths[0])
-                self.log(f"Path set in restore input: {paths[0]}")
-                QMessageBox.information(None, "Path Set", f"Path has been set in the restore input field")
-            else:
-                clipboard_text = "\n".join(paths)
-                QApplication.clipboard().setText(clipboard_text)
-                self.log(f"Copied {len(paths)} path(s) to clipboard")
-                QMessageBox.information(None, "Copied", f"Copied {len(paths)} path(s) to clipboard")
+        if not paths:
+            return
+
+        parent = dialog or self
+        if len(paths) == 1:
+            self.restore_path_input.setText(paths[0])
+            self.log(f"Path set in restore input: {paths[0]}")
+            show_framed_message(
+                parent,
+                "Path Set",
+                "The selected path has been set in the restore form.",
+                kind="info",
+            )
+            if dialog is not None:
+                dialog.accept()
+        else:
+            QApplication.clipboard().setText("\n".join(paths))
+            self.log(f"Copied {len(paths)} path(s) to clipboard")
+            show_framed_message(
+                parent,
+                "Copied",
+                f"Copied {len(paths)} paths to the clipboard.\n\n"
+                "Select a single item to set it as the restore path.",
+                kind="info",
+            )
     
     def _on_restore_to_original_changed(self, state):
         """Handle restore to original location checkbox state change"""
@@ -7769,7 +7786,12 @@ class ResticManagerWindow(QMainWindow):
         restore_to_original = self.restore_to_original_check.isChecked()
         
         if not repo_name or snapshot_text == "Select a snapshot" or not snapshot_text:
-            QMessageBox.warning(self, "Incomplete", "Please select a repository and snapshot")
+            show_framed_message(
+                self,
+                "Incomplete",
+                "Please select a repository and snapshot before starting a restore.",
+                kind="warning",
+            )
             return
         
         # Determine target directory
@@ -7781,7 +7803,12 @@ class ResticManagerWindow(QMainWindow):
         else:
             target = self.restore_target_input.text()
             if not target:
-                QMessageBox.warning(self, "Incomplete", "Please select a target directory or check 'Restore to original location'")
+                show_framed_message(
+                    self,
+                    "Incomplete",
+                    "Please select a target directory, or enable “Restore to original location”.",
+                    kind="warning",
+                )
                 return
         
         # Check available disk space on target location
@@ -7810,12 +7837,15 @@ class ResticManagerWindow(QMainWindow):
             
             # Warn if less than 1GB free
             if free_gb < 1:
-                reply = QMessageBox.warning(self, "Low Disk Space",
-                    f"Warning: Only {free_gb:.2f} GB free space available on target location.\n\n"
+                if not show_framed_message(
+                    self,
+                    "Low Disk Space",
+                    f"Only {free_gb:.2f} GB free space is available on the target location.\n\n"
                     f"Target: {target}\n\n"
                     "Continue with restore anyway?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                if reply != QMessageBox.StandardButton.Yes:
+                    kind="warning",
+                    buttons="yes_no",
+                ):
                     return
             else:
                 self.log(f"Available space on target: {free_gb:.2f} GB")
@@ -7830,28 +7860,40 @@ class ResticManagerWindow(QMainWindow):
         
         repo, password = self.get_repository_by_name(repo_name)
         if not repo:
-            QMessageBox.warning(self, "Error", "Repository not found")
+            show_framed_message(
+                self,
+                "Error",
+                "Repository not found.",
+                kind="error",
+            )
             return
         
         # Confirm restore
         if restore_to_original:
             location_msg = "ORIGINAL LOCATIONS (this will overwrite existing files!)"
-            warning_emoji = "âš ï¸ "
+            confirm_kind = "warning"
         else:
             location_msg = target
-            warning_emoji = ""
+            confirm_kind = "info"
         
         if restore_path:
-            msg = f"{warning_emoji}Restore '{restore_path}' from snapshot {snapshot_id} to:\n{location_msg}?"
+            msg = f"Restore “{restore_path}” from snapshot {snapshot_id} to:\n{location_msg}?"
         else:
-            msg = f"{warning_emoji}Restore ALL FILES from snapshot {snapshot_id} to:\n{location_msg}?\n\nThis may take a long time!"
+            msg = (
+                f"Restore ALL FILES from snapshot {snapshot_id} to:\n{location_msg}?\n\n"
+                "This may take a long time."
+            )
         
-        reply = QMessageBox.question(self, "Confirm Restore", msg,
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        
-        if reply != QMessageBox.StandardButton.Yes:
+        if not show_framed_message(
+            self,
+            "Confirm Restore",
+            msg,
+            kind=confirm_kind,
+            buttons="yes_no",
+            min_width=480,
+        ):
             return
-        
+
         self.restore_progress.setVisible(True)
         self.restore_progress.setRange(0, 0)  # Indeterminate
         self.restore_log.clear()
@@ -7962,240 +8004,314 @@ class ResticManagerWindow(QMainWindow):
         self._browse_repository_snapshots(repo, password, repo_name)
     
     def _browse_repository_snapshots(self, repo, password, repo_name):
-        """Show dialog to browse and restore files from snapshots using JSON API"""
-        # Create browser dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Browse Snapshots - {repo_name}")
-        dialog.setMinimumSize(900, 600)
-        layout = QVBoxLayout()
-        dialog.setLayout(layout)
-        
-        # Snapshot selector at top
-        selector_layout = QHBoxLayout()
-        selector_layout.addWidget(QLabel("Snapshot:"))
-        
+        """Show framed snapshot file browser (matches Snapshot Content modal)."""
+        dialog = FramedDialog(
+            f"Browse Files — {repo_name}",
+            self,
+            show_maximize=True,
+            show_minimize=False,
+        )
+        dialog.setMinimumSize(960, 680)
+        dialog.body_layout.setContentsMargins(16, 12, 16, 16)
+        dialog.body_layout.setSpacing(12)
+        layout = dialog.body_layout
+
+        dialog._repo = repo
+        dialog._password = password or ""
+        dialog._full_id = None
+        dialog._all_files = []
+        dialog._file_tree_items = {}
+
+        # Meta strip: repository + snapshot picker
+        meta = QFrame()
+        meta.setObjectName("browseMetaStrip")
+        meta_row = QHBoxLayout(meta)
+        meta_row.setContentsMargins(14, 10, 14, 10)
+        meta_row.setSpacing(16)
+
+        def _meta_pair(label: str, widget: QWidget, stretch: int = 0) -> None:
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            lab = QLabel(label)
+            lab.setObjectName("browseMetaLabel")
+            col.addWidget(lab)
+            col.addWidget(widget)
+            meta_row.addLayout(col, stretch)
+
+        repo_val = QLabel(repo_name)
+        repo_val.setObjectName("browseMetaValue")
+        repo_val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        _meta_pair("Repository", repo_val)
+
         snapshot_combo = QComboBox()
-        snapshot_combo.setMinimumWidth(400)
-        selector_layout.addWidget(snapshot_combo)
-        
+        snapshot_combo.setMinimumHeight(32)
+        snapshot_combo.setMinimumWidth(360)
+        snapshot_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        _meta_pair("Snapshot", snapshot_combo, stretch=1)
+
         refresh_snapshots_btn = QPushButton("Refresh List")
-        selector_layout.addWidget(refresh_snapshots_btn)
-        selector_layout.addStretch()
-        
-        layout.addLayout(selector_layout)
-        
-        # File tree
+        refresh_snapshots_btn.setObjectName("dialogSecondary")
+        refresh_snapshots_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_snapshots_btn.setFixedHeight(32)
+        meta_row.addWidget(refresh_snapshots_btn, 0, Qt.AlignmentFlag.AlignBottom)
+        layout.addWidget(meta)
+
+        # File browser card
+        browser_card = QFrame()
+        browser_card.setObjectName("sectionCard")
+        browser_layout = QVBoxLayout(browser_card)
+        browser_layout.setContentsMargins(14, 12, 14, 12)
+        browser_layout.setSpacing(10)
+
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(8)
+        browser_title = QLabel("File Browser")
+        browser_title.setObjectName("sectionCardTitle")
+        header_layout.addWidget(browser_title)
+        header_layout.addStretch(1)
+
+        size_format_label = QLabel("Size")
+        size_format_label.setObjectName("pageSubtitle")
+        header_layout.addWidget(size_format_label)
+
+        size_format_combo = QComboBox()
+        size_format_combo.addItems(["Bytes", "KB", "MB", "GB", "Auto"])
+        size_format_combo.setCurrentText("Auto")
+        size_format_combo.setFixedWidth(90)
+        size_format_combo.setMinimumHeight(28)
+        size_format_combo.setToolTip("Choose how file sizes are displayed")
+        header_layout.addWidget(size_format_combo)
+
+        def _tool_btn(text: str) -> QPushButton:
+            btn = QPushButton(text)
+            btn.setObjectName("dialogSecondary")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(28)
+            header_layout.addWidget(btn)
+            return btn
+
+        expand_all_btn = _tool_btn("Expand All")
+        collapse_all_btn = _tool_btn("Collapse All")
+        refresh_files_btn = _tool_btn("Refresh")
+        browser_layout.addLayout(header_layout)
+
+        search_input = QLineEdit()
+        search_input.setObjectName("browseSearch")
+        search_input.setPlaceholderText("Search files and folders…")
+        search_input.setMinimumHeight(32)
+        search_input.setClearButtonEnabled(True)
+        browser_layout.addWidget(search_input)
+
         file_tree = QTreeWidget()
-        file_tree.setHeaderLabels(["Name", "Size", "Modified", "Type"])
-        file_tree.setColumnWidth(0, 400)
-        file_tree.setColumnWidth(1, 100)
-        file_tree.setColumnWidth(2, 150)
+        file_tree.setObjectName("browseFileTree")
+        file_tree.setHeaderLabels(["Name", "Type", "Size", "Modified", "Permissions"])
+        file_tree.setColumnWidth(0, 420)
+        file_tree.setColumnWidth(1, 80)
+        file_tree.setColumnWidth(2, 100)
+        file_tree.setColumnWidth(3, 150)
+        file_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         file_tree.setSortingEnabled(True)
-        layout.addWidget(file_tree)
-        
-        # Status label
+        file_tree.setAlternatingRowColors(False)
+        file_tree.setRootIsDecorated(True)
+        file_tree.setUniformRowHeights(True)
+        file_tree.setAnimated(True)
+        file_tree.setIndentation(18)
+        file_tree.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        file_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        browse_header = file_tree.header()
+        browse_header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeading | Qt.AlignmentFlag.AlignVCenter
+        )
+        browse_header.setStretchLastSection(True)
+
+        tree_shell = QFrame()
+        tree_shell.setObjectName("browseFileTreeShell")
+        tree_shell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        tree_shell_layout = QVBoxLayout(tree_shell)
+        tree_shell_layout.setContentsMargins(0, 0, 0, 0)
+        tree_shell_layout.setSpacing(0)
+        tree_shell_layout.addWidget(file_tree)
+        browser_layout.addWidget(tree_shell, stretch=1)
+        layout.addWidget(browser_card, stretch=1)
+
+        file_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        file_tree.customContextMenuRequested.connect(
+            lambda pos, tree=file_tree, dlg=dialog: self._show_snapshot_browse_context_menu(
+                tree, pos, dlg
+            )
+        )
+
+        # Footer
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
         status_label = QLabel("Select a snapshot to browse")
-        status_label.setStyleSheet("color: #888; font-style: italic;")
-        layout.addWidget(status_label)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        
-        restore_selected_btn = QPushButton("Restore Selected...")
+        status_label.setObjectName("pageSubtitle")
+        footer.addWidget(status_label, stretch=1)
+
+        restore_selected_btn = QPushButton("Restore Selected…")
+        restore_selected_btn.setObjectName("dialogSecondary")
+        restore_selected_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         restore_selected_btn.setEnabled(False)
         restore_selected_btn.clicked.connect(
-            lambda: self._restore_selected_from_browser(file_tree, snapshot_combo, repo, password, dialog)
+            lambda: self._restore_selected_from_snapshot_browser(
+                file_tree, dialog, to_original=False
+            )
         )
-        btn_layout.addWidget(restore_selected_btn)
-        
-        btn_layout.addStretch()
-        
+        footer.addWidget(restore_selected_btn)
+
+        restore_orig_btn = QPushButton("Restore to Original…")
+        restore_orig_btn.setObjectName("dialogSecondary")
+        restore_orig_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        restore_orig_btn.setEnabled(False)
+        restore_orig_btn.clicked.connect(
+            lambda: self._restore_selected_from_snapshot_browser(
+                file_tree, dialog, to_original=True
+            )
+        )
+        footer.addWidget(restore_orig_btn)
+
+        copy_path_btn = QPushButton("Copy Path(s)")
+        copy_path_btn.setObjectName("dialogSecondary")
+        copy_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_path_btn.clicked.connect(lambda: self._copy_selected_tree_paths(file_tree, quiet=True))
+        footer.addWidget(copy_path_btn)
+
         close_btn = QPushButton("Close")
+        close_btn.setObjectName("dialogPrimary")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.clicked.connect(dialog.accept)
-        btn_layout.addWidget(close_btn)
-        
-        layout.addLayout(btn_layout)
-        
-        # Load snapshots function
+        footer.addWidget(close_btn)
+        layout.addLayout(footer)
+
+        def filter_tree():
+            search_text = search_input.text().strip().lower()
+
+            def check_item_matches(item, text):
+                if not text:
+                    return True
+                if text in item.text(0).lower():
+                    return True
+                for i in range(item.childCount()):
+                    if check_item_matches(item.child(i), text):
+                        return True
+                return False
+
+            visible_count = 0
+            for i in range(file_tree.topLevelItemCount()):
+                item = file_tree.topLevelItem(i)
+                matches = check_item_matches(item, search_text)
+                item.setHidden(not matches)
+                if matches:
+                    visible_count += 1
+                    if search_text:
+                        item.setExpanded(True)
+
+            if search_text:
+                status_label.setText(f"Showing {visible_count} matching items")
+            elif dialog._full_id:
+                status_label.setText(
+                    f"Loaded {len(getattr(dialog, '_all_files', []) or [])} files and folders"
+                )
+
+        search_input.textChanged.connect(filter_tree)
+        expand_all_btn.clicked.connect(file_tree.expandAll)
+        collapse_all_btn.clicked.connect(file_tree.collapseAll)
+
+        def update_tree_sizes():
+            format_mode = size_format_combo.currentText()
+
+            def update_item_size(item):
+                raw_size = item.data(2, Qt.ItemDataRole.UserRole + 1)
+                if raw_size not in (None, "", "0"):
+                    item.setText(2, self.format_size(raw_size, format_mode))
+                for i in range(item.childCount()):
+                    update_item_size(item.child(i))
+
+            for i in range(file_tree.topLevelItemCount()):
+                update_item_size(file_tree.topLevelItem(i))
+
+        size_format_combo.currentTextChanged.connect(lambda: update_tree_sizes())
+
+        def _set_restore_enabled(enabled: bool) -> None:
+            restore_selected_btn.setEnabled(enabled)
+            restore_orig_btn.setEnabled(enabled)
+
+        def load_snapshot_files():
+            full_id = snapshot_combo.currentData()
+            dialog._full_id = full_id
+            file_tree.clear()
+            search_input.clear()
+            _set_restore_enabled(False)
+            if not full_id:
+                status_label.setText("Select a snapshot to browse")
+                return
+            status_label.setText(f"Loading files from snapshot {str(full_id)[:8]}…")
+            self._load_snapshot_content(
+                file_tree, full_id, repo, password, status_label, dialog
+            )
+            _set_restore_enabled(True)
+
         def load_snapshots():
+            snapshot_combo.blockSignals(True)
             snapshot_combo.clear()
-            snapshot_combo.addItem("Loading snapshots...")
-            status_label.setText("Loading snapshots...")
-            
+            snapshot_combo.addItem("Loading snapshots…")
+            snapshot_combo.blockSignals(False)
+            status_label.setText("Loading snapshots…")
+            file_tree.clear()
+            _set_restore_enabled(False)
+
             env = {"RESTIC_PASSWORD": password} if password else {}
             args = ["-r", repo["path"], "snapshots", "--json"]
-            
             worker = ResticWorker(self.restic_cmd, args, env)
-            worker.finished.connect(
-                lambda success, stdout, stderr: _on_snapshots_loaded(success, stdout, stderr)
-            )
-            worker.start()
-            
-            # Store worker reference
-            dialog._snapshot_worker = worker
-        
-        def _on_snapshots_loaded(success, stdout, stderr):
-            snapshot_combo.clear()
-            
-            if success and stdout:
-                try:
-                    import json
-                    snapshots = json.loads(stdout)
-                    
-                    if snapshots:
-                        for snap in reversed(snapshots):  # Most recent first
-                            snap_id = snap.get("short_id", snap.get("id", ""))[:8]
-                            snap_time = snap.get("time", "")[:19].replace("T", " ")
-                            snap_host = snap.get("hostname", "unknown")
-                            snap_paths = ", ".join(snap.get("paths", []))[:50]
-                            
-                            display_text = f"{snap_time} | {snap_host} | {snap_paths}"
-                            snapshot_combo.addItem(display_text, snap.get("id"))
-                        
-                        status_label.setText(f"Loaded {len(snapshots)} snapshots")
-                    else:
-                        snapshot_combo.addItem("No snapshots found")
-                        status_label.setText("No snapshots in repository")
-                
-                except json.JSONDecodeError as e:
+
+            def _on_snapshots_loaded(success, stdout, stderr):
+                snapshot_combo.blockSignals(True)
+                snapshot_combo.clear()
+                if success and stdout:
+                    try:
+                        snapshots = json.loads(stdout)
+                        if not isinstance(snapshots, list):
+                            snapshots = [snapshots]
+                        if snapshots:
+                            for snap in reversed(snapshots):
+                                snap_id = snap.get("short_id") or str(snap.get("id", ""))[:8]
+                                snap_time = str(snap.get("time", ""))[:19].replace("T", " ")
+                                snap_host = snap.get("hostname", "unknown")
+                                paths = snap.get("paths") or []
+                                snap_paths = ", ".join(paths)[:50] if paths else "—"
+                                display = f"{snap_id} · {snap_time} · {snap_host} · {snap_paths}"
+                                snapshot_combo.addItem(display, snap.get("id"))
+                            status_label.setText(f"Loaded {len(snapshots)} snapshot(s)")
+                        else:
+                            snapshot_combo.addItem("No snapshots found")
+                            status_label.setText("No snapshots in repository")
+                    except json.JSONDecodeError as e:
+                        snapshot_combo.addItem("Error loading snapshots")
+                        status_label.setText(f"Error parsing snapshot data: {e}")
+                        self.log(f"JSON decode error: {e}")
+                else:
                     snapshot_combo.addItem("Error loading snapshots")
-                    status_label.setText(f"Error parsing snapshot data: {str(e)}")
-                    self.log(f"JSON decode error: {str(e)}")
-            else:
-                snapshot_combo.addItem("Error loading snapshots")
-                status_label.setText(f"Failed to load snapshots")
-                if stderr:
-                    self.log(f"Snapshot load error: {stderr}")
-        
-        # Load files for selected snapshot
-        def load_snapshot_files():
-            file_tree.clear()
-            restore_selected_btn.setEnabled(False)
-            
-            if snapshot_combo.currentIndex() < 0 or not snapshot_combo.currentData():
-                return
-            
-            snapshot_id = snapshot_combo.currentData()
-            status_label.setText(f"Loading files from snapshot {snapshot_id[:8]}...")
-            
-            loading_item = QTreeWidgetItem(["Loading...", "", "", ""])
-            file_tree.addTopLevelItem(loading_item)
-            
-            env = {"RESTIC_PASSWORD": password} if password else {}
-            args = ["-r", repo["path"], "ls", snapshot_id, "--json"]
-            
-            worker = ResticWorker(self.restic_cmd, args, env)
-            worker.finished.connect(
-                lambda success, stdout, stderr: _on_files_loaded(success, stdout, stderr, snapshot_id)
-            )
+                    status_label.setText("Failed to load snapshots")
+                    if stderr:
+                        self.log(f"Snapshot load error: {stderr}")
+                snapshot_combo.blockSignals(False)
+                if snapshot_combo.currentData():
+                    load_snapshot_files()
+
+            worker.finished.connect(_on_snapshots_loaded)
             worker.start()
-            
-            # Store worker reference
-            dialog._files_worker = worker
-        
-        def _on_files_loaded(success, stdout, stderr, snapshot_id):
-            file_tree.clear()
-            
-            if success and stdout:
-                try:
-                    import json
-                    
-                    # Parse JSON lines
-                    items = {}
-                    file_count = 0
-                    
-                    for line in stdout.strip().split('\n'):
-                        if not line.strip():
-                            continue
-                        
-                        try:
-                            entry = json.loads(line)
-                            path = entry.get("path", "")
-                            
-                            if not path or path == "/":
-                                continue
-                            
-                            # Remove leading slash
-                            path = path.lstrip('/')
-                            
-                            # Get entry details
-                            entry_type = entry.get("type", "file")
-                            size = entry.get("size", 0)
-                            mtime = entry.get("mtime", "")[:19].replace("T", " ")
-                            
-                            # Format size
-                            size_str = self._format_size(size) if entry_type == "file" else ""
-                            
-                            # Build tree structure
-                            parts = path.split('/')
-                            current_path = ""
-                            parent = None
-                            
-                            for i, part in enumerate(parts):
-                                if not part:
-                                    continue
-                                
-                                if current_path:
-                                    current_path += "/" + part
-                                else:
-                                    current_path = part
-                                
-                                # Create item if it doesn't exist
-                                if current_path not in items:
-                                    is_last = (i == len(parts) - 1)
-                                    
-                                    if is_last:
-                                        # This is the actual entry
-                                        item = QTreeWidgetItem([
-                                            part,
-                                            size_str,
-                                            mtime,
-                                            "Folder" if entry_type == "dir" else "File"
-                                        ])
-                                    else:
-                                        # This is an intermediate directory
-                                        item = QTreeWidgetItem([part, "", "", "Folder"])
-                                    
-                                    # Store full path in first column's data
-                                    item.setData(0, Qt.ItemDataRole.UserRole, current_path)
-                                    
-                                    if parent:
-                                        parent.addChild(item)
-                                    else:
-                                        file_tree.addTopLevelItem(item)
-                                    
-                                    items[current_path] = item
-                                    
-                                    if is_last:
-                                        file_count += 1
-                                
-                                parent = items[current_path]
-                        
-                        except json.JSONDecodeError:
-                            continue
-                    
-                    status_label.setText(f"Loaded {file_count} files from snapshot {snapshot_id[:8]}")
-                    restore_selected_btn.setEnabled(True)
-                    
-                    # Sort tree
-                    file_tree.sortItems(0, Qt.SortOrder.AscendingOrder)
-                
-                except Exception as e:
-                    status_label.setText(f"Error parsing files: {str(e)}")
-                    self.log(f"File tree error: {str(e)}")
-            else:
-                status_label.setText("Failed to load files")
-                if stderr:
-                    self.log(f"File load error: {stderr}")
-        
-        # Connect signals
+            dialog._snapshot_worker = worker
+
         refresh_snapshots_btn.clicked.connect(load_snapshots)
+        refresh_files_btn.clicked.connect(load_snapshot_files)
         snapshot_combo.currentIndexChanged.connect(load_snapshot_files)
-        
-        # Load initial snapshots
+
+        dialog._file_list = file_tree
+        dialog._status_label = status_label
+        dialog._filter_files = filter_tree
+
         load_snapshots()
-        
-        # Show dialog
+        self.log(f"Opening snapshot browser for repository: {repo_name}")
         dialog.exec()
     
     def _restore_selected_from_browser(self, file_tree, snapshot_combo, repo, password, parent_dialog):

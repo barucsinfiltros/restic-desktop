@@ -1332,6 +1332,85 @@ def build_stylesheet(theme: AppTheme) -> str:
         QComboBox::down-arrow:hover {{
             image: url({_icon_url("combo_down_hover.svg")});
         }}
+        QDateEdit, QDateTimeEdit {{
+            background-color: {t.surface};
+            border: 1px solid {t.border};
+            border-radius: 6px;
+            color: {t.text};
+            padding: 4px 26px 4px 8px;
+            min-height: 18px;
+            selection-background-color: {t.accent};
+        }}
+        QDateEdit:focus, QDateTimeEdit:focus {{
+            border-color: {t.accent};
+        }}
+        QDateEdit::drop-down, QDateTimeEdit::drop-down {{
+            subcontrol-origin: border;
+            subcontrol-position: center right;
+            width: 22px;
+            border: none;
+            border-left: 1px solid {t.border};
+            border-top-right-radius: 6px;
+            border-bottom-right-radius: 6px;
+            background-color: {t.surface};
+        }}
+        QDateEdit::drop-down:hover, QDateTimeEdit::drop-down:hover {{
+            background-color: {t.accent_soft};
+        }}
+        QDateEdit::down-arrow, QDateTimeEdit::down-arrow {{
+            image: url({_icon_url("combo_down.svg")});
+            width: 10px;
+            height: 6px;
+        }}
+        QDateEdit::down-arrow:hover, QDateTimeEdit::down-arrow:hover {{
+            image: url({_icon_url("combo_down_hover.svg")});
+        }}
+        QCalendarWidget {{
+            background-color: {t.surface};
+            color: {t.text};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+        }}
+        QCalendarWidget QWidget {{
+            alternate-background-color: {shell_bg};
+        }}
+        QCalendarWidget QToolButton {{
+            background-color: transparent;
+            color: {t.text};
+            border: none;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-weight: 600;
+        }}
+        QCalendarWidget QToolButton:hover {{
+            background-color: {hover};
+        }}
+        QCalendarWidget QMenu {{
+            background-color: {t.surface};
+            color: {t.text};
+            border: 1px solid {t.border};
+        }}
+        QCalendarWidget QSpinBox {{
+            background-color: {t.surface};
+            color: {t.text};
+            border: 1px solid {t.border};
+            border-radius: 4px;
+        }}
+        QCalendarWidget QAbstractItemView:enabled {{
+            background-color: {t.surface};
+            color: {t.text};
+            selection-background-color: {t.accent};
+            selection-color: #ffffff;
+            outline: none;
+        }}
+        QCalendarWidget QAbstractItemView:enabled:hover {{
+            background-color: {hover};
+        }}
+        QCalendarWidget QWidget#qt_calendar_navigationbar {{
+            background-color: {jobs_header_wash};
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }}
         QSpinBox {{
             background-color: {t.surface};
             border: 1px solid {t.border};
@@ -2232,12 +2311,12 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 15px;
             font-weight: 600;
         }}
-        #jobsTableShell, #repoTableShell, #snapshotsTableShell {{
+        #jobsTableShell, #repoTableShell, #snapshotsTableShell, #restoreSearchTableShell {{
             background-color: {shell_bg};
             border: 1px solid {t.border};
             border-radius: 10px;
         }}
-        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable {{
+        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable, QTableWidget#restoreSearchTable {{
             background-color: transparent;
             border: none;
             border-radius: 0;
@@ -2248,11 +2327,11 @@ def build_stylesheet(theme: AppTheme) -> str:
             selection-background-color: {t.accent_soft};
             selection-color: {t.text};
         }}
-        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable {{
+        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable, QTableWidget#restoreSearchTable {{
             selection-background-color: {jobs_sel};
             selection-color: {t.muted};
         }}
-        QTableWidget#jobsTable::item, QTableWidget#repoTable::item, QTableWidget#snapshotsTable::item {{
+        QTableWidget#jobsTable::item, QTableWidget#repoTable::item, QTableWidget#snapshotsTable::item, QTableWidget#restoreSearchTable::item {{
             background-color: transparent;
             border: none;
             border-bottom: 1px solid {t.border};
@@ -2260,18 +2339,19 @@ def build_stylesheet(theme: AppTheme) -> str:
             /* Fusion adds a small item inset; use 4px so text lines up with 8px header padding */
             padding: 8px 8px 8px 4px;
         }}
-        QTableWidget#jobsTable::item:selected, QTableWidget#repoTable::item:selected, QTableWidget#snapshotsTable::item:selected {{
+        QTableWidget#jobsTable::item:selected, QTableWidget#repoTable::item:selected, QTableWidget#snapshotsTable::item:selected, QTableWidget#restoreSearchTable::item:selected {{
             background-color: {jobs_sel};
             border-bottom: 1px solid {t.border};
         }}
-        QTableWidget#jobsTable QHeaderView, QTableWidget#repoTable QHeaderView, QTableWidget#snapshotsTable QHeaderView {{
+        QTableWidget#jobsTable QHeaderView, QTableWidget#repoTable QHeaderView, QTableWidget#snapshotsTable QHeaderView, QTableWidget#restoreSearchTable QHeaderView {{
             background-color: transparent;
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
         }}
         QTableWidget#jobsTable QHeaderView::section,
         QTableWidget#repoTable QHeaderView::section,
-        QTableWidget#snapshotsTable QHeaderView::section {{
+        QTableWidget#snapshotsTable QHeaderView::section,
+        QTableWidget#restoreSearchTable QHeaderView::section {{
             background-color: {jobs_header_wash};
             color: {jobs_header_text};
             border: none;
@@ -2284,23 +2364,27 @@ def build_stylesheet(theme: AppTheme) -> str:
         }}
         QTableWidget#jobsTable QHeaderView::section:hover,
         QTableWidget#repoTable QHeaderView::section:hover,
-        QTableWidget#snapshotsTable QHeaderView::section:hover {{
+        QTableWidget#snapshotsTable QHeaderView::section:hover,
+        QTableWidget#restoreSearchTable QHeaderView::section:hover {{
             color: {t.text};
             background-color: {hover};
         }}
         QTableWidget#jobsTable QHeaderView::section:first,
         QTableWidget#repoTable QHeaderView::section:first,
-        QTableWidget#snapshotsTable QHeaderView::section:first {{
+        QTableWidget#snapshotsTable QHeaderView::section:first,
+        QTableWidget#restoreSearchTable QHeaderView::section:first {{
             border-top-left-radius: 10px;
         }}
         QTableWidget#jobsTable QHeaderView::section:last,
         QTableWidget#repoTable QHeaderView::section:last,
-        QTableWidget#snapshotsTable QHeaderView::section:last {{
+        QTableWidget#snapshotsTable QHeaderView::section:last,
+        QTableWidget#restoreSearchTable QHeaderView::section:last {{
             border-top-right-radius: 10px;
         }}
         QTableWidget#jobsTable QTableCornerButton::section,
         QTableWidget#repoTable QTableCornerButton::section,
-        QTableWidget#snapshotsTable QTableCornerButton::section {{
+        QTableWidget#snapshotsTable QTableCornerButton::section,
+        QTableWidget#restoreSearchTable QTableCornerButton::section {{
             background-color: {jobs_header_wash};
             border: none;
             border-top-left-radius: 10px;
@@ -2346,6 +2430,27 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 12px;
             min-height: 0px;
             max-height: 16777215px;
+        }}
+        QPlainTextEdit#restoreLog {{
+            background-color: transparent;
+            border: none;
+            border-radius: 0;
+            color: {t.text};
+            padding: 0;
+            font-size: 12px;
+            font-family: Consolas, "Courier New", monospace;
+        }}
+        #restoreFormLabel {{
+            color: {t.muted};
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
+        #restoreDestStrip {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
         }}
         #browseMetaStrip {{
             background-color: {shell_bg};
