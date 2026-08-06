@@ -22,7 +22,7 @@ from ui.cards import SectionCard, StatCard
 from ui.charts import DonutChart, RoundedBarChart
 from ui.table_helpers import SortableTableItem, TableRowHover, make_repo_icon_cell
 
-import themes
+import ui.themes as themes
 
 # Persist job identity on cells (survives display text / sort)
 _JOB_NAME_ROLE = int(Qt.ItemDataRole.UserRole) + 90
@@ -325,7 +325,7 @@ def _job_from_table_row(host: Any, row: int) -> tuple[dict | None, str, str]:
 
 def show_jobs_context_menu(host: Any, global_pos) -> None:
     """Right-click menu for Recent Backup Jobs rows."""
-    from rounded_menu import RoundedMenu
+    from ui.rounded_menu import RoundedMenu
 
     table = getattr(host, "dashboard_jobs_table", None)
     if table is None:

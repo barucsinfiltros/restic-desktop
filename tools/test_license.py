@@ -6,8 +6,8 @@ This demonstrates the license generation and validation process
 import sys
 import os
 
-# Add parent directory to path if running directly
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to path when running from tools/
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from license_generator import generate_license_key
 

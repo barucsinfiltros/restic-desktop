@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 
-from themes import icon_path
+from .themes import icon_path
 
 # Pixels of mouse travel before a maximized/fullscreen drag restores the window.
 _RESTORE_DRAG_THRESHOLD = 8

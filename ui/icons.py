@@ -7,7 +7,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
-import themes
+import ui.themes as themes
 
 
 def icon_file(name: str) -> Path:

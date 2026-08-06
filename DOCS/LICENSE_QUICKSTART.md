@@ -15,12 +15,12 @@ Your Restic Backup Manager now has a complete license key system that ties licen
    - Admin/developer tool only
    - Keep this secure!
 
-3. **check_machine_id.py** (NEW)
+3. **tools/check_machine_id.py** (NEW)
    - Utility to check machine ID
    - Users can run this to get their ID
    - Helpful for remote support
 
-4. **test_license.py** (NEW)
+4. **tools/test_license.py** (NEW)
    - Test license generation
    - Demonstrates the system
 
@@ -33,7 +33,7 @@ Your Restic Backup Manager now has a complete license key system that ties licen
 
 ### Step 1: Get Your Machine ID
 ```bash
-python check_machine_id.py
+python tools/check_machine_id.py
 ```
 Copy the Machine ID shown.
 

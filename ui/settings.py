@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import themes
+import ui.themes as themes
 from ui.cards import SectionCard
 
 _LABEL_W = 150

@@ -6,8 +6,8 @@ from PyQt6.QtCore import QEvent, Qt, QRectF
 from PyQt6.QtGui import QPainterPath, QRegion
 from PyQt6.QtWidgets import QDialog, QFrame, QVBoxLayout, QWidget
 
-from themes import app_window_icon
-from title_bar import TitleBar
+from .themes import app_window_icon, polish_combo_popups
+from .title_bar import TitleBar
 
 
 class FramedDialog(QDialog):
@@ -64,6 +64,11 @@ class FramedDialog(QDialog):
         root_layout.addWidget(self._body, stretch=1)
 
         outer.addWidget(self._root)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Combo popups are separate windows; re-apply palette when dialog appears.
+        polish_combo_popups(self)
 
     def changeEvent(self, event) -> None:  # noqa: N802
         if event.type() == QEvent.Type.WindowStateChange:

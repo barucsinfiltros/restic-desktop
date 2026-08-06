@@ -628,19 +628,18 @@ restic_settings.json           # Settings / config (auto-created in the working 
 restic_history.db              # Job history + dashboard cache (auto-created beside settings)
 license.key                    # License key (created after activation)
 scheduled_tasks/               # Generated Windows backup PowerShell scripts + DPAPI password files
-ui/                            # Dashboard, charts, cards, sidebar, repositories, etc.
-themes.py                      # App themes + stylesheets
+ui/                            # App UI package (themes, title bar, dialogs, pages, charts, …)
+tools/                         # Optional utilities (machine ID checker, license tests)
+icons/                         # App / toolbar SVG + Windows/Linux app icons
 
-# License System (v1.3.0)
+# License System (admin — keep generators secure)
 license_generator.py           # CLI license generator (KEEP SECURE!)
 license_generator_gui.py       # GUI license generator (KEEP SECURE!)
-check_machine_id.py            # Machine ID checker utility
-test_license.py                # License testing script
-LICENSE_SYSTEM.md              # Complete license documentation
-LICENSE_QUICKSTART.md          # Quick start for license system
+license_generator_gui.spec     # PyInstaller spec for the license GUI
 
 # Documentation
 README.md                      # This file
+DOCS/                          # License system docs
 ```
 
 ### Where data is stored
@@ -709,6 +708,13 @@ Output: `dist/restic_manager` (or `dist/restic_manager.exe` on Windows).
 | Windows | `icons/app.ico` | `.exe` icon + taskbar |
 | Linux | `icons/app.png` | executable / desktop icon |
 | Runtime (any) | `app.ico` → `app.png` → `app.svg` | window icon via `themes.app_window_icon()` |
+
+The specs set **`upx=False`**. UPX compression often blanks or drops the Explorer
+icon (especially after you rename the `.exe`), even though the icon is still
+embedded. Rebuild with the spec after changing this.
+
+If Explorer still shows a missing icon after a rename, that is usually the
+Windows icon cache — reboot Explorer or rebuild the cache; the file itself is fine.
 
 Do **not** build with a bare one-file command for the main app — it skips the
 spec’s `datas` / `icon` settings:
@@ -1072,8 +1078,8 @@ def generate_license_key(machine_id: str, expiry_days: int = None) -> str:
 
 1. **license_generator.py** - CLI tool for generating licenses (KEEP SECURE!)
 2. **license_generator_gui.py** - GUI tool for license generation
-3. **check_machine_id.py** - Utility for customers to get their Machine ID
-4. **test_license.py** - Test license generation/validation
+3. **tools/check_machine_id.py** - Utility for customers to get their Machine ID
+4. **tools/test_license.py** - Test license generation/validation
 5. **LICENSE_SYSTEM.md** - Complete documentation
 6. **LICENSE_QUICKSTART.md** - Quick start guide
 
@@ -1318,7 +1324,7 @@ def prune_repository(self):
   - Support for unlimited and time-limited licenses
   - License generator tools (CLI and GUI)
   - Comprehensive documentation (LICENSE_SYSTEM.md, LICENSE_QUICKSTART.md)
-  - Utility scripts (check_machine_id.py, test_license.py)
+  - Utility scripts (`tools/check_machine_id.py`, `tools/test_license.py`)
   - Machine-specific binding prevents license sharing
 
 **New Features:**
@@ -1453,7 +1459,7 @@ Features:
 ### Customer Support Workflow
 
 1. **Customer Reports Issue**: "I need a license key"
-2. **Request Machine ID**: Ask customer to run `check_machine_id.py` or copy from activation dialog
+2. **Request Machine ID**: Ask customer to run `python tools/check_machine_id.py` or copy from activation dialog
 3. **Generate License**: Use license generator with their Machine ID
 4. **Send to Customer**: Email or provide through support portal
 5. **Customer Activates**: Paste into activation dialog
@@ -1472,7 +1478,7 @@ Features:
 Customers can check their own Machine ID:
 
 ```bash
-python check_machine_id.py
+python tools/check_machine_id.py
 ```
 
 This displays:
@@ -1524,7 +1530,7 @@ For license requests or renewals, provide your Machine ID (found in Settings →
 - `license.key` - Activated license (don't delete!)
 - `license_generator.py` - CLI generator (keep secure!)
 - `license_generator_gui.py` - GUI generator (keep secure!)
-- `check_machine_id.py` - Machine ID checker
+- `tools/check_machine_id.py` - Machine ID checker
 - `LICENSE_SYSTEM.md` - Full documentation
 - `LICENSE_QUICKSTART.md` - Quick start guide
 

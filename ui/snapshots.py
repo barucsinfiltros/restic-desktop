@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from rounded_menu import RoundedMenu
+from ui.rounded_menu import RoundedMenu
 from ui.cards import SectionCard
 from ui.dashboard import _parse_timestamp, format_relative_time_short
 from ui.icons import tinted_icon
@@ -30,7 +30,7 @@ from ui.table_helpers import (
     make_snapshot_size_cell,
 )
 
-import themes
+import ui.themes as themes
 
 # Columns: ID, Time, Host, Tags, Paths, Size, menu
 _COL_ID = 0

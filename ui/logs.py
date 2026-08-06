@@ -131,7 +131,7 @@ class LogFindController:
     def _apply_highlights(self) -> None:
         accent = QColor("#5a8cc8")
         try:
-            import themes
+            import ui.themes as themes
 
             theme_id = themes.resolve_theme_id(
                 self.host.settings_manager.get("theme")

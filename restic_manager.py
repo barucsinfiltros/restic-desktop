@@ -8,7 +8,8 @@ Build with PyInstaller (preferred — uses restic_manager.spec):
   Icons (bundled under icons/):
     Windows  → icons/app.ico   (EXE / taskbar)
     Linux    → icons/app.png   (desktop / window)
-    Runtime window icon: themes.app_window_icon() picks app.ico → app.png → app.svg
+    Runtime window icon: ui.themes.app_window_icon() picks app.ico → app.png → app.svg
+  Spec keeps upx=False — UPX often blanks the Explorer icon after rename.
 
 Do not use one-file without the spec (icons/datas would be missing):
   pyinstaller --noconsole --onefile restic_manager.py   # Don't use
@@ -41,11 +42,11 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # Import theme + chrome modules
-import themes
+import ui.themes as themes
 import history_db
-from title_bar import TitleBar
-from framed_dialog import FramedDialog
-from rounded_menu import RoundedMenu
+from ui.title_bar import TitleBar
+from ui.framed_dialog import FramedDialog
+from ui.rounded_menu import RoundedMenu
 from ui import (
     NavSidebar,
     create_dashboard_page,
@@ -1915,6 +1916,29 @@ class RepositoryDialog(FramedDialog):
         self._sync_browse_enabled()
         if is_https:
             self._on_https_auth_changed()
+        # Qt grows the window when fields appear but does not shrink when they hide.
+        QTimer.singleShot(0, self._fit_dialog_to_content)
+
+    def _fit_dialog_to_content(self):
+        """Resize height to match visible fields (shrink as well as grow)."""
+        if self.isMaximized() or self.isFullScreen():
+            return
+        body = getattr(self, "_body", None)
+        root = getattr(self, "_root", None)
+        if body is not None:
+            body.updateGeometry()
+        if root is not None:
+            root.updateGeometry()
+        if self.layout() is not None:
+            self.layout().activate()
+        hint = self.sizeHint()
+        min_hint = self.minimumSizeHint()
+        width = max(self.width(), self.minimumWidth(), hint.width(), min_hint.width())
+        height = max(hint.height(), min_hint.height())
+        self.resize(width, height)
+        # Refresh rounded mask after height change
+        if hasattr(self, "_sync_chrome"):
+            self._sync_chrome()
 
     def _https_auth_id(self) -> str:
         data = self.https_auth_combo.currentData()
@@ -1931,6 +1955,7 @@ class RepositoryDialog(FramedDialog):
         need_pass = mode in ("userpass", "password")
         self._set_row_visible(self._https_user_label, self.https_user_input, need_user)
         self._set_row_visible(self._https_pass_label, self.https_pass_input, need_pass)
+        QTimer.singleShot(0, self._fit_dialog_to_content)
 
     def _sync_browse_enabled(self):
         browse = getattr(self, "_browse_btn", None)
@@ -10368,25 +10393,29 @@ try {{
             import base64
             import hashlib
             
-            # Ask for encryption password
-            password, ok = QInputDialog.getText(
-                self, "Encryption Password", 
-                "Enter a password to encrypt the backup:",
-                QLineEdit.EchoMode.Password
+            password, ok = show_framed_password_prompt(
+                self,
+                "Encryption Password",
+                "Enter a password to encrypt the settings backup.\n"
+                "You will need this password to restore the file later.",
             )
-            
             if not ok or not password:
                 return
             
-            # Confirm password
-            password_confirm, ok = QInputDialog.getText(
-                self, "Confirm Password", 
+            password_confirm, ok = show_framed_password_prompt(
+                self,
+                "Confirm Password",
                 "Confirm the encryption password:",
-                QLineEdit.EchoMode.Password
             )
-            
-            if not ok or password != password_confirm:
-                QMessageBox.warning(self, "Password Mismatch", "Passwords do not match!")
+            if not ok:
+                return
+            if password != password_confirm:
+                show_framed_message(
+                    self,
+                    "Password Mismatch",
+                    "The passwords do not match. Backup cancelled.",
+                    kind="warning",
+                )
                 return
             
             # Derive key from password
@@ -10400,12 +10429,21 @@ try {{
             with open(file_path, 'wb') as f:
                 f.write(encrypted_data)
             
-            QMessageBox.information(self, "Backup Complete", 
-                f"Settings backed up successfully to:\n{file_path}")
+            show_framed_message(
+                self,
+                "Backup Complete",
+                f"Settings backed up successfully to:\n\n{file_path}",
+                kind="info",
+            )
             self.log(f"Settings backed up to {file_path}")
             
         except Exception as e:
-            QMessageBox.warning(self, "Backup Failed", f"Failed to backup settings:\n{e}")
+            show_framed_message(
+                self,
+                "Backup Failed",
+                f"Failed to backup settings:\n\n{e}",
+                kind="error",
+            )
             self.log(f"Settings backup failed: {e}")
     
     def restore_settings(self):
@@ -10424,13 +10462,11 @@ try {{
             with open(file_path, 'rb') as f:
                 encrypted_data = f.read()
             
-            # Ask for decryption password
-            password, ok = QInputDialog.getText(
-                self, "Decryption Password", 
-                "Enter the password to decrypt the backup:",
-                QLineEdit.EchoMode.Password
+            password, ok = show_framed_password_prompt(
+                self,
+                "Decryption Password",
+                "Enter the password used when this settings backup was created:",
             )
-            
             if not ok or not password:
                 return
             
@@ -10446,30 +10482,36 @@ try {{
                 decrypted_data = cipher.decrypt(encrypted_data)
                 settings_json = decrypted_data.decode()
                 restored_settings = json.loads(settings_json)
-            except Exception as e:
-                QMessageBox.warning(self, "Decryption Failed", 
-                    "Failed to decrypt backup. Incorrect password or corrupted file.")
+            except Exception:
+                show_framed_message(
+                    self,
+                    "Decryption Failed",
+                    "Failed to decrypt the backup.\n\n"
+                    "The password may be incorrect, or the file may be corrupted.",
+                    kind="error",
+                )
                 return
             
-            # Confirm restore
-            reply = QMessageBox.question(
-                self, "Confirm Restore",
-                "This will replace all current settings with the backup.\n\n"
-                "The application will restart after restore.\n\n"
-                "Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-            if reply != QMessageBox.StandardButton.Yes:
+            if not self._framed_confirm(
+                title="Confirm Restore",
+                heading="Replace all current settings with this backup?",
+                body="This overwrites repositories, jobs, and preferences from the backup file.",
+                note="The application will restart after a successful restore.",
+                confirm_label="Restore",
+                danger=True,
+            ):
                 return
             
             # Restore the settings
             self.settings_manager.settings = restored_settings
             self.settings_manager.save_settings()
             
-            QMessageBox.information(self, "Restore Complete", 
-                "Settings restored successfully!\n\n"
-                "The application will now restart.")
+            show_framed_message(
+                self,
+                "Restore Complete",
+                "Settings restored successfully.\n\nThe application will now restart.",
+                kind="info",
+            )
             self.log(f"Settings restored from {file_path}")
             
             # Restart application
@@ -10478,7 +10520,12 @@ try {{
             os.execl(sys.executable, sys.executable, *sys.argv)
             
         except Exception as e:
-            QMessageBox.warning(self, "Restore Failed", f"Failed to restore settings:\n{e}")
+            show_framed_message(
+                self,
+                "Restore Failed",
+                f"Failed to restore settings:\n\n{e}",
+                kind="error",
+            )
             self.log(f"Settings restore failed: {e}")
     
     # System Dependencies Methods

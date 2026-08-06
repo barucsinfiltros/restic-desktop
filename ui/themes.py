@@ -18,7 +18,8 @@ def icons_dir() -> Path:
         candidate = meipass / "app" / "icons"
         if candidate.is_dir():
             return candidate
-    return Path(__file__).resolve().parent / "icons"
+    # themes.py lives in ui/ — icons/ is at the project root
+    return Path(__file__).resolve().parent.parent / "icons"
 
 
 def _icon_url(name: str) -> str:
@@ -735,14 +736,173 @@ def _mix_hex(color_a: str, color_b: str, ratio: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def combo_selection_colors(theme: AppTheme) -> tuple[str, str]:
+    """
+    Background + text for QComboBox popup selection.
+
+    Dark themes: darkened accent + white text (readable on Classic / Nord /
+    Aurora / Obsidian / Void and similar).
+    Light themes: keep the normal accent highlight.
+    """
+    t = theme
+    light_ui = _hex_luminance(t.bg) > 0.55
+    accent_l = _hex_luminance(t.accent)
+    if light_ui:
+        return t.accent, ("#111827" if accent_l > 0.55 else "#ffffff")
+
+    # Pull accent toward black so pale accents (Nord, Void, Obsidian cyan) stay dark.
+    ratio = 0.55 if accent_l > 0.45 else 0.38
+    bg = _mix_hex(t.accent, "#000000", ratio)
+    # Keep a floor so selection still reads as accent-tinted, not pure black.
+    if _hex_luminance(bg) < 0.12:
+        bg = _mix_hex(t.accent, t.surface, 0.35)
+    return bg, "#ffffff"
+
+
+def _make_combo_popup_delegate(theme: AppTheme, parent=None):
+    """Owner-draw combo rows so Windows cannot paint a light system highlight."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+
+    sel_bg, sel_fg = combo_selection_colors(theme)
+
+    class _ComboPopupDelegate(QStyledItemDelegate):
+        def paint(self, painter, option, index):  # noqa: N802
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+
+            flags = index.flags()
+            # Separators are not selectable
+            if not (flags & Qt.ItemFlag.ItemIsSelectable):
+                super().paint(painter, option, index)
+                return
+
+            selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+            hovered = bool(opt.state & QStyle.StateFlag.State_MouseOver)
+
+            painter.save()
+            if selected:
+                painter.fillRect(opt.rect, QColor(sel_bg))
+                pen = QColor(sel_fg)
+            elif hovered:
+                hover_bg = _mix_hex(theme.surface, theme.accent, 0.28)
+                painter.fillRect(opt.rect, QColor(hover_bg))
+                pen = QColor(theme.text)
+            else:
+                painter.fillRect(opt.rect, QColor(theme.surface))
+                pen = QColor(theme.text)
+
+            text = index.data(Qt.ItemDataRole.DisplayRole)
+            if text is None:
+                text = ""
+            painter.setPen(pen)
+            painter.drawText(
+                opt.rect.adjusted(8, 0, -8, 0),
+                int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                str(text),
+            )
+            painter.restore()
+
+        def sizeHint(self, option, index):  # noqa: N802
+            hint = super().sizeHint(option, index)
+            if hint.height() < 24:
+                hint.setHeight(24)
+            return hint
+
+    return _ComboPopupDelegate(parent)
+
+
+def apply_combo_popup_palette(combo, theme: AppTheme) -> None:
+    """Force readable popup selection via owner-drawn delegate (+ palette backup)."""
+    from PyQt6.QtGui import QColor, QPalette
+    from PyQt6.QtWidgets import QComboBox, QListView
+
+    if not isinstance(combo, QComboBox):
+        return
+
+    bg, fg = combo_selection_colors(theme)
+    base = QColor(theme.surface)
+    text = QColor(theme.text)
+    highlight = QColor(bg)
+    highlighted = QColor(fg)
+
+    def _paint(pal: QPalette) -> QPalette:
+        for group in (
+            QPalette.ColorGroup.Active,
+            QPalette.ColorGroup.Inactive,
+            QPalette.ColorGroup.Disabled,
+        ):
+            pal.setColor(group, QPalette.ColorRole.Base, base)
+            pal.setColor(group, QPalette.ColorRole.Window, base)
+            pal.setColor(group, QPalette.ColorRole.Text, text)
+            pal.setColor(group, QPalette.ColorRole.WindowText, text)
+            pal.setColor(group, QPalette.ColorRole.Button, base)
+            pal.setColor(group, QPalette.ColorRole.ButtonText, text)
+            pal.setColor(group, QPalette.ColorRole.Highlight, highlight)
+            pal.setColor(group, QPalette.ColorRole.HighlightedText, highlighted)
+            pal.setColor(group, QPalette.ColorRole.AlternateBase, base)
+            pal.setColor(group, QPalette.ColorRole.BrightText, highlighted)
+        return pal
+
+    combo.setPalette(_paint(combo.palette()))
+    delegate = _make_combo_popup_delegate(theme, combo)
+    combo.setItemDelegate(delegate)
+    combo.setProperty("_resticComboThemeId", theme.id)
+
+    view = combo.view()
+    if view is not None:
+        view.setAutoFillBackground(True)
+        view.setPalette(_paint(view.palette()))
+        view.setItemDelegate(delegate)
+        # Background chrome only — selection is painted by the delegate.
+        view.setStyleSheet(
+            f"""
+            QAbstractItemView, QListView {{
+                background-color: {theme.surface};
+                color: {theme.text};
+                border: 1px solid {theme.border};
+                outline: none;
+                padding: 2px;
+            }}
+            """
+        )
+        if isinstance(view, QListView):
+            view.setUniformItemSizes(True)
+
+
+def polish_combo_popups(root, theme: AppTheme | None = None) -> None:
+    """Apply readable combo popup colors under ``root`` (window or dialog)."""
+    from PyQt6.QtWidgets import QApplication, QComboBox
+
+    t = theme
+    if t is None:
+        app = QApplication.instance()
+        tid = ""
+        if app is not None:
+            tid = str(app.property("resticThemeId") or "")
+        t = get_app_theme(resolve_theme_id(tid or DEFAULT_APP_THEME_ID))
+
+    combos: list = []
+    if isinstance(root, QComboBox):
+        combos.append(root)
+    if root is not None and hasattr(root, "findChildren"):
+        combos.extend(root.findChildren(QComboBox))
+    seen = set()
+    for combo in combos:
+        cid = id(combo)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        apply_combo_popup_palette(combo, t)
+
+
 def build_stylesheet(theme: AppTheme) -> str:
     t = theme
     light = _hex_luminance(t.bg) > 0.55
     hover = "rgba(0, 0, 0, 0.06)" if light else "rgba(255, 255, 255, 0.07)"
     hover_strong = "rgba(0, 0, 0, 0.10)" if light else "rgba(255, 255, 255, 0.10)"
-    # Combo popup selection must use solid accent + contrasting text.
-    # Soft rgba + light Windows system highlight often yields white-on-white.
-    on_accent = "#111827" if _hex_luminance(t.accent) > 0.55 else "#ffffff"
+    combo_sel_bg, combo_sel_fg = combo_selection_colors(t)
     # Theme-tinted lifts (not flat grey) for translucent header / shell feel.
     header_wash = t.accent_soft
     shell_bg = _mix_hex(t.surface, t.bg, 0.35)
@@ -1472,9 +1632,16 @@ def build_stylesheet(theme: AppTheme) -> str:
             color: {t.text};
             border: 1px solid {t.border};
             outline: none;
-            selection-background-color: {t.accent};
-            selection-color: {on_accent};
+            selection-background-color: {combo_sel_bg};
+            selection-color: {combo_sel_fg};
             padding: 4px;
+        }}
+        QComboBox QListView {{
+            background-color: {t.surface};
+            color: {t.text};
+            outline: none;
+            selection-background-color: {combo_sel_bg};
+            selection-color: {combo_sel_fg};
         }}
         QComboBox QAbstractItemView::item {{
             color: {t.text};
@@ -1482,17 +1649,20 @@ def build_stylesheet(theme: AppTheme) -> str:
             padding: 4px 8px;
             min-height: 22px;
         }}
-        QComboBox QAbstractItemView::item:selected {{
-            background-color: {t.accent};
-            color: {on_accent};
+        QComboBox QAbstractItemView::item:selected,
+        QComboBox QListView::item:selected {{
+            background-color: {combo_sel_bg};
+            color: {combo_sel_fg};
         }}
-        QComboBox QAbstractItemView::item:hover {{
+        QComboBox QAbstractItemView::item:hover,
+        QComboBox QListView::item:hover {{
             background-color: {t.accent_soft};
             color: {t.text};
         }}
-        QComboBox QAbstractItemView::item:selected:hover {{
-            background-color: {t.accent};
-            color: {on_accent};
+        QComboBox QAbstractItemView::item:selected:hover,
+        QComboBox QListView::item:selected:hover {{
+            background-color: {combo_sel_bg};
+            color: {combo_sel_fg};
         }}
         QComboBox::drop-down {{
             subcontrol-origin: border;
@@ -2226,12 +2396,12 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: {t.surface};
             color: {t.text};
             border: 1px solid {t.border};
-            selection-background-color: {t.accent};
-            selection-color: {on_accent};
+            selection-background-color: {combo_sel_bg};
+            selection-color: {combo_sel_fg};
         }}
         #systemLogDialog QComboBox QAbstractItemView::item:selected {{
-            background-color: {t.accent};
-            color: {on_accent};
+            background-color: {combo_sel_bg};
+            color: {combo_sel_fg};
         }}
         #systemLogDialog QLineEdit {{
             background-color: {t.surface};
@@ -3153,10 +3323,22 @@ def apply_theme(app, settings_manager, theme: str, window=None) -> str:
     """
     theme_id = resolve_theme_id(theme)
     settings_manager.set("theme", theme_id)
-    css = build_stylesheet(get_app_theme(theme_id))
+    app_theme = get_app_theme(theme_id)
+    css = build_stylesheet(app_theme)
     app.setStyleSheet(css)
+    try:
+        app.setProperty("resticThemeId", theme_id)
+    except Exception:
+        pass
     if window is not None:
         window.setStyleSheet(css)
+        polish_combo_popups(window, app_theme)
+    # Dialogs / other top-levels created earlier
+    try:
+        for top in app.topLevelWidgets():
+            polish_combo_popups(top, app_theme)
+    except Exception:
+        pass
     return theme_id
 
 

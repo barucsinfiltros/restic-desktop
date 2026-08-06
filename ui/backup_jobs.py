@@ -17,12 +17,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from rounded_menu import RoundedMenu
+from ui.rounded_menu import RoundedMenu
 from ui.cards import SectionCard
 from ui.icons import tinted_icon
 from ui.table_helpers import SortableTableItem, TableRowHover, make_repo_icon_cell
 
-import themes
+import ui.themes as themes
 
 # Columns: Name, Repository, Paths, Schedule, menu
 _COL_NAME = 0

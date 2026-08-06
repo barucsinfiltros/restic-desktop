@@ -18,13 +18,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from rounded_menu import RoundedMenu
+from ui.rounded_menu import RoundedMenu
 from ui.cards import SectionCard
 from ui.dashboard import _parse_timestamp
 from ui.icons import tinted_icon
 from ui.table_helpers import SortableTableItem, TableRowHover, make_repo_icon_cell
 
-import themes
+import ui.themes as themes
 
 # Stale successful check → Warning (days)
 _STALE_CHECK_DAYS = 7

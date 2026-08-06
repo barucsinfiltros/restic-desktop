@@ -5,8 +5,11 @@
 # App icon:
 #   Windows → icons/app.ico  (EXE + taskbar branding)
 #   Linux   → icons/app.png  (executable / desktop icon)
-# Runtime window icon is resolved by themes.app_window_icon() from the
+# Runtime window icon is resolved by ui.themes.app_window_icon() from the
 # bundled icons/ folder (app.ico → app.png → app.svg).
+#
+# UPX is off on purpose: compressing the EXE often breaks / blanks the
+# Explorer icon (especially after rename) even though the icon is embedded.
 
 import sys
 from pathlib import Path
@@ -21,12 +24,12 @@ a = Analysis(
     binaries=[],
     datas=[('icons', 'icons')],
     hiddenimports=[
-        'themes',
         'history_db',
-        'title_bar',
-        'framed_dialog',
-        'rounded_menu',
         'ui',
+        'ui.themes',
+        'ui.title_bar',
+        'ui.framed_dialog',
+        'ui.rounded_menu',
         'ui.icons',
         'ui.cards',
         'ui.charts',
@@ -66,7 +69,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

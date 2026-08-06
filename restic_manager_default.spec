@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Alternate/default build spec — keep in sync with restic_manager.spec
 # Build: pyinstaller restic_manager_default.spec
+# upx=False — UPX often blanks the Windows Explorer icon after rename.
 
 import sys
 from pathlib import Path
@@ -15,12 +16,12 @@ a = Analysis(
     binaries=[],
     datas=[('icons', 'icons')],
     hiddenimports=[
-        'themes',
         'history_db',
-        'title_bar',
-        'framed_dialog',
-        'rounded_menu',
         'ui',
+        'ui.themes',
+        'ui.title_bar',
+        'ui.framed_dialog',
+        'ui.rounded_menu',
         'ui.icons',
         'ui.cards',
         'ui.charts',
@@ -60,7 +61,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
