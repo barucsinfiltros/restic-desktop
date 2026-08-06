@@ -258,7 +258,7 @@ APP_THEMES: dict[str, AppTheme] = {
         accent_hover="#4a84f5",
         accent_soft="rgba(47, 111, 237, 0.14)",
         danger="#c62828",
-        ok="#1b8a4c",
+        ok="#0f6e37",
     ),
     "mist": AppTheme(
         id="mist",
@@ -273,7 +273,7 @@ APP_THEMES: dict[str, AppTheme] = {
         accent_hover="#3d9478",
         accent_soft="rgba(47, 122, 98, 0.16)",
         danger="#b33a3a",
-        ok="#2a8f55",
+        ok="#146b3c",
     ),
     "nord": AppTheme(
         id="nord",
@@ -333,7 +333,7 @@ APP_THEMES: dict[str, AppTheme] = {
         accent_hover="#4f90b8",
         accent_soft="rgba(61, 126, 166, 0.14)",
         danger="#c0392b",
-        ok="#1e8a5a",
+        ok="#0f6b3a",
     ),
     "linen": AppTheme(
         id="linen",
@@ -348,7 +348,7 @@ APP_THEMES: dict[str, AppTheme] = {
         accent_hover="#6b8b9c",
         accent_soft="rgba(90, 122, 138, 0.16)",
         danger="#b5453a",
-        ok="#3d8a5c",
+        ok="#1f6b40",
     ),
     "chalk": AppTheme(
         id="chalk",
@@ -363,7 +363,7 @@ APP_THEMES: dict[str, AppTheme] = {
         accent_hover="#14b8a6",
         accent_soft="rgba(13, 148, 136, 0.14)",
         danger="#dc2626",
-        ok="#16a34a",
+        ok="#166534",
     ),
 }
 
@@ -2145,8 +2145,9 @@ def build_stylesheet(theme: AppTheme) -> str:
             line-height: 1.35;
         }}
         #navBrandIcon {{
-            background: transparent;
-            border: none;
+            background-color: {t.accent_soft};
+            border: 1px solid {t.border};
+            border-radius: 10px;
         }}
         #navFooterRow {{
             background: transparent;

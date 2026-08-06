@@ -482,7 +482,7 @@ def populate_jobs_table(host: Any) -> None:
         failed_color = app_theme.danger
     except Exception:
         muted = "#9aa3b2"
-        success_color = "#22c55e"
+        success_color = "#15803d"
         failed_color = "#ef4444"
     muted_color = QColor(muted)
 

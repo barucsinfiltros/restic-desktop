@@ -664,6 +664,35 @@ To install cryptography:
 python restic_manager.py
 ```
 
+### Building a standalone executable (PyInstaller)
+
+Use the project spec so icons and the `icons/` data folder are bundled correctly.
+The command is the same on Windows and Linux:
+
+```powershell
+pyinstaller restic_manager.spec
+```
+
+Output: `dist/restic_manager` (or `dist/restic_manager.exe` on Windows).
+
+**App icon files** (already in the repo):
+
+| Platform | File | Used for |
+|----------|------|----------|
+| Windows | `icons/app.ico` | `.exe` icon + taskbar |
+| Linux | `icons/app.png` | executable / desktop icon |
+| Runtime (any) | `app.ico` → `app.png` → `app.svg` | window icon via `themes.app_window_icon()` |
+
+Do **not** build with a bare one-file command for the main app — it skips the
+spec’s `datas` / `icon` settings:
+
+```powershell
+# Don't use for restic_manager:
+pyinstaller --noconsole --onefile restic_manager.py
+```
+
+Alternate spec (keep in sync): `pyinstaller restic_manager_default.spec`
+
 ### CLI helpers (no GUI)
 
 ```powershell

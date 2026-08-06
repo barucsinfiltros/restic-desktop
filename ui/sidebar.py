@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.icons import icon, tinted_icon
+from ui.icons import tinted_icon
 
 # (label, page_index, icon_file) — page_index -1 = Exit
 PRIMARY_NAV = [
@@ -112,11 +112,13 @@ class NavSidebar(QFrame):
         footer_row.setContentsMargins(2, 8, 2, 0)
         footer_row.setSpacing(10)
 
-        brand_icon = QLabel(footer)
-        brand_icon.setObjectName("navBrandIcon")
-        brand_icon.setFixedSize(36, 36)
-        brand_icon.setPixmap(icon("brand.svg", 36).pixmap(36, 36))
-        footer_row.addWidget(brand_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._brand_icon = QLabel(footer)
+        self._brand_icon.setObjectName("navBrandIcon")
+        self._brand_icon.setFixedSize(36, 36)
+        self._brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._brand_icon.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._brand_icon.setPixmap(tinted_icon("brand.svg", accent, 22).pixmap(22, 22))
+        footer_row.addWidget(self._brand_icon, 0, Qt.AlignmentFlag.AlignVCenter)
 
         ver_text = version.lstrip("vV") if version else ""
         if ver_text and not ver_text.lower().startswith("version"):
@@ -159,6 +161,7 @@ class NavSidebar(QFrame):
         self._muted = muted
         self._accent = accent
         self._logo_label.setPixmap(tinted_icon("nav_logo.svg", accent, 36).pixmap(36, 36))
+        self._brand_icon.setPixmap(tinted_icon("brand.svg", accent, 22).pixmap(22, 22))
         all_items = PRIMARY_NAV + SECONDARY_NAV
         for btn, (_label, page_idx, icon_name) in zip(self.menu_buttons, all_items):
             color = accent if page_idx >= 0 and btn.isChecked() else muted

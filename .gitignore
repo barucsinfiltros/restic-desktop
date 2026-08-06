@@ -7,7 +7,11 @@ scheduled_tasks/
 *.swp
 .DS_Store
 *.key
+# Keep hand-maintained PyInstaller specs tracked
 *.spec
+!restic_manager.spec
+!restic_manager_default.spec
+!license_generator_gui.spec
 dist/
 *.json
 build/

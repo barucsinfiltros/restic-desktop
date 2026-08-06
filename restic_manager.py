@@ -1,6 +1,21 @@
 ﻿"""
 Restic Backup Manager - GUI Application for managing Restic backups
 Version: 1.0.0
+
+Build with PyInstaller (preferred — uses restic_manager.spec):
+  pyinstaller restic_manager.spec
+
+  Icons (bundled under icons/):
+    Windows  → icons/app.ico   (EXE / taskbar)
+    Linux    → icons/app.png   (desktop / window)
+    Runtime window icon: themes.app_window_icon() picks app.ico → app.png → app.svg
+
+Do not use one-file without the spec (icons/datas would be missing):
+  pyinstaller --noconsole --onefile restic_manager.py   # Don't use
+
+License generator GUI:
+  pyinstaller --noconsole --onefile license_generator_gui.py
+  # or: pyinstaller license_generator_gui.spec
 """
 
 import argparse
@@ -93,7 +108,7 @@ except ImportError:
     wintypes = None
 
 # Version and debug settings
-VERSION = "v1.6.7"
+VERSION = "v2.0.0"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 _STARTUP_WINDOW_PROBE = None  # installed when --debug; traces flash windows
@@ -247,9 +262,7 @@ def stop_startup_window_probe() -> None:
 # CRASH LOGGING: Unhandled exceptions are logged to "restic_manager_crash.log"
 # Check this file if the application closes unexpectedly
 
-""" pyinstaller --noconsole --onefile license_generator_gui.py """
-""" pyinstaller --noconsole --onefile restic_manager.py """ # Dont Use
-""" pyinstaller restic_manager.spec """
+
 
 
 # Windows subprocess helper - prevents console windows from appearing
@@ -639,6 +652,83 @@ def show_framed_message(
     dlg.body_layout.addLayout(footer)
     dlg.exec()
     return bool(accepted["value"])
+
+
+def show_framed_password_prompt(
+    parent,
+    title: str,
+    message: str,
+    *,
+    min_width: int = 420,
+    placeholder: str = "",
+) -> tuple[Optional[str], bool]:
+    """
+    Framed password prompt matching app chrome.
+
+    Returns ``(password, accepted)``. Password is ``None`` when cancelled.
+    """
+    dlg = FramedDialog(
+        title,
+        parent,
+        show_maximize=False,
+        show_minimize=False,
+        modal=True,
+    )
+    dlg.setMinimumWidth(min_width)
+    dlg.setMaximumWidth(max(min_width + 120, 560))
+    dlg.body_layout.setContentsMargins(20, 16, 20, 20)
+    dlg.body_layout.setSpacing(14)
+
+    title_lbl = QLabel(title)
+    title_lbl.setObjectName("pageTitle")
+    title_lbl.setStyleSheet("font-size: 18px;")
+    title_lbl.setWordWrap(True)
+    dlg.body_layout.addWidget(title_lbl)
+
+    body = QLabel(message)
+    body.setObjectName("pageSubtitle")
+    body.setWordWrap(True)
+    dlg.body_layout.addWidget(body)
+
+    edit = QLineEdit(dlg)
+    edit.setEchoMode(QLineEdit.EchoMode.Password)
+    edit.setMinimumHeight(32)
+    if placeholder:
+        edit.setPlaceholderText(placeholder)
+    dlg.body_layout.addWidget(edit)
+
+    footer = QHBoxLayout()
+    footer.setSpacing(8)
+    footer.addStretch(1)
+
+    result: dict = {"ok": False, "text": None}
+
+    cancel_btn = QPushButton("Cancel")
+    cancel_btn.setObjectName("dialogSecondary")
+    cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    cancel_btn.clicked.connect(dlg.reject)
+    footer.addWidget(cancel_btn)
+
+    ok_btn = QPushButton("OK")
+    ok_btn.setObjectName("dialogPrimary")
+    ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    ok_btn.setDefault(True)
+
+    def _ok() -> None:
+        result["ok"] = True
+        result["text"] = edit.text()
+        dlg.accept()
+
+    ok_btn.clicked.connect(_ok)
+    edit.returnPressed.connect(_ok)
+    footer.addWidget(ok_btn)
+
+    dlg.body_layout.addLayout(footer)
+    edit.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+    dlg.exec()
+    if result["ok"]:
+        return result["text"], True
+    return None, False
 
 
 def make_rounded_splash(
@@ -9348,7 +9438,12 @@ try {{
         """Test if the restic executable is accessible and working"""
         restic_path = self.restic_path_input.text().strip()
         if not restic_path:
-            QMessageBox.warning(self, "No Path", "Please enter a restic path first")
+            show_framed_message(
+                self,
+                "No Path",
+                "Please enter a restic path first.",
+                kind="warning",
+            )
             return
         
         # Create temporary ResticCommand with the test path
@@ -9358,27 +9453,30 @@ try {{
         version = test_cmd.version()
         
         if version:
-            QMessageBox.information(
-                self, 
+            show_framed_message(
+                self,
                 "Restic Found",
-                f"âœ… Restic executable is working!\n\n"
+                f"Restic executable is working.\n\n"
                 f"Path: {restic_path}\n"
                 f"Version: {version}\n\n"
-                f"You can now save settings to use this path."
+                f"You can now save settings to use this path.",
+                kind="info",
             )
             self.log(f"Restic test successful: {version}")
         else:
-            QMessageBox.warning(
+            show_framed_message(
                 self,
                 "Restic Not Found",
-                f"âŒ Failed to execute restic from this path.\n\n"
+                f"Failed to execute restic from this path.\n\n"
                 f"Path: {restic_path}\n\n"
                 f"Please check:\n"
-                f"â€¢ The path is correct\n"
-                f"â€¢ The file exists and is executable\n"
-                f"â€¢ Restic is installed\n\n"
-                f"For Windows: Try 'restic' if it's in your PATH,\n"
-                f"or provide the full path like 'C:\\Program Files\\restic\\restic.exe'"
+                f"- The path is correct\n"
+                f"- The file exists and is executable\n"
+                f"- Restic is installed\n\n"
+                f"For Windows: try 'restic' if it is in your PATH,\n"
+                f"or provide the full path like "
+                f"'C:\\Program Files\\restic\\restic.exe'.",
+                kind="warning",
             )
             self.log(f"Restic test failed for path: {restic_path}")
     
@@ -9422,7 +9520,12 @@ try {{
             debug=DEBUG_MODE
         )
         
-        QMessageBox.information(self, "Success", "Settings saved successfully!")
+        show_framed_message(
+            self,
+            "Settings Saved",
+            "Settings saved successfully.",
+            kind="info",
+        )
         self.log("Settings saved")
     
     def set_app_password(self):
@@ -9447,11 +9550,10 @@ try {{
         
         # If password already exists, verify old password first
         if has_password:
-            old_password, ok = QInputDialog.getText(
+            old_password, ok = show_framed_password_prompt(
                 self,
                 "Verify Current Password",
                 "Enter your current password:",
-                QLineEdit.EchoMode.Password
             )
             
             if not ok:
@@ -9459,16 +9561,21 @@ try {{
             
             # Verify old password
             
-            if not verify_app_password(old_password, stored_hash, stored_salt):
-                QMessageBox.warning(self, "Incorrect Password", "The current password you entered is incorrect.")
+            if not verify_app_password(old_password or "", stored_hash, stored_salt):
+                show_framed_message(
+                    self,
+                    "Incorrect Password",
+                    "The current password you entered is incorrect.",
+                    kind="warning",
+                )
                 return
         
         # Ask for new password
-        new_password, ok = QInputDialog.getText(
+        new_password, ok = show_framed_password_prompt(
             self,
             "Set Application Password",
-            "Enter a new password for the application:\n(Minimum 8 characters)",
-            QLineEdit.EchoMode.Password
+            "Enter a new password for the application (minimum 8 characters).",
+            placeholder="New password",
         )
         
         if not ok or not new_password:
@@ -9476,19 +9583,29 @@ try {{
         
         # Validate password length
         if len(new_password) < 8:
-            QMessageBox.warning(self, "Password Too Short", "Password must be at least 8 characters long.")
+            show_framed_message(
+                self,
+                "Password Too Short",
+                "Password must be at least 8 characters long.",
+                kind="warning",
+            )
             return
         
         # Confirm new password
-        confirm_password, ok = QInputDialog.getText(
+        confirm_password, ok = show_framed_password_prompt(
             self,
             "Confirm Password",
             "Confirm the new password:",
-            QLineEdit.EchoMode.Password
+            placeholder="Confirm password",
         )
         
         if not ok or new_password != confirm_password:
-            QMessageBox.warning(self, "Password Mismatch", "Passwords do not match!")
+            show_framed_message(
+                self,
+                "Password Mismatch",
+                "Passwords do not match.",
+                kind="warning",
+            )
             return
         
         # Hash the password
@@ -9519,12 +9636,13 @@ try {{
             "ok",
         )
         
-        QMessageBox.information(
+        show_framed_message(
             self,
-            "Password Set Successfully",
+            "Password Set",
             f"Your application password has been set successfully.\n\n"
             f"Storage location: {storage_location}\n\n"
-            f"This password will be required the next time you start the application."
+            f"This password will be required the next time you start the application.",
+            kind="info",
         )
         self.log(f"Application password updated (stored in {storage_location})")
     
@@ -9544,35 +9662,43 @@ try {{
             stored_salt = self.settings_manager.get("app_password_salt")
         
         if not stored_hash or not stored_salt:
-            QMessageBox.information(self, "No Password Set", "No password is currently set.")
+            show_framed_message(
+                self,
+                "No Password Set",
+                "No password is currently set.",
+                kind="info",
+            )
             return
         
-        current_password, ok = QInputDialog.getText(
+        current_password, ok = show_framed_password_prompt(
             self,
             "Verify Password",
             "Enter your current password to remove password protection:",
-            QLineEdit.EchoMode.Password
         )
         
         if not ok:
             return
         
         # Verify password
-        if not verify_app_password(current_password, stored_hash, stored_salt):
-            QMessageBox.warning(self, "Incorrect Password", "The password you entered is incorrect.")
+        if not verify_app_password(current_password or "", stored_hash, stored_salt):
+            show_framed_message(
+                self,
+                "Incorrect Password",
+                "The password you entered is incorrect.",
+                kind="warning",
+            )
             return
         
         # Confirm removal
-        reply = QMessageBox.question(
-            self,
-            "Confirm Password Removal",
-            "Are you sure you want to remove password protection?\n\n"
-            "The application will no longer require a password at startup.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply != QMessageBox.StandardButton.Yes:
+        if not self._framed_confirm(
+            title="Remove Password",
+            heading="Remove password protection?",
+            body=(
+                "The application will no longer require a password at startup."
+            ),
+            confirm_label="Remove Password",
+            danger=True,
+        ):
             return
         
         # Remove password from storage
@@ -9593,11 +9719,12 @@ try {{
 
         set_settings_status(self.password_status_label, "Inactive", "warn")
         
-        QMessageBox.information(
+        show_framed_message(
             self,
             "Password Removed",
             "Password protection has been removed successfully.\n\n"
-            "The application will no longer require a password at startup."
+            "The application will no longer require a password at startup.",
+            kind="info",
         )
         storage_type = "Registry" if sys.platform == "win32" else "Settings file"
         self.log(f"Application password removed from {storage_type}")
@@ -10021,10 +10148,12 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         if hasattr(self, 'machine_id_display'):
             clipboard = QApplication.clipboard()
             clipboard.setText(self.machine_id_display.text())
-            QMessageBox.information(
+            show_framed_message(
                 self,
                 "Machine ID Copied",
-                "Machine ID has been copied to clipboard.\n\nYou can send this to your license provider to request a new license key."
+                "Machine ID has been copied to the clipboard.\n\n"
+                "You can send this to your license provider to request a new license key.",
+                kind="info",
             )
             self.log("Machine ID copied to clipboard")
     
@@ -10033,105 +10162,124 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         license_manager = LicenseManager()
         machine_id = license_manager.get_machine_id_for_licensing()
         
-        # Create dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Update License Key")
-        dialog.setMinimumWidth(600)
-        
-        layout = QVBoxLayout()
-        dialog.setLayout(layout)
-        
-        # Info text
+        dialog = FramedDialog(
+            "Update License Key",
+            self,
+            show_maximize=False,
+            show_minimize=False,
+            modal=True,
+        )
+        dialog.setMinimumWidth(560)
+        dialog.body_layout.setContentsMargins(20, 16, 20, 20)
+        dialog.body_layout.setSpacing(14)
+        layout = dialog.body_layout
+
+        title_lbl = QLabel("Update License Key")
+        title_lbl.setObjectName("pageTitle")
+        title_lbl.setStyleSheet("font-size: 18px;")
+        title_lbl.setWordWrap(True)
+        layout.addWidget(title_lbl)
+
         info_label = QLabel(
             "Enter your new license key below.\n"
-            "If you need a new license key, send your Machine ID to your license provider."
+            "If you need a new key, send your Machine ID to your license provider."
         )
+        info_label.setObjectName("pageSubtitle")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
-        # Machine ID display
-        machine_group = QGroupBox("Your Machine ID")
-        machine_layout = QHBoxLayout()
-        machine_group.setLayout(machine_layout)
-        
+
+        mid_lab = QLabel("Your Machine ID")
+        mid_lab.setObjectName("settingsFormLabel")
+        layout.addWidget(mid_lab)
+
+        machine_row = QHBoxLayout()
+        machine_row.setSpacing(8)
         machine_display = QLineEdit(machine_id)
         machine_display.setReadOnly(True)
-        machine_display.setFont(QFont("Courier", 9))
-        machine_layout.addWidget(machine_display)
-        
+        machine_display.setObjectName("settingsMachineId")
+        machine_display.setMinimumHeight(30)
+        machine_row.addWidget(machine_display, stretch=1)
+
         copy_btn = QPushButton("Copy")
+        copy_btn.setObjectName("dialogSecondary")
+        copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_btn.setFixedHeight(34)
         copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(machine_id))
-        machine_layout.addWidget(copy_btn)
-        
-        layout.addWidget(machine_group)
-        
-        # License key input
-        license_group = QGroupBox("New License Key")
-        license_layout = QVBoxLayout()
-        license_group.setLayout(license_layout)
-        
+        machine_row.addWidget(copy_btn, 0)
+        layout.addLayout(machine_row)
+
+        key_lab = QLabel("New License Key")
+        key_lab.setObjectName("settingsFormLabel")
+        layout.addWidget(key_lab)
+
         license_input = QTextEdit()
-        license_input.setPlaceholderText("Paste your license key here...")
-        license_input.setMaximumHeight(100)
-        license_input.setFont(QFont("Courier", 9))
-        license_layout.addWidget(license_input)
-        
-        layout.addWidget(license_group)
-        
-        # Status message
+        license_input.setPlaceholderText("Paste your license key here…")
+        license_input.setMaximumHeight(110)
+        license_input.setObjectName("settingsMachineId")
+        layout.addWidget(license_input)
+
         status_label = QLabel("")
+        status_label.setObjectName("settingsStatusMuted")
         status_label.setWordWrap(True)
         layout.addWidget(status_label)
-        
-        # Buttons
-        button_layout = QHBoxLayout()
-        
-        activate_btn = QPushButton("Activate License")
-        activate_btn.clicked.connect(lambda: self._activate_new_license(
-            license_input.toPlainText().strip(),
-            status_label,
-            dialog
-        ))
-        button_layout.addWidget(activate_btn)
-        
+
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        footer.addStretch(1)
+
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("dialogSecondary")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.clicked.connect(dialog.reject)
-        button_layout.addWidget(cancel_btn)
-        
-        layout.addLayout(button_layout)
-        
+        footer.addWidget(cancel_btn)
+
+        activate_btn = QPushButton("Activate License")
+        activate_btn.setObjectName("dialogPrimary")
+        activate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        activate_btn.setDefault(True)
+        activate_btn.clicked.connect(
+            lambda: self._activate_new_license(
+                license_input.toPlainText().strip(),
+                status_label,
+                dialog,
+            )
+        )
+        footer.addWidget(activate_btn)
+        layout.addLayout(footer)
+
         dialog.exec()
     
     def _activate_new_license(self, license_key, status_label, dialog):
         """Activate a new license key"""
+        from ui.settings import set_settings_status
+
         if not license_key:
-            status_label.setText("Please enter a license key.")
-            status_label.setStyleSheet("color: red;")
+            set_settings_status(status_label, "Please enter a license key.", "err")
             return
         
         license_manager = LicenseManager()
         success, message = license_manager.save_license(license_key)
         
         if success:
-            status_label.setText(f"✓ {message}")
-            status_label.setStyleSheet("color: green; font-weight: bold;")
+            set_settings_status(status_label, message, "ok")
             self.log("License key updated successfully")
             
             # Refresh license status in settings page
             self.refresh_license_status()
             
-            # Close dialog after short delay
-            QTimer.singleShot(1500, dialog.accept)
-            
-            # Show success message
-            QMessageBox.information(
-                self,
-                "License Activated",
-                "Your license key has been updated successfully!"
-            )
+            # Close dialog after short delay, then show framed success
+            def _done() -> None:
+                dialog.accept()
+                show_framed_message(
+                    self,
+                    "License Activated",
+                    "Your license key has been updated successfully.",
+                    kind="info",
+                )
+
+            QTimer.singleShot(800, _done)
         else:
-            status_label.setText(f"✗ {message}")
-            status_label.setStyleSheet("color: red; font-weight: bold;")
+            set_settings_status(status_label, message, "err")
             self.log(f"License activation failed: {message}")
     
     # Theme Methods
