@@ -4,6 +4,18 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 ## What's New in Recent Updates
 
+### Repository backends — Local, SFTP, HTTPS ✨ NEW
+- 📁 **Local folder**: Browse and pick a path on disk / external drive
+- 🔐 **SFTP (NAS / remote)**: Host, port, username, remote path, optional SSH private key
+  - Restic requires SSH **key** login (not an interactive SSH password)
+  - In-dialog tip covers `ssh-keygen`, copying the public key to the NAS, and testing `ssh`
+- 🌐 **HTTPS (REST server)**: URL for restic REST server (or compatible endpoint)
+  - HTTP auth modes: **Anonymous**, **Username + password**, or **Password only**
+  - HTTP credentials are separate from the **repository password** (backup encryption)
+  - Passed to restic via `RESTIC_REST_USERNAME` / `RESTIC_REST_PASSWORD`
+- 🎨 Theme combo: dark themes, separator, then light themes
+- Combo selection contrast fixed (selected item stays readable)
+
 ### Repository Health Status ✨ NEW
 - 🟢 **Status column**: Configured Repositories shows ● Healthy / ● Warning / ● Unreachable / ● Unknown
 - 🔍 **Real checks**: Status comes from `restic snapshots --latest 1` (not from merely saving the form)
@@ -234,13 +246,14 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - Path, Type, Last Checked
   - **⋯ menu**: Check connection, Edit, Delete
 - **Full Add/Edit Repository Dialog**:
-  - Support for local, SFTP, S3, B2, Azure, GS, REST repositories
-  - Repository name and type selection
-  - Path/URL input with browse button for local paths
-  - **Encrypted password field** with show/hide toggle
+  - Types: **Local folder**, **SFTP (NAS / remote)**, **HTTPS (REST server)**
+  - Local: path with Browse
+  - SFTP: host, port, username, remote path, absolute/relative, optional SSH key
+  - HTTPS: URL + HTTP auth (anonymous / username+password / password only)
+  - **Repo password** (encrypted at rest) with show/hide — encrypts backup data
   - **Initialize repository option** with real-time progress dialog
-  - **Test connection button** - validates repository access with `restic snapshots --latest 1` and updates Status
-  - Edit existing repositories
+  - **Test connection button** — validates access with `restic snapshots --latest 1` and updates Status
+  - Edit existing repositories; legacy cloud types still open if already saved
   - Delete repositories with confirmation
 - **Windows UTF-8 Support**: Subprocess encoding fix for non-ASCII characters in Restic output
 
@@ -611,11 +624,12 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 ```
 restic_manager.py              # Main application
 history_db.py                  # SQLite history helpers (job runs, repo stats, dashboard cache)
-restic_settings.json           # Settings / config (auto-created)
+restic_settings.json           # Settings / config (auto-created in the working directory)
 restic_history.db              # Job history + dashboard cache (auto-created beside settings)
 license.key                    # License key (created after activation)
 scheduled_tasks/               # Generated Windows backup PowerShell scripts + DPAPI password files
 ui/                            # Dashboard, charts, cards, sidebar, repositories, etc.
+themes.py                      # App themes + stylesheets
 
 # License System (v1.3.0)
 license_generator.py           # CLI license generator (KEEP SECURE!)
@@ -628,6 +642,19 @@ LICENSE_QUICKSTART.md          # Quick start for license system
 # Documentation
 README.md                      # This file
 ```
+
+### Where data is stored
+
+| Data | Location | Notes |
+|------|----------|--------|
+| App settings, repos, backup jobs | `restic_settings.json` (app working directory) | Created automatically on first save |
+| Repo / HTTP passwords | Inside `restic_settings.json` | Fernet-encrypted with a **machine-derived** key (PBKDF2) — not portable to another PC as-is |
+| Job runs, dashboard cache, repo stats | `restic_history.db` (beside settings) | SQLite; stdlib only |
+| License | `license.key` | Machine-specific |
+| Scheduled backup scripts | `scheduled_tasks/` | PowerShell + DPAPI-encrypted `.password` files (Windows) |
+| Actual backup data | Your repo path / SFTP / REST URL | Managed by **restic**, not this app |
+
+**Working directory:** when you start the app from this folder (or a PyInstaller build’s folder), settings resolve to that directory — e.g. `C:\python_scripts\restic_mngr\restic_settings.json`.
 
 **Security Note:** The `license_generator.py` and `license_generator_gui.py` files should be kept secure and NOT distributed to end users. They are administrator/developer tools only.
 
@@ -741,16 +768,19 @@ On first run, the application requires a valid license key:
 ### Adding Your First Repository
 
 1. Click **Repositories** in the sidebar
-2. Click **Add Repository** button
-3. In the dialog:
-   - Enter a **Name** (e.g., "My Backup")
-   - Select **Type** (local, sftp, s3, etc.)
-   - Enter **Path/URL** (use Browse for local paths)
-   - Enter **Password** (will be encrypted automatically)
-   - Check **Show password** if you want to verify it
-   - Optionally check **Initialize repository now** for new repos
-4. Optionally click **Test** to verify the path and password (updates Status when you save)
-5. Click **OK**
+2. Click **Add Repository**
+3. Enter a **Name** (e.g. "NAS Backups")
+4. Choose **Type**:
+   - **Local folder** — path on disk; use **Browse**
+   - **SFTP (NAS / remote)** — host, port, username, remote path; optional SSH key  
+     (SSH key login must already work — see the in-dialog tip)
+   - **HTTPS (REST server)** — URL such as `https://host:8000/repo/`  
+     HTTP auth: Anonymous, Username + password, or Password only
+5. Enter the **Repo password** (encrypts backup data; stored encrypted in settings)
+6. Optionally check **Initialize repository now** for a brand-new repo
+7. Optionally click **Test**, then **OK**
+
+Config (including encrypted passwords) is saved to `restic_settings.json` in the app working directory.
 
 **Repository Status:** In the Configured Repositories table, use **⋯ → Check connection** to refresh Status and Last Checked. Status values:
 - **Healthy** — last check succeeded
@@ -759,45 +789,26 @@ On first run, the application requires a valid license key:
 - **Unknown** — not checked yet
 
 ### Creating a Backup Job
-scrollable dialog:
-   - Enter a **Job Name** (e.g., "Daily Documents Backup")
-   - Select your repository from the dropdown
+
+1. Click **Backup Jobs** in the sidebar
+2. Click **New Job** (or Edit an existing job)
+3. In the dialog:
+   - Enter a **Job Name** (e.g. "Daily Documents Backup")
+   - Select one or more **repositories**
    - Click **Add Path** to add directories to backup
-   - Optionally add tags (comma-separated)
-   - Add exclude patterns (one per line)
-   - Configure **Advanced Options**:
-     - ✅ Exclude Caches (recommended)
-     - **Pack Size** (16MB/32MB/64MB/128MB, default: 16MB)
-     - One File System (stay on same drive)
-     - **Backup Timeout** (in hours, 0 = no timeout)
-     - Exclude If Present (marker file like .nobackup)
-     - **Compression** (off/auto/max)
-     - **No Cache** (use less disk space)
-     - **Ignore Inode** (for certain filesystems)
-4. Scroll through all options (dialog is fully scrollable)
-5  - Optionally add tags (comma-separated)
-   - Add exclude patterns (one per line)
-   - Configure **Advanced Options**:
-     - ✅ Exclude Caches (recommended)
-     - Set Pack Size if needed (0 = default)
-   **Non-modal progress window** appears (main GUI remains accessible):
-   - Progress bar with percentage
-   - Files and bytes processed
-   - ETA (estimated time remaining)
-   - Current files being backed up
-   - Real-time output from Restic
-5. **Continue working**: Navigate to other pages, check snapshots, etc.
-6. Click **Cancel** to stop the backup (repository will auto-unlock)
-7. Backup respects your configured timeout (no more 1-hour hardcoded limit!
+   - Optionally add tags and exclude patterns
+   - Configure advanced options (exclude caches, pack size, timeout, compression, etc.)
+4. Click **OK** to save
+
+### Running a Backup Job
+
 1. Click **Backup Jobs** in the sidebar
 2. Select a saved job from the list
-3. Click **Run Job** button
-4. Watch real-time progress:
-   - Progress bar with percentage
-   - Files and bytes processed
-   - ETA (estimated time remaining)
-   - Current files being backed up
-5. Click **Cancel** to stop the backup (repository will auto-unlock)
+3. Click **Run Job**
+4. A **non-modal** progress window appears (you can keep using the app):
+   - Progress, files/bytes, ETA, live restic output
+5. Click **Cancel** to stop (repository will auto-unlock)
+6. Timeout follows the job setting (hours; `0` = no limit)
 
 ### Scheduling Automated Backups (Windows)
 

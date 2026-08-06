@@ -1485,6 +1485,58 @@ def sftp_cli_options(ssh_key: str = "") -> List[str]:
     return ["-o", f'sftp.args=-o BatchMode=yes -e none -i "{key_safe}"']
 
 
+def build_rest_repo_url(url: str) -> str:
+    """Normalize a user-entered HTTP(S) URL into a restic ``rest:`` location."""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("rest:"):
+        return raw
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return f"rest:{raw}"
+    # Bare host/path — assume HTTPS
+    return f"rest:https://{raw.lstrip('/')}"
+
+
+def parse_rest_location(location: str) -> str:
+    """Strip ``rest:`` prefix for display in the URL field."""
+    loc = (location or "").strip()
+    if loc.startswith("rest:"):
+        return loc[5:]
+    return loc
+
+
+def rest_auth_env(repo: Optional[dict]) -> Dict[str, str]:
+    """HTTP Basic Auth env vars for restic REST/HTTPS backends (never the repo password)."""
+    repo = repo or {}
+    if (repo.get("type") or "").lower() not in ("https", "rest"):
+        return {}
+    mode = (repo.get("rest_auth") or "anonymous").lower()
+    if mode in ("", "anonymous", "none", "anon"):
+        return {}
+    env: Dict[str, str] = {}
+    user = (repo.get("rest_user") or "").strip()
+    # Password may already be decrypted by caller via rest_password_plain,
+    # or stored encrypted as rest_password (caller should decrypt first).
+    pwd = repo.get("rest_password_plain")
+    if pwd is None:
+        pwd = repo.get("rest_password") or ""
+    pwd = str(pwd)
+    if mode in ("password", "password_only", "pass"):
+        if pwd:
+            env["RESTIC_REST_PASSWORD"] = pwd
+        # Username optional for password-only servers
+        if user:
+            env["RESTIC_REST_USERNAME"] = user
+        return env
+    # userpass
+    if user:
+        env["RESTIC_REST_USERNAME"] = user
+    if pwd:
+        env["RESTIC_REST_PASSWORD"] = pwd
+    return env
+
+
 def repo_restic_prefix(repo: Optional[dict]) -> List[str]:
     """Return ``-r <location>`` plus any SFTP SSH options for this repo."""
     repo = repo or {}
@@ -1492,6 +1544,33 @@ def repo_restic_prefix(repo: Optional[dict]) -> List[str]:
     if (repo.get("type") or "").lower() == "sftp":
         args.extend(sftp_cli_options(repo.get("ssh_key") or ""))
     return args
+
+
+def build_repo_env(
+    repo: Optional[dict],
+    repo_password: str = "",
+    *,
+    password_manager=None,
+) -> Dict[str, str]:
+    """
+    Environment for a restic invocation against ``repo``.
+    Sets RESTIC_PASSWORD and, for HTTPS/REST, optional RESTIC_REST_* auth.
+    """
+    repo = repo or {}
+    env: Dict[str, str] = {}
+    if repo_password:
+        env["RESTIC_PASSWORD"] = repo_password
+
+    rest_repo = dict(repo)
+    # Decrypt HTTP password if still encrypted
+    enc = repo.get("rest_password") or ""
+    if enc and password_manager is not None and "rest_password_plain" not in rest_repo:
+        try:
+            rest_repo["rest_password_plain"] = password_manager.decrypt(enc)
+        except Exception:
+            rest_repo["rest_password_plain"] = ""
+    env.update(rest_auth_env(rest_repo))
+    return env
 
 
 # Repository Dialog
@@ -1535,6 +1614,7 @@ class RepositoryDialog(FramedDialog):
         self._repo_type_options = [
             ("local", "Local folder"),
             ("sftp", "SFTP (NAS / remote)"),
+            ("https", "HTTPS (REST server)"),
         ]
         for type_id, label in self._repo_type_options:
             self.type_combo.addItem(label, type_id)
@@ -1609,9 +1689,12 @@ class RepositoryDialog(FramedDialog):
         self._sftp_key_label = form_layout.labelForField(key_row)
 
         self.sftp_hint = QLabel(
-            "Restic uses SSH key login (not an SSH password). Set up key access "
-            "to your NAS first. The repository password below encrypts backup data — "
-            "it is separate from SSH."
+            "Restic needs SSH key login (not an SSH password).\n"
+            "1) On this PC run: ssh-keygen -t ed25519\n"
+            "2) Copy the .pub key to your NAS (ssh-copy-id, or paste in the NAS admin UI)\n"
+            "3) Test with: ssh user@host — it must connect without asking for a password\n"
+            "4) Optional: pick that private key above if it is not your default ~/.ssh key\n"
+            "The repository password below encrypts backup data — it is separate from SSH."
         )
         self.sftp_hint.setWordWrap(True)
         self.sftp_hint.setObjectName("mutedLabel")
@@ -1648,6 +1731,79 @@ class RepositoryDialog(FramedDialog):
             (self._sftp_key_label, key_row),
             (None, self.sftp_hint),
         ]
+
+        # --- HTTPS / REST server fields ---
+        self.https_url_input = QLineEdit()
+        self.https_url_input.setMinimumHeight(34)
+        self.https_url_input.setPlaceholderText(
+            "https://backup.example.com:8000/my-repo/"
+        )
+        form_layout.addRow("URL:", self.https_url_input)
+        self._https_url_label = form_layout.labelForField(self.https_url_input)
+
+        self.https_auth_combo = QComboBox()
+        self.https_auth_combo.setMinimumHeight(34)
+        self.https_auth_combo.setMinimumWidth(200)
+        self._https_auth_options = [
+            ("anonymous", "Anonymous (no login)"),
+            ("userpass", "Username + password"),
+            ("password", "Password only"),
+        ]
+        for auth_id, label in self._https_auth_options:
+            self.https_auth_combo.addItem(label, auth_id)
+        form_layout.addRow("HTTP auth:", self.https_auth_combo)
+        self._https_auth_label = form_layout.labelForField(self.https_auth_combo)
+
+        self.https_user_input = QLineEdit()
+        self.https_user_input.setMinimumHeight(34)
+        self.https_user_input.setPlaceholderText("HTTP username")
+        form_layout.addRow("HTTP username:", self.https_user_input)
+        self._https_user_label = form_layout.labelForField(self.https_user_input)
+
+        self.https_pass_input = QLineEdit()
+        self.https_pass_input.setMinimumHeight(34)
+        self.https_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.https_pass_input.setPlaceholderText("HTTP password")
+        form_layout.addRow("HTTP password:", self.https_pass_input)
+        self._https_pass_label = form_layout.labelForField(self.https_pass_input)
+
+        self.https_hint = QLabel(
+            "For restic REST server (or compatible HTTPS endpoints). "
+            "HTTP login is optional and separate from the repository password below. "
+            "Prefer HTTPS; plain http:// is allowed on trusted LANs only."
+        )
+        self.https_hint.setWordWrap(True)
+        self.https_hint.setObjectName("mutedLabel")
+        form_layout.addRow("", self.https_hint)
+
+        if existing_repo and current_type in ("https", "rest"):
+            self.https_url_input.setText(
+                existing_repo.get("https_url")
+                or parse_rest_location(existing_repo.get("path") or "")
+            )
+            auth = (existing_repo.get("rest_auth") or "anonymous").lower()
+            auth_idx = self.https_auth_combo.findData(auth)
+            if auth_idx < 0 and auth in ("userpass", "password", "anonymous"):
+                auth_idx = self.https_auth_combo.findData(auth)
+            if auth_idx >= 0:
+                self.https_auth_combo.setCurrentIndex(auth_idx)
+            self.https_user_input.setText(existing_repo.get("rest_user") or "")
+            if existing_repo.get("rest_password"):
+                try:
+                    self.https_pass_input.setText(
+                        self.password_manager.decrypt(existing_repo.get("rest_password"))
+                    )
+                except Exception:
+                    pass
+
+        self._https_rows = [
+            (self._https_url_label, self.https_url_input),
+            (self._https_auth_label, self.https_auth_combo),
+            (self._https_user_label, self.https_user_input),
+            (self._https_pass_label, self.https_pass_input),
+            (None, self.https_hint),
+        ]
+        self.https_auth_combo.currentIndexChanged.connect(self._on_https_auth_changed)
         
         # Repository encryption password
         self.password_input = QLineEdit()
@@ -1737,20 +1893,44 @@ class RepositoryDialog(FramedDialog):
             widget.setVisible(visible)
 
     def _on_repo_type_changed(self, *_args):
-        """Show local vs SFTP fields for the selected backend."""
+        """Show local / SFTP / HTTPS fields for the selected backend."""
         repo_type = self._repo_type_id()
         is_local = repo_type == "local"
         is_sftp = repo_type == "sftp"
+        is_https = repo_type in ("https", "rest")
 
-        self._set_row_visible(self._path_label, self.path_input, is_local or not is_sftp)
+        # Path row: local, or legacy/unknown types
+        self._set_row_visible(
+            self._path_label, self.path_input, is_local or (not is_sftp and not is_https)
+        )
         for label, widget in self._sftp_rows:
             self._set_row_visible(label, widget, is_sftp)
+        for label, widget in self._https_rows:
+            self._set_row_visible(label, widget, is_https)
 
         if is_local:
             self.path_input.setPlaceholderText("e.g. D:\\Backups\\restic-repo")
-        elif not is_sftp:
+        elif not is_sftp and not is_https:
             self.path_input.setPlaceholderText("Restic repository URL / path")
         self._sync_browse_enabled()
+        if is_https:
+            self._on_https_auth_changed()
+
+    def _https_auth_id(self) -> str:
+        data = self.https_auth_combo.currentData()
+        if data:
+            return str(data)
+        return "anonymous"
+
+    def _on_https_auth_changed(self, *_args):
+        """Show HTTP username/password based on auth mode."""
+        if self._repo_type_id() not in ("https", "rest"):
+            return
+        mode = self._https_auth_id()
+        need_user = mode == "userpass"
+        need_pass = mode in ("userpass", "password")
+        self._set_row_visible(self._https_user_label, self.https_user_input, need_user)
+        self._set_row_visible(self._https_pass_label, self.https_pass_input, need_pass)
 
     def _sync_browse_enabled(self):
         browse = getattr(self, "_browse_btn", None)
@@ -1782,34 +1962,69 @@ class RepositoryDialog(FramedDialog):
                 self.path_input.setText(directory)
     
     def toggle_password_visibility(self, state):
-        """Toggle password visibility"""
-        if state == Qt.CheckState.Checked.value:
-            self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
-        else:
-            self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        """Toggle repository (and HTTP) password visibility"""
+        mode = (
+            QLineEdit.EchoMode.Normal
+            if state == Qt.CheckState.Checked.value
+            else QLineEdit.EchoMode.Password
+        )
+        self.password_input.setEchoMode(mode)
+        if hasattr(self, "https_pass_input"):
+            self.https_pass_input.setEchoMode(mode)
 
     def _build_location(self) -> str:
         """Resolved restic -r location from the current form."""
-        if self._repo_type_id() != "sftp":
-            return self.path_input.text().strip()
-        return build_sftp_repo_url(
-            self.sftp_host_input.text(),
-            self.sftp_user_input.text(),
-            self.sftp_remote_input.text(),
-            port=self.sftp_port_spin.value(),
-            absolute=self.sftp_absolute_check.isChecked(),
-        )
+        repo_type = self._repo_type_id()
+        if repo_type == "sftp":
+            return build_sftp_repo_url(
+                self.sftp_host_input.text(),
+                self.sftp_user_input.text(),
+                self.sftp_remote_input.text(),
+                port=self.sftp_port_spin.value(),
+                absolute=self.sftp_absolute_check.isChecked(),
+            )
+        if repo_type in ("https", "rest"):
+            return build_rest_repo_url(self.https_url_input.text())
+        return self.path_input.text().strip()
+
+    def _form_repo_stub(self) -> dict:
+        """Temporary repo dict from the form (for test connection env/args)."""
+        repo_type = self._repo_type_id()
+        stub = {
+            "type": repo_type,
+            "path": self._build_location(),
+            "ssh_key": self.sftp_key_input.text().strip() if repo_type == "sftp" else "",
+        }
+        if repo_type in ("https", "rest"):
+            stub["rest_auth"] = self._https_auth_id()
+            stub["rest_user"] = self.https_user_input.text().strip()
+            stub["rest_password_plain"] = self.https_pass_input.text()
+        return stub
 
     def _validate_form(self) -> Optional[str]:
         if not self.name_input.text().strip():
             return "Please enter a repository name."
-        if self._repo_type_id() == "sftp":
+        repo_type = self._repo_type_id()
+        if repo_type == "sftp":
             if not self.sftp_host_input.text().strip():
                 return "Please enter the SFTP host."
             if not self.sftp_user_input.text().strip():
                 return "Please enter the SSH username."
             if not self.sftp_remote_input.text().strip():
                 return "Please enter the remote path for the repository."
+        elif repo_type in ("https", "rest"):
+            url = self.https_url_input.text().strip()
+            if not url:
+                return "Please enter the HTTPS / REST server URL."
+            mode = self._https_auth_id()
+            if mode == "userpass":
+                if not self.https_user_input.text().strip():
+                    return "Please enter the HTTP username."
+                if not self.https_pass_input.text():
+                    return "Please enter the HTTP password."
+            elif mode == "password":
+                if not self.https_pass_input.text():
+                    return "Please enter the HTTP password."
         elif not self.path_input.text().strip():
             return "Please enter a repository path."
         if not self.password_input.text():
@@ -1842,10 +2057,8 @@ class RepositoryDialog(FramedDialog):
         self._test_progress.show()
         QApplication.processEvents()
         
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", path, "snapshots", "--latest", "1"]
-        if self._repo_type_id() == "sftp":
-            args[2:2] = sftp_cli_options(self.sftp_key_input.text())
+        env = build_repo_env(self._form_repo_stub(), password)
+        args = repo_restic_prefix(self._form_repo_stub()) + ["snapshots", "--latest", "1"]
         
         restic_cmd = self.parent().restic_cmd
         
@@ -1895,6 +2108,21 @@ class RepositoryDialog(FramedDialog):
             "password": encrypted_password,
         }
 
+        sftp_keys = (
+            "sftp_host",
+            "sftp_port",
+            "sftp_user",
+            "sftp_remote_path",
+            "sftp_absolute",
+            "ssh_key",
+        )
+        https_keys = (
+            "https_url",
+            "rest_auth",
+            "rest_user",
+            "rest_password",
+        )
+
         if repo_type == "sftp":
             data["sftp_host"] = self.sftp_host_input.text().strip()
             data["sftp_port"] = int(self.sftp_port_spin.value())
@@ -1902,16 +2130,20 @@ class RepositoryDialog(FramedDialog):
             data["sftp_remote_path"] = self.sftp_remote_input.text().strip()
             data["sftp_absolute"] = self.sftp_absolute_check.isChecked()
             data["ssh_key"] = self.sftp_key_input.text().strip()
+            for key in https_keys:
+                data.pop(key, None)
+        elif repo_type in ("https", "rest"):
+            data["https_url"] = self.https_url_input.text().strip()
+            data["rest_auth"] = self._https_auth_id()
+            data["rest_user"] = self.https_user_input.text().strip()
+            http_pass = self.https_pass_input.text()
+            data["rest_password"] = (
+                self.password_manager.encrypt(http_pass) if http_pass else ""
+            )
+            for key in sftp_keys:
+                data.pop(key, None)
         else:
-            # Drop stale SFTP fields when switching back to local
-            for key in (
-                "sftp_host",
-                "sftp_port",
-                "sftp_user",
-                "sftp_remote_path",
-                "sftp_absolute",
-                "ssh_key",
-            ):
+            for key in sftp_keys + https_keys:
                 data.pop(key, None)
 
         # Preserve identity colour + prior check metadata on edit.
@@ -2706,6 +2938,27 @@ class SchedulerManager:
         self.is_linux = sys.platform.startswith("linux")
         self.is_macos = sys.platform == "darwin"
     
+    def _powershell_rest_auth_block(self, repo: dict) -> str:
+        """Emit PowerShell lines that set RESTIC_REST_* for HTTPS repos."""
+        env = build_repo_env(
+            repo,
+            "",
+            password_manager=self.settings_manager.password_manager,
+        )
+        lines = []
+        user = env.get("RESTIC_REST_USERNAME")
+        pwd = env.get("RESTIC_REST_PASSWORD")
+        if user:
+            # Escape for PowerShell double-quoted string
+            safe = str(user).replace('"', '`"').replace("$", "`$")
+            lines.append(f'$env:RESTIC_REST_USERNAME = "{safe}"')
+        if pwd:
+            safe = str(pwd).replace('"', '`"').replace("$", "`$")
+            lines.append(f'$env:RESTIC_REST_PASSWORD = "{safe}"')
+        if not lines:
+            return "# (no HTTP auth)"
+        return "\n".join(lines)
+
     def create_scheduled_task(self, job_name, job_data):
         """Create a scheduled task/cron job for a backup job"""
         schedule = job_data.get("schedule")
@@ -2787,7 +3040,7 @@ class SchedulerManager:
             python_exe = sys.executable
             
             # Build restic command arguments
-            restic_args = ["-r", repo["path"], "backup"]
+            restic_args = repo_restic_prefix(repo) + ["backup"]
             
             # Add paths
             restic_args.extend(job_data["paths"])
@@ -2907,6 +3160,9 @@ if (Test-Path $passwordFile) {{
     Show-ToastNotification "Backup Failed" "Password file not found for job: {job_name}"
     exit 1
 }}
+
+# Optional HTTP Basic Auth for HTTPS / REST server repositories
+{self._powershell_rest_auth_block(repo)}
 
 # Run restic backup
 $resticPath = "{restic_path}"
@@ -3427,6 +3683,32 @@ class ResticManagerWindow(QMainWindow):
             except RuntimeError:
                 # Splash has been deleted, silently ignore
                 pass
+
+    def _repo_dict_for_env(self, local_vars: Optional[dict] = None) -> dict:
+        """Best-effort resolve of the repository dict for env construction."""
+        local_vars = local_vars or {}
+        for key in ("repo", "repo_data", "repo_full", "source_repo", "dest_repo"):
+            value = local_vars.get(key)
+            if isinstance(value, dict) and value.get("path"):
+                return value
+        for attr in (
+            "_backup_repo",
+            "_current_snapshot_repo",
+            "_current_stats_repo",
+            "current_repository",
+        ):
+            value = getattr(self, attr, None)
+            if isinstance(value, dict) and value.get("path"):
+                return value
+        return {}
+
+    def _repo_env(self, repo: Optional[dict], password: str = "") -> Dict[str, str]:
+        """Build RESTIC_* env for a repository (includes HTTPS REST auth when set)."""
+        return build_repo_env(
+            repo or {},
+            password or "",
+            password_manager=self.settings_manager.password_manager,
+        )
     
     def create_sidebar(self, main_layout):
         """Create modern icon navigation sidebar"""
@@ -3726,8 +4008,12 @@ class ResticManagerWindow(QMainWindow):
                         continue
                 
                 # Get snapshot count
-                env = {"RESTIC_PASSWORD": password} if password else {}
-                args = ["-r", repo_path, "snapshots", "--json"]
+                env = build_repo_env(
+                    repo,
+                    password,
+                    password_manager=self.settings_manager.password_manager,
+                )
+                args = repo_restic_prefix(repo) + ["snapshots", "--json"]
                 
                 try:
                     success, stdout, stderr = self.restic_cmd.run(args, env, timeout=30)
@@ -3758,7 +4044,7 @@ class ResticManagerWindow(QMainWindow):
                     pass
                 
                 # Get repository size
-                args = ["-r", repo_path, "stats", "--mode", "raw-data", "--json"]
+                args = repo_restic_prefix(repo) + ["stats", "--mode", "raw-data", "--json"]
                 try:
                     success, stdout, stderr = self.restic_cmd.run(args, env, timeout=30)
                     if success and stdout:
@@ -4026,7 +4312,11 @@ class ResticManagerWindow(QMainWindow):
                 
                 # Initialize repository in background
                 password = self.settings_manager.password_manager.decrypt(repo_data["password"]) if repo_data.get("password") else ""
-                env = {"RESTIC_PASSWORD": password} if password else {}
+                env = build_repo_env(
+                    repo_data,
+                    password,
+                    password_manager=self.settings_manager.password_manager,
+                )
                 args = repo_restic_prefix(repo_data) + ["init"]
                 
                 # Log to output
@@ -4192,7 +4482,11 @@ class ResticManagerWindow(QMainWindow):
         progress.show()
         QApplication.processEvents()
 
-        env = {"RESTIC_PASSWORD": password} if password else {}
+        env = build_repo_env(
+            repo,
+            password,
+            password_manager=self.settings_manager.password_manager,
+        )
         args = repo_restic_prefix(repo) + ["snapshots", "--latest", "1"]
         worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
 
@@ -4582,8 +4876,8 @@ class ResticManagerWindow(QMainWindow):
         self._current_snapshot_repo_name = repo_name
         
         # Execute restic snapshots command in background thread
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "snapshots", "--json"]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["snapshots", "--json"]
         
         self._snapshot_worker = ResticWorker(self.restic_cmd, args, env)
         self._snapshot_worker.finished.connect(self._on_snapshots_loaded)
@@ -7802,8 +8096,8 @@ class ResticManagerWindow(QMainWindow):
         self.restore_log.clear()
         
         # Build restore command
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "restore", snapshot_id, "--target", target]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["restore", snapshot_id, "--target", target]
         
         # Use --include filter when a specific path is selected
         if restore_path:
@@ -8485,8 +8779,8 @@ class ResticManagerWindow(QMainWindow):
             return
         
         # Build restic backup command arguments
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "backup", "--json"]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["backup", "--json"]
         
         # Add paths
         args.extend(job["paths"])
@@ -9321,6 +9615,9 @@ if (Test-Path $passwordFile) {{
     Show-ToastNotification "Retention Failed" "Password file not found for repository: {repo['name']}"
     exit 1
 }}
+
+# Optional HTTP Basic Auth for HTTPS / REST server repositories
+{self._powershell_rest_auth_block(repo)}
 
 # Run restic retention/forget command
 Write-Host "Starting retention policy for repository: {repo['name']}"
@@ -11205,8 +11502,12 @@ def run_job_cli(job_name):
             password = settings_manager.password_manager.decrypt(repo["password"])
         
         # Build command
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "backup", "--json"]
+        env = build_repo_env(
+            repo,
+            password,
+            password_manager=settings_manager.password_manager,
+        )
+        args = repo_restic_prefix(repo) + ["backup", "--json"]
         
         # Add paths
         args.extend(job["paths"])
