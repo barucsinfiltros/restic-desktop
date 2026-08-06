@@ -254,3 +254,120 @@ def make_repo_badges_cell(
 ):
     """Back-compat alias for jobs-table repository cells."""
     return make_repo_icon_cell(names, color_for, parent=parent)
+
+
+def make_snapshot_id_cell(
+    short_id: str,
+    color: str,
+    *,
+    parent=None,
+):
+    """Snapshots-table ID cell: tinted icon chip + short id (repo accent colour)."""
+    from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
+
+    from ui.icons import tinted_icon
+
+    cell = QWidget(parent)
+    cell.setObjectName("snapshotIdCell")
+    row = QHBoxLayout(cell)
+    row.setContentsMargins(8, 4, 8, 4)
+    row.setSpacing(8)
+
+    chip = QLabel(cell)
+    chip.setObjectName("repoIconChip")
+    chip.setFixedSize(28, 28)
+    chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    chip.setStyleSheet(
+        f"QLabel#repoIconChip {{"
+        f"  background-color: {color};"
+        f"  border: none;"
+        f"  border-radius: 8px;"
+        f"}}"
+    )
+    chip.setPixmap(tinted_icon("snapshot.svg", "#ffffff", 15).pixmap(15, 15))
+    row.addWidget(chip, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    label = QLabel(short_id or "—", cell)
+    label.setObjectName("repoNameLabel")
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+    label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+    row.addWidget(label, 0, Qt.AlignmentFlag.AlignVCenter)
+    row.addStretch(1)
+    return cell
+
+
+def make_snapshot_size_cell(
+    size_text: str,
+    *,
+    ratio: float,
+    bar_color: str,
+    track_color: str,
+    text_color: str,
+    tooltip: str = "",
+    parent=None,
+):
+    """Size text + tiny relative bar (ratio vs largest snapshot in the list)."""
+    from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget
+
+    cell = QWidget(parent)
+    cell.setObjectName("snapshotSizeCell")
+    row = QHBoxLayout(cell)
+    row.setContentsMargins(8, 4, 8, 4)
+    row.setSpacing(8)
+
+    label = QLabel(size_text or "—", cell)
+    label.setObjectName("snapshotSizeLabel")
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+    label.setStyleSheet(
+        f"QLabel#snapshotSizeLabel {{"
+        f"  color: {text_color};"
+        f"  background: transparent;"
+        f"  border: none;"
+        f"  padding: 0;"
+        f"  margin: 0;"
+        f"}}"
+    )
+    label.setMinimumWidth(72)
+    label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+    row.addWidget(label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    track = QFrame(cell)
+    track.setObjectName("snapshotSizeTrack")
+    track.setFixedSize(56, 6)
+    track.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    track.setStyleSheet(
+        f"QFrame#snapshotSizeTrack {{"
+        f"  background-color: {track_color};"
+        f"  border: none;"
+        f"  border-radius: 3px;"
+        f"}}"
+    )
+
+    fill_w = max(0, min(56, int(round(56 * max(0.0, min(1.0, ratio))))))
+    if fill_w > 0:
+        fill = QFrame(track)
+        fill.setObjectName("snapshotSizeFill")
+        fill.setGeometry(0, 0, fill_w, 6)
+        fill.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        fill.setStyleSheet(
+            f"QFrame#snapshotSizeFill {{"
+            f"  background-color: {bar_color};"
+            f"  border: none;"
+            f"  border-radius: 3px;"
+            f"}}"
+        )
+
+    row.addWidget(track, 0, Qt.AlignmentFlag.AlignVCenter)
+    row.addStretch(1)
+
+    tip = tooltip or (
+        "Data added relative to the largest snapshot in this list"
+        if size_text and size_text != "—"
+        else ""
+    )
+    if tip:
+        cell.setToolTip(tip)
+        label.setToolTip(tip)
+        track.setToolTip(tip)
+    return cell

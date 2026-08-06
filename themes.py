@@ -2248,28 +2248,20 @@ def build_stylesheet(theme: AppTheme) -> str:
             selection-background-color: {t.accent_soft};
             selection-color: {t.text};
         }}
-        QTableWidget#jobsTable, QTableWidget#repoTable {{
+        QTableWidget#jobsTable, QTableWidget#repoTable, QTableWidget#snapshotsTable {{
             selection-background-color: {jobs_sel};
             selection-color: {t.muted};
         }}
         QTableWidget#jobsTable::item, QTableWidget#repoTable::item, QTableWidget#snapshotsTable::item {{
             background-color: transparent;
-            padding: 10px 8px;
             border: none;
             border-bottom: 1px solid {t.border};
             text-align: left;
-        }}
-        QTableWidget#jobsTable::item, QTableWidget#repoTable::item {{
             /* Fusion adds a small item inset; use 4px so text lines up with 8px header padding */
             padding: 8px 8px 8px 4px;
         }}
-        QTableWidget#jobsTable::item:selected, QTableWidget#repoTable::item:selected {{
+        QTableWidget#jobsTable::item:selected, QTableWidget#repoTable::item:selected, QTableWidget#snapshotsTable::item:selected {{
             background-color: {jobs_sel};
-            border-bottom: 1px solid {t.border};
-        }}
-        QTableWidget#snapshotsTable::item:selected {{
-            background-color: {t.accent_soft};
-            color: {t.text};
             border-bottom: 1px solid {t.border};
         }}
         QTableWidget#jobsTable QHeaderView, QTableWidget#repoTable QHeaderView, QTableWidget#snapshotsTable QHeaderView {{
@@ -2278,7 +2270,8 @@ def build_stylesheet(theme: AppTheme) -> str:
             border-top-right-radius: 10px;
         }}
         QTableWidget#jobsTable QHeaderView::section,
-        QTableWidget#repoTable QHeaderView::section {{
+        QTableWidget#repoTable QHeaderView::section,
+        QTableWidget#snapshotsTable QHeaderView::section {{
             background-color: {jobs_header_wash};
             color: {jobs_header_text};
             border: none;
@@ -2290,34 +2283,45 @@ def build_stylesheet(theme: AppTheme) -> str:
             text-align: left;
         }}
         QTableWidget#jobsTable QHeaderView::section:hover,
-        QTableWidget#repoTable QHeaderView::section:hover {{
+        QTableWidget#repoTable QHeaderView::section:hover,
+        QTableWidget#snapshotsTable QHeaderView::section:hover {{
             color: {t.text};
             background-color: {hover};
         }}
         QTableWidget#jobsTable QHeaderView::section:first,
-        QTableWidget#repoTable QHeaderView::section:first {{
+        QTableWidget#repoTable QHeaderView::section:first,
+        QTableWidget#snapshotsTable QHeaderView::section:first {{
             border-top-left-radius: 10px;
         }}
         QTableWidget#jobsTable QHeaderView::section:last,
-        QTableWidget#repoTable QHeaderView::section:last {{
+        QTableWidget#repoTable QHeaderView::section:last,
+        QTableWidget#snapshotsTable QHeaderView::section:last {{
             border-top-right-radius: 10px;
         }}
         QTableWidget#jobsTable QTableCornerButton::section,
-        QTableWidget#repoTable QTableCornerButton::section {{
+        QTableWidget#repoTable QTableCornerButton::section,
+        QTableWidget#snapshotsTable QTableCornerButton::section {{
             background-color: {jobs_header_wash};
             border: none;
             border-top-left-radius: 10px;
         }}
-        QWidget#repoIconCell {{
+        QWidget#repoIconCell, QWidget#snapshotIdCell, QWidget#snapshotSizeCell {{
             background: transparent;
             margin: 0;
             padding: 0;
         }}
         QTableWidget#jobsTable QLabel#repoNameLabel,
-        QTableWidget#repoTable QLabel#repoNameLabel {{
+        QTableWidget#repoTable QLabel#repoNameLabel,
+        QTableWidget#snapshotsTable QLabel#repoNameLabel {{
             background: transparent;
             padding: 0;
             margin: 0;
+        }}
+        QTableWidget#snapshotsTable QLabel#snapshotSizeLabel {{
+            background: transparent;
+            padding: 0;
+            margin: 0;
+            font-size: 12px;
         }}
         QPushButton#iconMenuBtn {{
             background: transparent;
@@ -2332,31 +2336,6 @@ def build_stylesheet(theme: AppTheme) -> str:
         }}
         QPushButton#iconMenuBtn:pressed {{
             background-color: {hover_strong};
-        }}
-        QTableWidget#snapshotsTable QHeaderView::section {{
-            background-color: {header_wash};
-            color: {t.muted};
-            border: none;
-            border-bottom: 1px solid {t.border};
-            border-right: none;
-            padding: 10px 8px;
-            font-size: 11px;
-            font-weight: 600;
-        }}
-        QTableWidget#snapshotsTable QHeaderView::section:hover {{
-            color: {t.text};
-            background-color: {hover};
-        }}
-        QTableWidget#snapshotsTable QHeaderView::section:first {{
-            border-top-left-radius: 10px;
-        }}
-        QTableWidget#snapshotsTable QHeaderView::section:last {{
-            border-top-right-radius: 10px;
-        }}
-        QTableWidget#snapshotsTable QTableCornerButton::section {{
-            background-color: {header_wash};
-            border: none;
-            border-top-left-radius: 10px;
         }}
         QTextEdit#snapshotDetails {{
             background-color: transparent;
@@ -2373,6 +2352,26 @@ def build_stylesheet(theme: AppTheme) -> str:
             border: 1px solid {t.border};
             border-radius: 10px;
         }}
+        #snapshotSummaryStrip {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        #snapshotSummaryLabel {{
+            color: {t.muted};
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        #snapshotSummaryValue {{
+            color: {t.text};
+            font-size: 14px;
+            font-weight: 600;
+        }}
+        #snapshotSummaryDivider {{
+            background-color: {t.border};
+            border: none;
+            max-width: 1px;
+        }}
         #browseMetaLabel {{
             color: {t.muted};
             font-size: 11px;
@@ -2383,34 +2382,66 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 13px;
         }}
         QTreeWidget#browseFileTree {{
-            background-color: {shell_bg};
-            border: 1px solid {t.border};
-            border-radius: 8px;
+            background-color: transparent;
+            border: none;
+            border-radius: 0;
             color: {t.text};
             outline: none;
             alternate-background-color: transparent;
             show-decoration-selected: 1;
+            selection-background-color: {jobs_sel};
+            selection-color: {t.muted};
         }}
         QTreeWidget#browseFileTree::item {{
-            padding: 4px 6px;
+            background-color: transparent;
+            padding: 6px 8px 6px 4px;
             border: none;
-            min-height: 24px;
+            border-bottom: 1px solid {t.border};
+            min-height: 28px;
         }}
         QTreeWidget#browseFileTree::item:selected {{
-            background-color: {t.accent_soft};
-            color: {t.text};
+            background-color: {jobs_sel};
+            color: {t.muted};
+            border-bottom: 1px solid {t.border};
         }}
         QTreeWidget#browseFileTree::item:hover {{
             background-color: {hover};
         }}
+        QTreeWidget#browseFileTree QHeaderView {{
+            background-color: transparent;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+        }}
         QTreeWidget#browseFileTree QHeaderView::section {{
-            background-color: {header_wash};
-            color: {t.muted};
+            background-color: {jobs_header_wash};
+            color: {jobs_header_text};
             border: none;
             border-bottom: 1px solid {t.border};
-            padding: 8px 6px;
-            font-size: 11px;
+            border-right: none;
+            padding: 10px 8px;
+            font-size: 12px;
             font-weight: 600;
+            text-align: left;
+        }}
+        QTreeWidget#browseFileTree QHeaderView::section:hover {{
+            color: {t.text};
+            background-color: {hover};
+        }}
+        QTreeWidget#browseFileTree QHeaderView::section:first {{
+            border-top-left-radius: 10px;
+        }}
+        QTreeWidget#browseFileTree QHeaderView::section:last {{
+            border-top-right-radius: 10px;
+        }}
+        QTreeWidget#browseFileTree QTableCornerButton::section {{
+            background-color: {jobs_header_wash};
+            border: none;
+            border-top-left-radius: 10px;
+        }}
+        #browseFileTreeShell {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
         }}
         QLineEdit#browseSearch {{
             background-color: {shell_bg};

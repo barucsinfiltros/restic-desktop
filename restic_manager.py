@@ -30,6 +30,7 @@ import themes
 import history_db
 from title_bar import TitleBar
 from framed_dialog import FramedDialog
+from rounded_menu import RoundedMenu
 from ui import (
     NavSidebar,
     create_dashboard_page,
@@ -37,7 +38,14 @@ from ui import (
     populate_jobs_table,
     populate_repository_table,
 )
-from ui.snapshots import create_snapshots_page as build_snapshots_page_ui
+from ui.snapshots import (
+    create_snapshots_page as build_snapshots_page_ui,
+    populate_snapshots_table,
+    snapshot_data_from_row,
+    snapshot_previous_short_id,
+    snapshot_short_id_from_row,
+    update_snapshots_summary,
+)
 
 # Import Windows toast notifications (optional)
 try:
@@ -58,8 +66,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit,
     QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog, QRadioButton, QDateEdit
 )
-from PyQt6.QtGui import QColor, QCursor, QFont, QMouseEvent, QTextCursor, QPixmap
-from PyQt6.QtCore import Qt, QEvent, QObject, QPoint, QTimer, QThread, pyqtSignal, QTime, QDate
+from PyQt6.QtGui import QColor, QCursor, QFont, QMouseEvent, QTextCursor, QPixmap, QPainter, QPainterPath, QPen
+from PyQt6.QtCore import Qt, QEvent, QObject, QPoint, QTimer, QThread, pyqtSignal, QTime, QDate, QRectF
 
 # Win32 WM_NCHITTEST result codes for frameless edge resize.
 _WINDOW_EDGE = 8
@@ -544,6 +552,47 @@ def make_framed_progress_dialog(
     dlg.body_layout.addWidget(bar)
 
     return dlg, label, bar
+
+
+def make_rounded_splash(
+    message: str,
+    *,
+    bg_color: str,
+    text_color: str,
+    width: int = 400,
+    height: int = 200,
+    radius: float = 12.0,
+) -> QSplashScreen:
+    """Splash screen with rounded corners matching app chrome."""
+    pix = QPixmap(width, height)
+    pix.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    rect = QRectF(0.5, 0.5, width - 1.0, height - 1.0)
+    path = QPainterPath()
+    path.addRoundedRect(rect, radius, radius)
+    painter.fillPath(path, QColor(bg_color))
+    border = QColor(text_color)
+    border.setAlpha(40)
+    painter.setPen(QPen(border, 1.0))
+    painter.drawPath(path)
+    painter.end()
+
+    splash = QSplashScreen(
+        pix,
+        Qt.WindowType.SplashScreen
+        | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.WindowStaysOnTopHint,
+    )
+    splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    splash.setMask(pix.mask())
+    splash.showMessage(
+        message,
+        Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
+        QColor(text_color),
+    )
+    return splash
 
     
 # Password encryption key (derived from machine-specific data)
@@ -4712,6 +4761,8 @@ class ResticManagerWindow(QMainWindow):
         if hover is not None:
             hover._apply(-1)
         self.snapshots_table.setRowCount(0)
+        self._loaded_snapshots = []
+        update_snapshots_summary(self, [])
         self.snapshot_details.clear()
         
         # Store for later use
@@ -4731,52 +4782,25 @@ class ResticManagerWindow(QMainWindow):
         if success and stdout:
             try:
                 snapshots = json.loads(stdout)
-                
+
                 if not isinstance(snapshots, list):
                     snapshots = [snapshots]
-                
-                self.snapshots_table.setRowCount(len(snapshots))
-                
-                for i, snapshot in enumerate(snapshots):
-                    # ID (short)
-                    snapshot_id = snapshot.get("short_id", snapshot.get("id", "")[:8])
-                    self.snapshots_table.setItem(i, 0, QTableWidgetItem(snapshot_id))
-                    
-                    # Time
-                    time_str = snapshot.get("time", "")
-                    if time_str:
-                        # Format: 2026-03-13T05:27:50.7033785Z -> 2026-03-13 05:27:50
-                        time_str = time_str.replace("T", " ").split(".")[0]
-                    self.snapshots_table.setItem(i, 1, QTableWidgetItem(time_str))
-                    
-                    # Host
-                    host = snapshot.get("hostname", "")
-                    self.snapshots_table.setItem(i, 2, QTableWidgetItem(host))
-                    
-                    # Tags
-                    tags = ", ".join(snapshot.get("tags", []))
-                    self.snapshots_table.setItem(i, 3, QTableWidgetItem(tags))
-                    
-                    # Paths
-                    paths = "\n".join(snapshot.get("paths", []))
-                    self.snapshots_table.setItem(i, 4, QTableWidgetItem(paths))
-                    
-                    # Size (if available in summary)
-                    summary = snapshot.get("summary", {})
-                    data_added = summary.get("data_added", 0)
-                    size_str = self.format_bytes(data_added) if data_added > 0 else "—"
-                    self.snapshots_table.setItem(i, 5, QTableWidgetItem(size_str))
-                    
-                    # Store full snapshot data in first cell for later use
-                    item = self.snapshots_table.item(i, 0)
-                    item.setData(Qt.ItemDataRole.UserRole, snapshot)
-                
+
+                self._loaded_snapshots = snapshots
+                populate_snapshots_table(self)
+
                 self.log(f"Loaded {len(snapshots)} snapshot(s) for {self._current_snapshot_repo_name}")
-                
+
             except json.JSONDecodeError as e:
+                self._loaded_snapshots = []
+                update_snapshots_summary(self, [])
+                self.snapshots_table.setRowCount(0)
                 self.log(f"Error parsing snapshots JSON: {str(e)}")
                 QMessageBox.warning(self, "Error", f"Failed to parse snapshots data: {str(e)}")
         else:
+            self._loaded_snapshots = []
+            update_snapshots_summary(self, [])
+            self.snapshots_table.setRowCount(0)
             error_msg = stderr if stderr else "Unknown error"
             self.log(f"Error loading snapshots: {error_msg}")
             if error_msg:
@@ -4789,8 +4813,8 @@ class ResticManagerWindow(QMainWindow):
             return
         
         row = selected[0].row()
-        snapshot_item = self.snapshots_table.item(row, 0)
-        snapshot_data = snapshot_item.data(Qt.ItemDataRole.UserRole)
+        snapshot_data = snapshot_data_from_row(self.snapshots_table, row)
+        snapshot_id = snapshot_short_id_from_row(self.snapshots_table, row)
         
         if not snapshot_data:
             self.snapshot_details.setText("No snapshot data available")
@@ -4918,9 +4942,8 @@ class ResticManagerWindow(QMainWindow):
             return
         
         row = selected[0].row()
-        snapshot_item = self.snapshots_table.item(row, 0)
-        snapshot_id = snapshot_item.text()
-        snapshot_data = snapshot_item.data(Qt.ItemDataRole.UserRole)
+        snapshot_id = snapshot_short_id_from_row(self.snapshots_table, row)
+        snapshot_data = snapshot_data_from_row(self.snapshots_table, row)
         
         # Get full snapshot ID from stored data
         full_id = snapshot_data.get("id", snapshot_id) if snapshot_data else snapshot_id
@@ -5043,9 +5066,31 @@ class ResticManagerWindow(QMainWindow):
         file_tree.setRootIsDecorated(True)
         file_tree.setUniformRowHeights(True)
         file_tree.setAnimated(True)
+        file_tree.setIndentation(18)
+        file_tree.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         file_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        browser_layout.addWidget(file_tree, stretch=1)
+        browse_header = file_tree.header()
+        browse_header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeading | Qt.AlignmentFlag.AlignVCenter
+        )
+        browse_header.setStretchLastSection(True)
+
+        tree_shell = QFrame()
+        tree_shell.setObjectName("browseFileTreeShell")
+        tree_shell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        tree_shell_layout = QVBoxLayout(tree_shell)
+        tree_shell_layout.setContentsMargins(0, 0, 0, 0)
+        tree_shell_layout.setSpacing(0)
+        tree_shell_layout.addWidget(file_tree)
+        browser_layout.addWidget(tree_shell, stretch=1)
         layout.addWidget(browser_card, stretch=1)
+
+        file_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        file_tree.customContextMenuRequested.connect(
+            lambda pos, tree=file_tree, dlg=dialog: self._show_snapshot_browse_context_menu(
+                tree, pos, dlg
+            )
+        )
 
         # Footer
         footer = QHBoxLayout()
@@ -5191,6 +5236,20 @@ class ResticManagerWindow(QMainWindow):
     def _on_snapshot_content_loaded(self, success, stdout, stderr, file_tree, status_label=None, dialog=None):
         """Callback when snapshot content is loaded"""
         file_tree.clear()
+
+        try:
+            theme_id = themes.resolve_theme_id(self.settings_manager.get("theme"))
+            app_theme = themes.get_app_theme(theme_id)
+            muted = themes._mix_hex(app_theme.muted, app_theme.text, 0.18)
+            folder_color = app_theme.accent
+            primary = app_theme.text
+        except Exception:
+            muted = "#9aa3b2"
+            folder_color = "#4A9EFF"
+            primary = "#e8eaed"
+        muted_color = QColor(muted)
+        folder_qcolor = QColor(folder_color)
+        primary_qcolor = QColor(primary)
         
         if success and stdout:
             # Parse the output - each line is a file
@@ -5339,7 +5398,11 @@ class ResticManagerWindow(QMainWindow):
                             
                             # Set icon based on type
                             if item_type == "Folder":
-                                item.setForeground(0, QColor("#4A9EFF"))
+                                item.setForeground(0, folder_qcolor)
+                            else:
+                                item.setForeground(0, primary_qcolor)
+                            for col in (1, 2, 3, 4):
+                                item.setForeground(col, muted_color)
                             
                             # Store original full path as data (for copying)
                             item.setData(0, Qt.ItemDataRole.UserRole, "/" + original_path_up_to_here)
@@ -5498,7 +5561,309 @@ class ResticManagerWindow(QMainWindow):
             item = tree_widget.topLevelItem(i)
             expand_single_child_recursively(item)
     
-    def _copy_selected_tree_paths(self, file_tree):
+    def _show_snapshot_browse_context_menu(self, file_tree, pos, dialog):
+        """Right-click menu for snapshot content browser: restore, copy, expand/collapse."""
+        item = file_tree.itemAt(pos)
+        if item is not None and not item.isSelected():
+            file_tree.clearSelection()
+            item.setSelected(True)
+            file_tree.setCurrentItem(item)
+
+        selected = file_tree.selectedItems()
+        has_selection = bool(selected)
+        can_expand = any(it.childCount() > 0 for it in selected) if selected else False
+
+        menu = RoundedMenu(file_tree)
+        restore_act = menu.addAction("Restore selected…")
+        restore_act.setEnabled(has_selection)
+        restore_orig_act = menu.addAction("Restore to original location…")
+        restore_orig_act.setEnabled(has_selection)
+        copy_act = menu.addAction("Copy path(s)")
+        copy_act.setEnabled(has_selection)
+        menu.addSeparator()
+        expand_act = menu.addAction("Expand")
+        expand_act.setEnabled(can_expand)
+        collapse_act = menu.addAction("Collapse")
+        collapse_act.setEnabled(can_expand)
+
+        chosen = menu.exec(file_tree.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+
+        if chosen is restore_act:
+            self._restore_selected_from_snapshot_browser(file_tree, dialog, to_original=False)
+        elif chosen is restore_orig_act:
+            self._restore_selected_from_snapshot_browser(file_tree, dialog, to_original=True)
+        elif chosen is copy_act:
+            self._copy_selected_tree_paths(file_tree, quiet=True)
+        elif chosen is expand_act:
+            for it in selected:
+                it.setExpanded(True)
+        elif chosen is collapse_act:
+            for it in selected:
+                it.setExpanded(False)
+
+    def _paths_from_tree_selection(self, file_tree) -> list[str]:
+        """Unique snapshot paths from selected tree items."""
+        paths: list[str] = []
+        seen = set()
+        for item in file_tree.selectedItems():
+            path = item.data(0, Qt.ItemDataRole.UserRole)
+            if not path:
+                continue
+            path = str(path)
+            if path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+        return paths
+
+    def _restore_selected_from_snapshot_browser(self, file_tree, dialog, *, to_original: bool = False):
+        """Restore selected paths from the Snapshot Content browse dialog."""
+        paths = self._paths_from_tree_selection(file_tree)
+        if not paths:
+            QMessageBox.warning(
+                dialog,
+                "No Selection",
+                "Please select files or folders to restore.",
+            )
+            return
+
+        snapshot_id = getattr(dialog, "_full_id", None)
+        repo = getattr(dialog, "_repo", None)
+        password = getattr(dialog, "_password", "") or ""
+        if not snapshot_id or not repo:
+            QMessageBox.warning(dialog, "Error", "Snapshot or repository context is missing.")
+            return
+
+        self._restore_paths_from_snapshot(
+            paths,
+            snapshot_id=snapshot_id,
+            repo=repo,
+            password=password,
+            parent_dialog=dialog,
+            to_original=to_original,
+        )
+
+    def _move_restored_files_to_original(self, temp_target: str) -> list[str]:
+        """
+        Move files from a temp restore target into their original absolute paths.
+
+        Restic restores Windows paths under the target as ``D\\folder\\file``;
+        this converts that back to ``D:\\folder\\file``.
+        """
+        moved_files: list[str] = []
+        if not temp_target or not os.path.isdir(temp_target):
+            return moved_files
+
+        for root, _dirs, files in os.walk(temp_target):
+            for filename in files:
+                src_file = os.path.join(root, filename)
+                rel_path = os.path.relpath(src_file, temp_target)
+
+                if sys.platform == "win32":
+                    parts = rel_path.split(os.sep)
+                    if len(parts) > 0 and len(parts[0]) == 1 and parts[0].isalpha():
+                        drive = parts[0] + ":\\"
+                        dest_path = os.path.join(drive, *parts[1:]) if len(parts) > 1 else drive
+                    else:
+                        self.log(f"Warning: Could not parse drive from path: {rel_path}")
+                        continue
+                else:
+                    dest_path = os.path.join("/", rel_path)
+
+                dest_dir = os.path.dirname(dest_path)
+                if dest_dir:
+                    os.makedirs(dest_dir, exist_ok=True)
+                shutil.move(src_file, dest_path)
+                moved_files.append(dest_path)
+                self.log(f"Moved: {dest_path}")
+
+        try:
+            shutil.rmtree(temp_target)
+            self.log(f"Cleaned up temp directory: {temp_target}")
+        except Exception as e:
+            self.log(f"Warning: Could not remove temp directory: {e}")
+
+        return moved_files
+
+    def _restore_paths_from_snapshot(
+        self,
+        paths_to_restore: list[str],
+        *,
+        snapshot_id: str,
+        repo: dict,
+        password: str,
+        parent_dialog,
+        to_original: bool = False,
+    ):
+        """Restore selected snapshot paths to a chosen folder or original locations."""
+        if not paths_to_restore:
+            return
+
+        preview = "\n".join([f"  • {p}" for p in paths_to_restore[:10]])
+        if len(paths_to_restore) > 10:
+            preview += f"\n  … and {len(paths_to_restore) - 10} more"
+
+        if to_original:
+            temp_root = (
+                self.settings_manager.get("temp_restore_path")
+                or os.path.join(tempfile.gettempdir(), "restic_restore")
+            )
+            target_dir = os.path.join(
+                temp_root,
+                f"browse_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            )
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except Exception as e:
+                QMessageBox.warning(
+                    parent_dialog,
+                    "Temp Path Error",
+                    f"Could not create temporary restore folder:\n{target_dir}\n\n{e}",
+                )
+                return
+
+            result = QMessageBox.warning(
+                parent_dialog,
+                "Confirm Restore to Original",
+                f"Restore {len(paths_to_restore)} item(s) to their ORIGINAL locations?\n\n"
+                "This can overwrite existing files.\n\n"
+                f"Items:\n{preview}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                try:
+                    os.rmdir(target_dir)
+                except Exception:
+                    pass
+                return
+            dest_label = "original locations"
+        else:
+            target_dir = QFileDialog.getExistingDirectory(
+                parent_dialog,
+                "Select Restore Target Directory",
+                os.path.expanduser("~"),
+            )
+            if not target_dir:
+                return
+
+            result = QMessageBox.question(
+                parent_dialog,
+                "Confirm Restore",
+                f"Restore {len(paths_to_restore)} item(s) to:\n{target_dir}\n\n"
+                f"Items:\n{preview}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                return
+            dest_label = target_dir
+
+        short_id = str(snapshot_id)[:8]
+        self.log(
+            f"Restoring {len(paths_to_restore)} item(s) from snapshot {short_id} "
+            f"({'to original via ' + target_dir if to_original else 'to ' + target_dir})"
+        )
+
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", repo["path"], "restore", snapshot_id, "--target", target_dir]
+        for path in paths_to_restore:
+            include = str(path).strip().lstrip("/")
+            if include:
+                args.extend(["--include", include])
+
+        progress, progress_label, _ = make_framed_progress_dialog(
+            parent_dialog,
+            "Restoring Files",
+            f"Restoring {len(paths_to_restore)} item(s)…\nPlease wait.",
+            modal=True,
+            min_width=420,
+        )
+        progress.show()
+        QApplication.processEvents()
+
+        worker = ResticWorker(self.restic_cmd, args, env, timeout=3600, use_progress=True)
+
+        def _on_progress(msg: str, lbl=progress_label) -> None:
+            text = (msg or "").strip()
+            if text:
+                lbl.setText(f"Restoring {len(paths_to_restore)} item(s)…\n{text[:160]}")
+
+        def _on_done(success, stdout, stderr, dlg=progress, temp=target_dir, original=to_original):
+            try:
+                dlg.close()
+                dlg.deleteLater()
+            except Exception:
+                pass
+            if not success:
+                err = (stderr or "Unknown error").strip()
+                QMessageBox.warning(
+                    parent_dialog,
+                    "Restore Failed",
+                    f"Failed to restore files:\n\n{err[:500]}",
+                )
+                self.log(f"Restore failed: {err}")
+                return
+
+            if original:
+                try:
+                    QApplication.processEvents()
+                    moved = self._move_restored_files_to_original(temp)
+                except Exception as e:
+                    self.log(f"Error moving files to original locations: {e}")
+                    QMessageBox.warning(
+                        parent_dialog,
+                        "Move Error",
+                        f"Files were restored to a temp folder but could not be moved:\n{e}\n\n"
+                        f"Files are in:\n{temp}",
+                    )
+                    return
+
+                if moved:
+                    preview_moved = "\n".join(moved[:5])
+                    if len(moved) > 5:
+                        preview_moved += f"\n… and {len(moved) - 5} more"
+                    QMessageBox.information(
+                        parent_dialog,
+                        "Restore Complete",
+                        f"Successfully restored {len(moved)} file(s) to original locations!\n\n"
+                        f"{preview_moved}",
+                    )
+                    self.log(f"Restore to original completed: {len(moved)} file(s)")
+                    show_notification(
+                        title="Restore Complete",
+                        message=f"Restored {len(moved)} file(s) to original locations.",
+                        icon_type="success",
+                        duration="short",
+                    )
+                else:
+                    QMessageBox.warning(
+                        parent_dialog,
+                        "Restore Issue",
+                        "Restore completed but no files were found to move to original locations.",
+                    )
+                return
+
+            QMessageBox.information(
+                parent_dialog,
+                "Restore Complete",
+                f"Successfully restored {len(paths_to_restore)} item(s) to:\n{dest_label}",
+            )
+            self.log(f"Restore completed: {len(paths_to_restore)} item(s) → {dest_label}")
+            show_notification(
+                title="Restore Complete",
+                message=f"Restored {len(paths_to_restore)} item(s).",
+                icon_type="success",
+                duration="short",
+            )
+
+        worker.progress.connect(_on_progress)
+        worker.finished.connect(_on_done)
+        worker.start()
+        parent_dialog._restore_worker = worker
+        self._browse_restore_worker = worker  # prevent GC if parent drops ref
+
+    def _copy_selected_tree_paths(self, file_tree, quiet: bool = False):
         """Copy selected file paths from tree to clipboard"""
         selected_items = file_tree.selectedItems()
         if not selected_items:
@@ -5515,7 +5880,8 @@ class ResticManagerWindow(QMainWindow):
             clipboard_text = "\n".join(paths)
             QApplication.clipboard().setText(clipboard_text)
             self.log(f"Copied {len(paths)} path(s) to clipboard")
-            QMessageBox.information(None, "Copied", f"Copied {len(paths)} path(s) to clipboard")
+            if not quiet:
+                QMessageBox.information(None, "Copied", f"Copied {len(paths)} path(s) to clipboard")
     
     def _copy_selected_paths(self, file_list):
         """Copy selected file paths to clipboard (legacy list version)"""
@@ -5548,16 +5914,13 @@ class ResticManagerWindow(QMainWindow):
             return
         
         row = selected[0].row()
-        # Snapshots are in chronological order (oldest first)
-        # Row 0 = oldest, Row N-1 = newest
-        if row == 0:
+        snapshot_data = snapshot_data_from_row(self.snapshots_table, row)
+        snapshot_id = snapshot_short_id_from_row(self.snapshots_table, row)
+        snapshots = getattr(self, "_loaded_snapshots", []) or []
+        prev_snapshot_id = snapshot_previous_short_id(snapshots, snapshot_data) if snapshot_data else ""
+        if not prev_snapshot_id:
             QMessageBox.information(self, "No Previous", "This is the oldest snapshot, no previous snapshot to compare")
             return
-        
-        # Current snapshot (newer)
-        snapshot_id = self.snapshots_table.item(row, 0).text()
-        # Previous snapshot (older) - one row before
-        prev_snapshot_id = self.snapshots_table.item(row - 1, 0).text()
         
         # Get repository info
         if not hasattr(self, '_current_snapshot_repo'):
@@ -5711,9 +6074,8 @@ class ResticManagerWindow(QMainWindow):
             return
         
         row = selected[0].row()
-        snapshot_item = self.snapshots_table.item(row, 0)
-        snapshot_id = snapshot_item.text()
-        snapshot_data = snapshot_item.data(Qt.ItemDataRole.UserRole)
+        snapshot_id = snapshot_short_id_from_row(self.snapshots_table, row)
+        snapshot_data = snapshot_data_from_row(self.snapshots_table, row)
         
         # Get full snapshot ID from stored data
         full_id = snapshot_data.get("id", snapshot_id) if snapshot_data else snapshot_id
@@ -5821,9 +6183,8 @@ class ResticManagerWindow(QMainWindow):
             return
         
         row = selected[0].row()
-        snapshot_item = self.snapshots_table.item(row, 0)
-        snapshot_id = snapshot_item.text()
-        snapshot_data = snapshot_item.data(Qt.ItemDataRole.UserRole)
+        snapshot_id = snapshot_short_id_from_row(self.snapshots_table, row)
+        snapshot_data = snapshot_data_from_row(self.snapshots_table, row)
         
         # Get full snapshot ID from stored data
         full_id = snapshot_data.get("id", snapshot_id) if snapshot_data else snapshot_id
@@ -7556,55 +7917,11 @@ class ResticManagerWindow(QMainWindow):
             # Check if we need to move files to original location
             if hasattr(self, '_restore_metadata') and self._restore_metadata.get('restore_to_original'):
                 temp_target = self._restore_metadata['temp_target']
-                restore_path = self._restore_metadata.get('restore_path', '')
                 
                 self.log("Moving files from temp location to original locations...")
                 
                 try:
-                    import shutil
-                    import os
-                    moved_files = []
-                    
-                    # Walk through temp directory to find restored files
-                    for root, dirs, files in os.walk(temp_target):
-                        for filename in files:
-                            src_file = os.path.join(root, filename)
-                            
-                            # Calculate relative path from temp_target
-                            rel_path = os.path.relpath(src_file, temp_target)
-                            
-                            # Convert to original path (e.g., D\temp\file.zip -> D:\temp\file.zip)
-                            # On Windows, the first part is the drive letter
-                            import platform
-                            if platform.system() == "Windows":
-                                parts = rel_path.split(os.sep)
-                                if len(parts) > 0 and len(parts[0]) == 1 and parts[0].isalpha():
-                                    # First part is drive letter
-                                    drive = parts[0] + ":\\"
-                                    dest_path = os.path.join(drive, *parts[1:])
-                                else:
-                                    # Couldn't parse drive, skip
-                                    self.log(f"Warning: Could not parse drive from path: {rel_path}")
-                                    continue
-                            else:
-                                # Unix/Linux - just use the path as-is
-                                dest_path = os.path.join("/", rel_path)
-                            
-                            # Create destination directory if needed
-                            dest_dir = os.path.dirname(dest_path)
-                            os.makedirs(dest_dir, exist_ok=True)
-                            
-                            # Move file
-                            shutil.move(src_file, dest_path)
-                            moved_files.append(dest_path)
-                            self.log(f"Moved: {dest_path}")
-                    
-                    # Clean up temp directory
-                    try:
-                        shutil.rmtree(temp_target)
-                        self.log(f"Cleaned up temp directory: {temp_target}")
-                    except Exception as e:
-                        self.log(f"Warning: Could not remove temp directory: {e}")
+                    moved_files = self._move_restored_files_to_original(temp_target)
                     
                     if moved_files:
                         self.log(f"Successfully moved {len(moved_files)} file(s) to original location(s)")
@@ -7883,92 +8200,22 @@ class ResticManagerWindow(QMainWindow):
     
     def _restore_selected_from_browser(self, file_tree, snapshot_combo, repo, password, parent_dialog):
         """Restore selected files from the browser"""
-        selected_items = file_tree.selectedItems()
-        
-        if not selected_items:
+        paths_to_restore = self._paths_from_tree_selection(file_tree)
+        if not paths_to_restore:
             QMessageBox.warning(parent_dialog, "No Selection", "Please select files or folders to restore")
             return
-        
+
         snapshot_id = snapshot_combo.currentData()
         if not snapshot_id:
             return
-        
-        # Get paths to restore
-        paths_to_restore = []
-        for item in selected_items:
-            path = item.data(0, Qt.ItemDataRole.UserRole)
-            if path:
-                paths_to_restore.append(path)
-        
-        # Ask for restore target
-        target_dir = QFileDialog.getExistingDirectory(
-            parent_dialog,
-            "Select Restore Target Directory",
-            os.path.expanduser("~")
+
+        self._restore_paths_from_snapshot(
+            paths_to_restore,
+            snapshot_id=snapshot_id,
+            repo=repo,
+            password=password or "",
+            parent_dialog=parent_dialog,
         )
-        
-        if not target_dir:
-            return
-        
-        # Confirm restore
-        file_list = "\n".join([f"  â€¢ {p}" for p in paths_to_restore[:10]])
-        if len(paths_to_restore) > 10:
-            file_list += f"\n  ... and {len(paths_to_restore) - 10} more"
-        
-        result = QMessageBox.question(
-            parent_dialog,
-            "Confirm Restore",
-            f"Restore {len(paths_to_restore)} item(s) to:\n{target_dir}\n\nFiles:\n{file_list}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if result != QMessageBox.StandardButton.Yes:
-            return
-        
-        # Perform restore
-        self.log(f"Restoring {len(paths_to_restore)} items from snapshot {snapshot_id[:8]} to {target_dir}")
-        
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "restore", snapshot_id, "--target", target_dir]
-        
-        # Add include filters for selected paths
-        for path in paths_to_restore:
-            args.extend(["--include", path])
-        
-        worker = ResticWorker(self.restic_cmd, args, env, timeout=3600, use_progress=True)
-        
-        # Progress dialog
-        progress = QProgressDialog("Restoring files...", "Cancel", 0, 0, parent_dialog)
-        progress.setWindowTitle("Restore Progress")
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
-        
-        worker.progress.connect(lambda msg: progress.setLabelText(f"Restoring files...\n{msg}"))
-        worker.finished.connect(
-            lambda success, stdout, stderr: _on_restore_complete(success, stdout, stderr, progress)
-        )
-        
-        def _on_restore_complete(success, stdout, stderr, progress_dlg):
-            progress_dlg.close()
-            
-            if success:
-                QMessageBox.information(
-                    parent_dialog,
-                    "Restore Complete",
-                    f"Successfully restored {len(paths_to_restore)} item(s) to:\n{target_dir}"
-                )
-                self.log(f"Restore completed: {len(paths_to_restore)} items")
-            else:
-                QMessageBox.warning(
-                    parent_dialog,
-                    "Restore Failed",
-                    f"Failed to restore files:\n{stderr[:500]}"
-                )
-                self.log(f"Restore failed: {stderr}")
-        
-        worker.start()
-        parent_dialog._restore_worker = worker
     
     def _format_size(self, size_bytes):
         """Format file size in human-readable format"""
@@ -10877,16 +11124,10 @@ def main():
     app.setStyleSheet(early_css)
     
     # Create splash screen
-    splash_pix = QPixmap(400, 200)
-    splash_pix.fill(QColor(splash_bg_color))
-    
-    splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
-    
-    # Add text to splash screen
-    splash.showMessage(
+    splash = make_rounded_splash(
         f"Restic Backup Manager {VERSION}\n\nLoading application...\n",
-        Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
-        QColor(splash_text_color)
+        bg_color=splash_bg_color,
+        text_color=splash_text_color,
     )
     splash.show()
     app.processEvents()
@@ -10925,13 +11166,10 @@ def main():
             return 1
         
         # Recreate splash screen after successful license activation
-        splash_pix = QPixmap(400, 200)
-        splash_pix.fill(QColor(splash_bg_color))
-        splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
-        splash.showMessage(
+        splash = make_rounded_splash(
             f"Restic Backup Manager {VERSION}\n\nLicense activated! Loading application...\n",
-            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
-            QColor(splash_text_color)
+            bg_color=splash_bg_color,
+            text_color=splash_text_color,
         )
         splash.show()
         app.processEvents()
@@ -11003,13 +11241,10 @@ def main():
             return 1
         
         # Recreate splash screen after successful authentication
-        splash_pix = QPixmap(400, 200)
-        splash_pix.fill(QColor(splash_bg_color))
-        splash = QSplashScreen(splash_pix, Qt.WindowType.WindowStaysOnTopHint)
-        splash.showMessage(
+        splash = make_rounded_splash(
             f"Restic Backup Manager {VERSION}\n\nAuthenticated! Loading application...\n",
-            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignBottom,
-            QColor(splash_text_color)
+            bg_color=splash_bg_color,
+            text_color=splash_text_color,
         )
         splash.show()
         app.processEvents()
