@@ -1065,6 +1065,21 @@ def build_stylesheet(theme: AppTheme) -> str:
             color: {t.text};
         }}
 
+        /* Logs find bar */
+        #logsFindBar {{
+            background: transparent;
+            border: none;
+        }}
+        QLineEdit#logsFindEdit {{
+            min-height: 28px;
+            max-height: 32px;
+        }}
+        #logsFindCount {{
+            color: {t.muted};
+            font-size: 11px;
+            background: transparent;
+            border: none;
+        }}
         #FindBar {{
             background-color: {t.surface};
             border-bottom: 1px solid {t.border};
@@ -2485,7 +2500,7 @@ def build_stylesheet(theme: AppTheme) -> str:
             background: transparent;
             border: none;
         }}
-        QPlainTextEdit#retentionLog, QPlainTextEdit#backupProgressLog {{
+        QPlainTextEdit#retentionLog, QPlainTextEdit#backupProgressLog, QPlainTextEdit#appLog {{
             background-color: transparent;
             border: none;
             border-radius: 0;

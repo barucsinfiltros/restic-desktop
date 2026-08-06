@@ -37,6 +37,7 @@ from ui import (
     create_repositories_page,
     create_backup_jobs_page,
     create_retention_page,
+    create_logs_page as build_logs_page_ui,
     populate_jobs_table,
     populate_repository_table,
     populate_backup_jobs_table,
@@ -2256,6 +2257,7 @@ class ResticSettingsManager:
             "auto_refresh_snapshots": True,
             "snapshot_refresh_interval": 60,  # seconds
             "log_level": "info",
+            "log_retention_days": 30,
             "temp_restore_path": "C:\\temp\\restic_restore",  # Temporary location for restore to original
             "app_password_enabled": False,
             "app_password_hash": "",
@@ -2938,6 +2940,7 @@ class ResticManagerWindow(QMainWindow):
         self.title_bar.apply_retention_clicked.connect(
             lambda: self.apply_retention(dry_run=False)
         )
+        self.title_bar.clear_logs_clicked.connect(self.clear_logs)
         root_layout.addWidget(self.title_bar)
 
         body = QWidget()
@@ -3552,31 +3555,9 @@ class ResticManagerWindow(QMainWindow):
     
     def create_logs_page(self):
         """Create logs viewer page"""
-        page = QWidget()
-        page.setVisible(False)  # prevent top-level flash during splash processEvents
-        layout = QVBoxLayout()
-        page.setLayout(layout)
-        
-        # Title and controls
-        title_layout = QHBoxLayout()
-        title = QLabel("Logs")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        title_layout.addWidget(title)
-        title_layout.addStretch()
-        
-        clear_btn = QPushButton("Clear Logs")
-        clear_btn.clicked.connect(self.clear_logs)
-        title_layout.addWidget(clear_btn)
-        
-        layout.addLayout(title_layout)
-        
-        # Log viewer
-        self.log_viewer = QPlainTextEdit()
-        self.log_viewer.setReadOnly(True)
-        self.log_viewer.setFont(QFont("Courier", 9))
-        layout.addWidget(self.log_viewer)
-        
+        page = build_logs_page_ui(self)
         self.stacked_widget.addWidget(page)
+        self._init_persistent_logs()
     
     def create_settings_page(self):
         """Create settings page"""
@@ -3642,6 +3623,22 @@ class ResticManagerWindow(QMainWindow):
         self.refresh_interval_spin.setSuffix(" seconds")
         self.refresh_interval_spin.setFixedWidth(120)
         form_layout.addRow("Refresh Interval:", self.refresh_interval_spin)
+
+        # Log retention
+        self.log_retention_spin = QSpinBox()
+        self.log_retention_spin.setMinimum(1)
+        self.log_retention_spin.setMaximum(365)
+        try:
+            retention_days = int(self.settings_manager.get("log_retention_days") or 30)
+        except (TypeError, ValueError):
+            retention_days = 30
+        self.log_retention_spin.setValue(max(1, min(365, retention_days)))
+        self.log_retention_spin.setSuffix(" days")
+        self.log_retention_spin.setFixedWidth(120)
+        self.log_retention_spin.setToolTip(
+            "How long to keep application activity logs in the history database"
+        )
+        form_layout.addRow("Log Retention:", self.log_retention_spin)
         
         # Temporary restore location
         self.temp_restore_path_input = QLineEdit()
@@ -9742,9 +9739,20 @@ try {{
         self.settings_manager.set("theme", theme_id)
         self.settings_manager.set("auto_refresh_snapshots", self.auto_refresh_check.isChecked())
         self.settings_manager.set("snapshot_refresh_interval", self.refresh_interval_spin.value())
+        self.settings_manager.set("log_retention_days", self.log_retention_spin.value())
         self.settings_manager.set("temp_restore_path", self.temp_restore_path_input.text())
         
         self.settings_manager.save_settings()
+
+        # Apply new retention immediately
+        try:
+            history_db.prune_logs(
+                self.log_retention_spin.value(),
+                db_path=self._history_db_path(),
+            )
+            self.reload_logs_from_db()
+        except Exception:
+            pass
         
         # Update Restic command
         self.restic_cmd = ResticCommand(
@@ -10712,15 +10720,32 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             self.log("ERROR: Restic not found!")
     
     def log(self, message: str):
-        """Add message to log viewer"""
+        """Add message to log viewer and persist to history DB."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] {message}\n"
-        
-        self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
-        self.log_viewer.insertPlainText(log_entry)
-        self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
-        
-        # Add to recent activity (keep last 20 items)
+
+        if hasattr(self, "log_viewer") and self.log_viewer is not None:
+            self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
+            self.log_viewer.insertPlainText(log_entry)
+            self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
+
+        try:
+            history_db.insert_log(
+                message,
+                level="info",
+                ts=timestamp,
+                db_path=self._history_db_path(),
+            )
+            # Opportunistic prune every ~50 writes to avoid growing unbounded mid-session
+            count = getattr(self, "_log_write_count", 0) + 1
+            self._log_write_count = count
+            if count % 50 == 0:
+                self._prune_logs_quiet()
+        except Exception as exc:
+            if DEBUG_MODE:
+                print(f"[LOGS] Failed to persist log: {exc}")
+
+        # Add to recent activity (keep last 20 items) — legacy dashboard hook
         if hasattr(self, 'activity_list'):
             # Remove "No recent activity" placeholder if present
             if self.activity_list.count() == 1:
@@ -10734,7 +10759,57 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             # Keep only last 20 items
             while self.activity_list.count() > 20:
                 self.activity_list.takeItem(self.activity_list.count() - 1)
-    
+
+    def _log_retention_days(self) -> int:
+        try:
+            days = int(self.settings_manager.get("log_retention_days") or 30)
+        except (TypeError, ValueError):
+            days = 30
+        return max(1, min(365, days))
+
+    def _prune_logs_quiet(self) -> None:
+        try:
+            history_db.prune_logs(
+                self._log_retention_days(),
+                db_path=self._history_db_path(),
+            )
+        except Exception:
+            pass
+
+    def _init_persistent_logs(self) -> None:
+        """Prune old rows and load retained logs into the viewer."""
+        self._prune_logs_quiet()
+        self.reload_logs_from_db()
+
+    def reload_logs_from_db(self) -> None:
+        """Replace log viewer contents from the history database."""
+        viewer = getattr(self, "log_viewer", None)
+        if viewer is None:
+            return
+        try:
+            rows = history_db.load_logs(
+                since_days=self._log_retention_days(),
+                limit=5000,
+                db_path=self._history_db_path(),
+            )
+        except Exception as exc:
+            if DEBUG_MODE:
+                print(f"[LOGS] Failed to load logs: {exc}")
+            return
+        viewer.blockSignals(True)
+        viewer.clear()
+        if rows:
+            text = "\n".join(
+                f"[{row.get('ts') or ''}] {row.get('message') or ''}" for row in rows
+            )
+            viewer.setPlainText(text + "\n")
+            viewer.moveCursor(QTextCursor.MoveOperation.End)
+        viewer.blockSignals(False)
+        finder = getattr(self, "_logs_find", None)
+        if finder is not None and getattr(finder, "find_edit", None) is not None:
+            if finder.find_edit.text().strip():
+                finder.refresh()
+
     def format_bytes(self, bytes_value):
         """Format bytes into human-readable string"""
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -10773,8 +10848,34 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             return self.format_bytes(size)
     
     def clear_logs(self):
-        """Clear log viewer"""
-        self.log_viewer.clear()
+        """Clear log viewer and stored history logs."""
+        if not self._framed_confirm(
+            title="Clear Logs",
+            heading="Clear all activity logs?",
+            body=(
+                "This removes every stored log entry from the history database "
+                "and clears the Logs page. This cannot be undone."
+            ),
+            note=f"Current retention setting: {self._log_retention_days()} days.",
+            confirm_label="Clear Logs",
+            danger=True,
+        ):
+            return
+
+        viewer = getattr(self, "log_viewer", None)
+        if viewer is not None:
+            viewer.clear()
+        try:
+            history_db.clear_logs(db_path=self._history_db_path())
+        except Exception as exc:
+            show_framed_message(
+                self,
+                "Clear Failed",
+                f"Could not clear stored logs:\n{exc}",
+                kind="error",
+            )
+            return
+        self.log("Activity logs cleared")
     
     def closeEvent(self, event):
         """Handle application close - cleanup mounted repositories and running threads"""

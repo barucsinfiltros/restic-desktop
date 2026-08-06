@@ -1,5 +1,5 @@
 """
-SQLite history store for job runs, repo stats samples, and dashboard cache.
+SQLite history store for job runs, repo stats samples, dashboard cache, and app logs.
 
 File lives beside restic_settings.json (CWD / settings path). Stdlib sqlite3 only.
 """
@@ -10,10 +10,10 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_DB_NAME = "restic_history.db"
 CACHE_KEY = "latest"
 
@@ -106,6 +106,15 @@ def migrate(db_path: Optional[str] = None) -> None:
                 updated_at TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                level TEXT NOT NULL DEFAULT 'info',
+                message TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs (ts);
             """
         )
         row = conn.execute(
@@ -325,3 +334,81 @@ def extract_snapshot_short_id(stdout: str) -> Optional[str]:
             if sid:
                 return sid[:8] if len(sid) > 8 else sid
     return None
+
+
+def insert_log(
+    message: str,
+    *,
+    level: str = "info",
+    ts: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> int:
+    """Insert one app log row. Returns row id."""
+    migrate(db_path)
+    stamp = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    text = (message or "").rstrip("\n")
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO logs (ts, level, message) VALUES (?, ?, ?)",
+            (stamp, (level or "info").strip().lower() or "info", text),
+        )
+        return int(cur.lastrowid)
+
+
+def load_logs(
+    *,
+    since_days: Optional[int] = None,
+    limit: int = 5000,
+    db_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Load app logs newest-last (chronological) for display.
+
+    If since_days is set, only rows with ts >= cutoff (local wall-clock string compare
+    works for '%Y-%m-%d %H:%M:%S' format).
+    """
+    migrate(db_path)
+    limit = max(1, min(int(limit or 5000), 50000))
+    params: list = []
+    where = ""
+    if since_days is not None and int(since_days) > 0:
+        cutoff = (datetime.now() - timedelta(days=int(since_days))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        where = "WHERE ts >= ?"
+        params.append(cutoff)
+
+    with _connect(db_path) as conn:
+        # Fetch newest first with limit, then reverse for chronological display.
+        rows = conn.execute(
+            f"""
+            SELECT ts, level, message FROM logs
+            {where}
+            ORDER BY ts DESC, id DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
+        items = [dict(row) for row in rows]
+        items.reverse()
+        return items
+
+
+def clear_logs(db_path: Optional[str] = None) -> int:
+    """Delete all app log rows. Returns number of deleted rows."""
+    migrate(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute("DELETE FROM logs")
+        return int(cur.rowcount or 0)
+
+
+def prune_logs(retention_days: int, db_path: Optional[str] = None) -> int:
+    """Delete log rows older than retention_days. Returns number deleted."""
+    days = int(retention_days or 0)
+    if days <= 0:
+        return 0
+    migrate(db_path)
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    with _connect(db_path) as conn:
+        cur = conn.execute("DELETE FROM logs WHERE ts < ?", (cutoff,))
+        return int(cur.rowcount or 0)

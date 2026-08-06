@@ -3,6 +3,7 @@
 from ui.backup_jobs import create_backup_jobs_page, populate_backup_jobs_table
 from ui.cards import SectionCard, StatCard
 from ui.dashboard import create_dashboard_page, populate_jobs_table
+from ui.logs import create_logs_page
 from ui.repositories import create_repositories_page, populate_repository_table
 from ui.retention import create_retention_page
 from ui.sidebar import NavSidebar
@@ -19,6 +20,7 @@ __all__ = [
     "create_restore_page",
     "create_backup_jobs_page",
     "create_retention_page",
+    "create_logs_page",
     "populate_jobs_table",
     "populate_repository_table",
     "populate_snapshots_table",

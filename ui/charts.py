@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -180,18 +180,21 @@ class _DonutRing(QWidget):
 
 
 class _DonutLegend(QWidget):
-    """Colour-dot legend: full name (wrap) + size, tooltip for full text."""
+    """Colour-dot legend: elided name + size, tooltip for full text."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("donutLegend")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMinimumWidth(120)
+        self.setMaximumWidth(320)
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(2, 4, 2, 4)
         self._root.setSpacing(6)
         self._root.addStretch(1)
         self._text = "#e8eef5"
         self._muted = "#8b95a5"
+        self._items: list[tuple[str, str, str]] = []
 
     def set_theme(self, *, text: str, muted: str) -> None:
         self._text = text
@@ -219,7 +222,8 @@ class _DonutLegend(QWidget):
             if w is not None:
                 w.deleteLater()
 
-        for name, size_text, color in zip(names, sizes, colors):
+        self._items = list(zip(names, sizes, colors))
+        for name, size_text, color in self._items:
             row = QWidget(self)
             row.setObjectName("donutLegendRow")
             row.setToolTip(f"{name} — {size_text}")
@@ -242,7 +246,12 @@ class _DonutLegend(QWidget):
 
             name_lbl = QLabel(name, row)
             name_lbl.setObjectName("donutLegendName")
-            name_lbl.setWordWrap(True)
+            # Ignored width + no wrap: take layout width, clip instead of blowing
+            # out of the card into the neighbouring chart.
+            name_lbl.setWordWrap(False)
+            name_lbl.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+            )
             name_lbl.setToolTip(name)
             name_lbl.setStyleSheet(
                 f"color: {self._text}; background: transparent; border: none; font-size: 11px;"
@@ -251,6 +260,9 @@ class _DonutLegend(QWidget):
 
             size_lbl = QLabel(size_text, row)
             size_lbl.setObjectName("donutLegendSize")
+            size_lbl.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+            )
             size_lbl.setStyleSheet(
                 f"color: {self._muted}; background: transparent; border: none; font-size: 11px;"
             )
@@ -260,6 +272,32 @@ class _DonutLegend(QWidget):
             self._root.addWidget(row)
 
         self._root.addStretch(1)
+        # Elide after layout assigns real widths
+        QTimer.singleShot(0, self._elide_names)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._elide_names()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._elide_names()
+
+    def _elide_names(self) -> None:
+        """Elide legend names to the legend panel width (not the row's hint width)."""
+        avail = max(40, self.width() - 24)
+        for i in range(self._root.count()):
+            item = self._root.itemAt(i)
+            w = item.widget() if item else None
+            if w is None:
+                continue
+            name_lbl = w.findChild(QLabel, "donutLegendName")
+            if name_lbl is None:
+                continue
+            full = name_lbl.toolTip() or name_lbl.text()
+            name_lbl.setMaximumWidth(avail)
+            fm = QFontMetrics(name_lbl.font())
+            name_lbl.setText(fm.elidedText(full, Qt.TextElideMode.ElideRight, avail))
 
 
 class DonutChart(QFrame):
@@ -293,8 +331,8 @@ class DonutChart(QFrame):
         row.addWidget(self._ring, stretch=5)
 
         self._legend = _DonutLegend(data)
-        self._legend.setMinimumWidth(160)
-        row.addWidget(self._legend, stretch=4)
+        self._legend.setMinimumWidth(140)
+        row.addWidget(self._legend, stretch=3)
         self._stack.addWidget(data)
 
         self._stack.setCurrentIndex(0)
@@ -439,13 +477,19 @@ class RoundedBarChart(QWidget):
         left = 44
         right = 12
         top = 18
-        # Reserve room for wrapping colour legend (not truncated axis text)
-        legend_h = 56 if self._names else 8
+        # Reserve room for wrapping colour legend (grow with repo count / name length)
+        plot_w = max(1.0, self.width() - left - right)
+        legend_h = self._legend_height(plot_w) if self._names else 8
         bottom = legend_h + 8
+        # Keep a usable plot area even with many legend rows
+        min_plot_h = 80.0
+        if self.height() - top - bottom < min_plot_h and self._names:
+            legend_h = max(24.0, self.height() - top - min_plot_h - 8)
+            bottom = legend_h + 8
         plot = QRectF(
             left,
             top,
-            max(1.0, self.width() - left - right),
+            plot_w,
             max(1.0, self.height() - top - bottom),
         )
 
@@ -464,7 +508,13 @@ class RoundedBarChart(QWidget):
         if max_v <= 5:
             y_max = max(1.0, math.ceil(max_v))
         else:
-            y_max = math.ceil(max_v * 1.15)
+            # Nice round upper bound (avoid ticks like 0,2,4,7,9 from plain ceil*1.15)
+            raw = max_v * 1.15
+            if raw <= 10:
+                y_max = float(math.ceil(raw))
+            else:
+                step = 5 if raw <= 50 else 10
+                y_max = float(math.ceil(raw / step) * step)
 
         tick_font = painter.font()
         tick_font.setPointSize(8)
@@ -475,6 +525,7 @@ class RoundedBarChart(QWidget):
             y = plot.bottom() - t * plot.height()
             painter.setPen(QPen(self._grid, 1, Qt.PenStyle.DashLine))
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            # Prefer clean integers; snap mid-ticks to avoid awkward rounding gaps
             val = int(round(y_max * t))
             painter.setPen(self._muted)
             label = str(val)
@@ -549,18 +600,36 @@ class RoundedBarChart(QWidget):
         self._paint_legend(painter, QRectF(left, plot.bottom() + 10, plot.width(), legend_h - 4))
         painter.end()
 
+    def _legend_font(self) -> QFont:
+        font = QFont(self.font())
+        font.setPointSize(9)
+        font.setBold(False)
+        return font
+
+    def _legend_height(self, width: float) -> float:
+        """Pixels needed to paint every legend entry without clipping."""
+        fm = QFontMetrics(self._legend_font())
+        row_h = fm.height() + 6
+        x = 0.0
+        rows = 1
+        for name in self._names:
+            need = 12 + 6 + fm.horizontalAdvance(name) + 14
+            if x + need > width and x > 0:
+                rows += 1
+                x = 0.0
+            x += need
+        return float(rows * row_h + 4)
+
     def _paint_legend(self, painter: QPainter, area: QRectF) -> None:
         if not self._names:
             return
-        painter.setPen(self._muted)
-        font = painter.font()
-        font.setPointSize(9)
-        font.setBold(False)
+        font = self._legend_font()
         painter.setFont(font)
         fm = QFontMetrics(font)
         x = area.left()
         y = area.top()
         row_h = fm.height() + 6
+        hidden = 0
         for name, color in zip(self._names, self._colors):
             text_w = fm.horizontalAdvance(name)
             need = 12 + 6 + text_w + 14
@@ -568,11 +637,21 @@ class RoundedBarChart(QWidget):
                 x = area.left()
                 y += row_h
             if y + row_h > area.bottom() + 4:
-                # Overflow: remaining names still available via bar hover tooltip
-                break
+                hidden += 1
+                continue
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
             painter.drawEllipse(QPointF(x + 5, y + row_h / 2 - 1), 4, 4)
             painter.setPen(self._muted)
             painter.drawText(int(x + 14), int(y + fm.ascent() + 2), name)
             x += need
+        if hidden:
+            # Extremely tight height: point at hover tooltips for the rest
+            painter.setPen(self._muted)
+            more = f"+{hidden} more (hover bars)"
+            br = fm.boundingRect(more)
+            painter.drawText(
+                int(area.right() - br.width()),
+                int(min(y + fm.ascent() + 2, area.bottom())),
+                more,
+            )
