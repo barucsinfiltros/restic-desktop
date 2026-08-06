@@ -26,6 +26,8 @@ class TitleBar(QWidget):
     add_backup_job_clicked = pyqtSignal()
     browse_files_clicked = pyqtSignal()
     start_restore_clicked = pyqtSignal()
+    dry_run_retention_clicked = pyqtSignal()
+    apply_retention_clicked = pyqtSignal()
 
     def __init__(
         self,
@@ -97,11 +99,25 @@ class TitleBar(QWidget):
             "restore.svg",
             self.start_restore_clicked.emit,
         )
+        self._dry_run_retention_btn = self._make_action_btn(
+            "  Dry Run",
+            "Preview retention without deleting snapshots",
+            "layers.svg",
+            self.dry_run_retention_clicked.emit,
+        )
+        self._apply_retention_btn = self._make_action_btn(
+            "  Apply Policy",
+            "Apply retention policy (forget + prune)",
+            "retention.svg",
+            self.apply_retention_clicked.emit,
+        )
         row.addWidget(self._refresh_btn)
         row.addWidget(self._add_repo_btn)
         row.addWidget(self._add_job_btn)
         row.addWidget(self._browse_files_btn)
         row.addWidget(self._start_restore_btn)
+        row.addWidget(self._dry_run_retention_btn)
+        row.addWidget(self._apply_retention_btn)
         if show_refresh:
             # Default page is Dashboard — show refresh, hide add
             self.set_page_context(0)
@@ -111,6 +127,8 @@ class TitleBar(QWidget):
             self._add_job_btn.hide()
             self._browse_files_btn.hide()
             self._start_restore_btn.hide()
+            self._dry_run_retention_btn.hide()
+            self._apply_retention_btn.hide()
 
         self._min_btn = QPushButton("–")
         self._min_btn.setObjectName("titleBarBtn")
@@ -166,13 +184,16 @@ class TitleBar(QWidget):
 
     def set_page_context(self, page_index: int) -> None:
         """Show title-bar actions for the active page; hide elsewhere."""
-        # 0 = Dashboard, 1 = Repositories, 2 = Snapshots, 3 = Restore, 4 = Backup Jobs
+        # 0 = Dashboard, 1 = Repositories, 2 = Snapshots, 3 = Restore,
+        # 4 = Backup Jobs, 5 = Retention Policy
         show_refresh = page_index in (0, 2)
         self._refresh_btn.setVisible(show_refresh)
         self._add_repo_btn.setVisible(page_index == 1)
         self._add_job_btn.setVisible(page_index == 4)
         self._browse_files_btn.setVisible(page_index == 3)
         self._start_restore_btn.setVisible(page_index == 3)
+        self._dry_run_retention_btn.setVisible(page_index == 5)
+        self._apply_retention_btn.setVisible(page_index == 5)
         if page_index == 2:
             self._refresh_btn.setText("  Refresh Snapshots")
             self._refresh_btn.setToolTip("Refresh Snapshots")

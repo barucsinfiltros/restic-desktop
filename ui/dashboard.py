@@ -120,6 +120,8 @@ def create_dashboard_page(
         view_logs = QPushButton("View All Logs  >")
         view_logs.setObjectName("linkBtn")
         view_logs.setCursor(Qt.CursorShape.PointingHandCursor)
+        view_logs.setFlat(True)
+        view_logs.setMinimumHeight(24)
         view_logs.clicked.connect(on_view_logs)
         jobs_card.header_actions.addWidget(view_logs)
 

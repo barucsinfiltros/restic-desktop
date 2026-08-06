@@ -36,6 +36,7 @@ from ui import (
     create_dashboard_page,
     create_repositories_page,
     create_backup_jobs_page,
+    create_retention_page,
     populate_jobs_table,
     populate_repository_table,
     populate_backup_jobs_table,
@@ -2931,6 +2932,12 @@ class ResticManagerWindow(QMainWindow):
         self.title_bar.add_backup_job_clicked.connect(self.add_backup_job)
         self.title_bar.browse_files_clicked.connect(self.mount_and_browse_snapshot)
         self.title_bar.start_restore_clicked.connect(self.start_restore)
+        self.title_bar.dry_run_retention_clicked.connect(
+            lambda: self.apply_retention(dry_run=True)
+        )
+        self.title_bar.apply_retention_clicked.connect(
+            lambda: self.apply_retention(dry_run=False)
+        )
         root_layout.addWidget(self.title_bar)
 
         body = QWidget()
@@ -3540,250 +3547,7 @@ class ResticManagerWindow(QMainWindow):
     
     def create_retention_page(self):
         """Create retention policy page"""
-        page = QWidget()
-        page.setVisible(False)  # prevent top-level flash during splash processEvents
-        layout = QVBoxLayout()
-        page.setLayout(layout)
-        
-        # Title
-        title = QLabel("Retention Policy")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        layout.addWidget(title)
-        
-        # Policy form
-        form_group = QGroupBox("Retention Configuration")
-        form_layout = QFormLayout()
-        form_group.setLayout(form_layout)
-        
-        # Repository
-        self.retention_repo_combo = QComboBox()
-        self.retention_repo_combo.setFixedWidth(300)
-        
-        
-        # Keep policies
-        self.keep_last_spin = QSpinBox()
-        self.keep_last_spin.setToolTip("Number of most recent snapshots to keep (overrides all other rules)")
-        self.keep_last_spin.setFixedWidth(50)
-        self.keep_last_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.keep_last_spin.setMinimum(0)
-        self.keep_last_spin.setMaximum(1000)
-        
-        
-        self.keep_hourly_spin = QSpinBox()
-        self.keep_hourly_spin.setToolTip("Number of hourly snapshots to keep")
-        self.keep_hourly_spin.setFixedWidth(50)
-        self.keep_hourly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.keep_hourly_spin.setMinimum(0)
-        self.keep_hourly_spin.setMaximum(1000)
-        
-        
-        self.keep_daily_spin = QSpinBox()
-        self.keep_daily_spin.setToolTip("Number of daily snapshots to keep")
-        self.keep_daily_spin.setFixedWidth(50)
-        self.keep_daily_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.keep_daily_spin.setMinimum(0)
-        self.keep_daily_spin.setMaximum(365)
-        self.keep_daily_spin.setValue(7)
-        
-        
-        self.keep_weekly_spin = QSpinBox()
-        self.keep_weekly_spin.setToolTip("Number of weekly snapshots to keep")
-        self.keep_weekly_spin.setFixedWidth(50)
-        self.keep_weekly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.keep_weekly_spin.setMinimum(0)
-        self.keep_weekly_spin.setMaximum(520)
-        self.keep_weekly_spin.setValue(4)
-        
-        
-        self.keep_monthly_spin = QSpinBox()
-        self.keep_monthly_spin.setToolTip("Number of monthly snapshots to keep")
-        self.keep_monthly_spin.setFixedWidth(50)
-        self.keep_monthly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.keep_monthly_spin.setMinimum(0)
-        self.keep_monthly_spin.setMaximum(120)
-        self.keep_monthly_spin.setValue(12)
-        
-        
-        self.keep_yearly_spin = QSpinBox()
-        self.keep_yearly_spin.setToolTip("Number of yearly snapshots to keep")
-        self.keep_yearly_spin.setFixedWidth(50)
-        self.keep_yearly_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.keep_yearly_spin.setMinimum(0)
-        self.keep_yearly_spin.setMaximum(100)
-        
-        keep_layout_one = QHBoxLayout()
-        keep_layout_one.addWidget(QLabel("Keep Last:"))
-        keep_layout_one.addSpacing(17)
-        keep_layout_one.addWidget(self.keep_last_spin)
-        keep_layout_one.addSpacing(20)
-        keep_layout_one.addWidget(QLabel("Keep Hourly:"))
-        keep_layout_one.addSpacing(9)
-        keep_layout_one.addWidget(self.keep_hourly_spin)
-        keep_layout_one.addSpacing(20)
-        keep_layout_one.addWidget(QLabel("Keep Daily:"))
-        keep_layout_one.addSpacing(5)
-        keep_layout_one.addWidget(self.keep_daily_spin)
-        keep_layout_one.addStretch()
-        
-        keep_layout_two = QHBoxLayout()#
-        keep_layout_two.addWidget(QLabel("Keep Weekly:"))
-        keep_layout_two.addWidget(self.keep_weekly_spin)
-        keep_layout_two.addSpacing(20)
-        keep_layout_two.addWidget(QLabel("Keep Monthly:"))
-        keep_layout_two.addWidget(self.keep_monthly_spin)
-        keep_layout_two.addSpacing(20)
-        keep_layout_two.addWidget(QLabel("Keep Yearly:"))
-        keep_layout_two.addWidget(self.keep_yearly_spin)
-        keep_layout_two.addStretch()
-        
-        
-        form_layout.addRow("Repository:", self.retention_repo_combo)
-        form_layout.addRow(keep_layout_one)
-        form_layout.addRow(keep_layout_two)
-        # form_layout.addRow("Keep Last:", self.keep_last_spin)
-        # form_layout.addRow("Keep Hourly:", self.keep_hourly_spin)
-        # form_layout.addRow("Keep Daily:", self.keep_daily_spin)
-        # form_layout.addRow("Keep Weekly:", self.keep_weekly_spin)
-        # form_layout.addRow("Keep Monthly:", self.keep_monthly_spin)
-        # form_layout.addRow("Keep Yearly:", self.keep_yearly_spin)
-        
-        layout.addWidget(form_group)
-        
-        # Scheduling section
-        schedule_group = QGroupBox("Schedule Retention (Task Scheduler)")
-        schedule_layout = QVBoxLayout()
-        schedule_group.setLayout(schedule_layout)
-        
-        # Frequency
-        self.retention_frequency_combo = QComboBox()
-        self.retention_frequency_combo.addItems(["Daily", "Weekly", "Monthly"])
-        self.retention_frequency_combo.setCurrentText("Weekly")
-        self.retention_frequency_combo.setToolTip("Frequency for running the retention policy automatically")
-        self.retention_frequency_combo.setFixedWidth(150)
-        self.retention_frequency_combo.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.retention_frequency_combo.currentTextChanged.connect(self._on_retention_frequency_changed)
-        
-        
-        # Time
-        self.retention_time_edit = QTimeEdit()
-        self.retention_time_edit.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.retention_time_edit.setToolTip("Time of day to run the retention policy")
-        self.retention_time_edit.setFixedWidth(70)
-        self.retention_time_edit.setTime(QTime(2, 0))  # Default 2:00 AM
-        self.retention_time_edit.setDisplayFormat("HH:mm")
-        
-        
-        # Day of week (for weekly)
-        self.retention_day_combo = QComboBox()
-        self.retention_day_combo.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.retention_day_combo.setToolTip("Day of the week to run the retention policy")
-        self.retention_day_combo.setFixedWidth(150)
-        self.retention_day_combo.addItems(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
-        self.retention_day_combo.setCurrentText("Sunday")
-        
-        
-        # Day of month (for monthly)
-        self.retention_dom_spin = QSpinBox()
-        self.retention_dom_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.retention_dom_spin.setToolTip("Day of the month to run the retention policy (1-28)")
-        self.retention_dom_spin.setFixedWidth(150)
-        self.retention_dom_spin.setMinimum(1)
-        self.retention_dom_spin.setMaximum(28)  # Safe for all months
-        self.retention_dom_spin.setValue(1)
-        self.retention_dom_spin.setSuffix(" of month")
-        
-        self.retention_dom_spin.setVisible(False)
-        
-        schedule_form = QFormLayout()
-        schedule_form.addRow("Time:", self.retention_time_edit)
-        schedule_form.addRow("Frequency:", self.retention_frequency_combo)
-        schedule_form.addRow("Day of Week:", self.retention_day_combo)
-        schedule_form.addRow("Day of Month:", self.retention_dom_spin)
-        # Store reference to form layout for label access
-        self._retention_schedule_form = schedule_form
-        
-        # Hide day of month label initially
-        dom_label = schedule_form.labelForField(self.retention_dom_spin)
-        if dom_label:
-            dom_label.setVisible(False)
-        
-        schedule_layout.addLayout(schedule_form)
-        
-        # Task scheduler buttons
-        task_btn_layout = QHBoxLayout()
-        
-        create_task_btn = QPushButton("Create Scheduled Task")
-        create_task_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        create_task_btn.setToolTip("Create a Windows Task Scheduler task to run retention automatically")
-        create_task_btn.clicked.connect(self.create_retention_scheduled_task)
-        
-        view_tasks_btn = QPushButton("View Tasks")
-        view_tasks_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        view_tasks_btn.setToolTip("Open Task Scheduler to view scheduled tasks")
-        view_tasks_btn.clicked.connect(self.open_task_scheduler)
-        
-        delete_task_btn = QPushButton("Delete Task")
-        delete_task_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        delete_task_btn.setToolTip("Delete the scheduled retention task for this repository")
-        delete_task_btn.clicked.connect(self.delete_retention_scheduled_task)
-        
-        #task_btn_layout.addStretch()
-        task_btn_layout.addSpacing(86)
-        task_btn_layout.addWidget(create_task_btn)
-        task_btn_layout.addWidget(view_tasks_btn)
-        task_btn_layout.addWidget(delete_task_btn)
-        task_btn_layout.addStretch()
-        
-        schedule_layout.addLayout(task_btn_layout)
-        
-        # Info label
-        info_label = QLabel("ℹ Creates a system task that runs retention independently of this application")
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #888; font-size: 10px; padding: 5px;")
-        
-        info_label_layout = QHBoxLayout()
-        info_label_layout.addSpacing(86)  # Align with buttons
-        info_label_layout.addWidget(info_label)
-        schedule_layout.addLayout(info_label_layout)
-        
-        layout.addWidget(schedule_group)
-        
-        # Action buttons (Manual)
-        manual_group = QGroupBox("Manual Execution")
-        manual_layout = QVBoxLayout()
-        manual_group.setLayout(manual_layout)
-        
-        
-        
-        dry_run_btn = QPushButton("Dry Run (Preview)")
-        dry_run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        dry_run_btn.clicked.connect(lambda: self.apply_retention(dry_run=True))
-        
-        
-        apply_btn = QPushButton("Apply Policy")
-        apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        apply_btn.clicked.connect(lambda: self.apply_retention(dry_run=False))
-        
-        btn_layout = QHBoxLayout()
-        btn_layout.addSpacing(86)  # Align with other buttons
-        btn_layout.addWidget(dry_run_btn)
-        btn_layout.addWidget(apply_btn)
-        btn_layout.addStretch()
-        
-        manual_layout.addLayout(btn_layout)
-        layout.addWidget(manual_group)
-        
-        # Output
-        output_group = QGroupBox("Policy Output")
-        output_layout = QVBoxLayout()
-        output_group.setLayout(output_layout)
-        
-        self.retention_output = QPlainTextEdit()
-        self.retention_output.setReadOnly(True)
-        output_layout.addWidget(self.retention_output)
-        
-        layout.addWidget(output_group)
-        
+        page = create_retention_page(self)
         self.stacked_widget.addWidget(page)
     
     def create_logs_page(self):
@@ -4503,13 +4267,11 @@ class ResticManagerWindow(QMainWindow):
                             task_name = line.split('TaskName:')[1].strip()
                             if 'ResticRetention_' in task_name:
                                 repo_name_sanitized = task_name.split('ResticRetention_')[-1].strip()
-                                # Convert back from sanitized name
-                                repo_name_actual = repo_name_sanitized.replace('_', ' ')
                                 # Check against actual repo names
                                 for repo_name in repo_names:
                                     if repo_name.replace(' ', '_') == repo_name_sanitized:
                                         repos_with_tasks.add(repo_name)
-            except:
+            except Exception:
                 pass  # If schtasks fails, just don't show indicators
         
         # Update combo box with indicators
@@ -4533,7 +4295,179 @@ class ResticManagerWindow(QMainWindow):
                     break
         
         self.retention_repo_combo.blockSignals(False)
-    
+        self.refresh_retention_schedule_status()
+
+    def _retention_task_name_for_repo(self, repo_name: str) -> str:
+        return f"ResticRetention_{(repo_name or '').replace(' ', '_')}"
+
+    def _query_retention_scheduled_task(self, repo_name: str) -> dict:
+        """
+        Return schedule info for the repo's retention task, or empty if missing.
+
+        Keys: exists (bool), task_name, status, schedule_text
+        """
+        import platform
+        import subprocess
+        import re
+
+        task_name = self._retention_task_name_for_repo(repo_name)
+        info = {
+            "exists": False,
+            "task_name": task_name,
+            "status": "",
+            "schedule_text": "",
+        }
+        if not repo_name:
+            return info
+
+        system = platform.system()
+        if system != "Windows":
+            # Non-Windows: only know about tasks we recorded in settings.
+            schedules = self.settings_manager.get("retention_schedules") or {}
+            saved = schedules.get(repo_name) or {}
+            if saved.get("enabled"):
+                info["exists"] = True
+                info["status"] = "Scheduled"
+                info["schedule_text"] = saved.get("summary") or "Configured"
+            return info
+
+        try:
+            result = subprocess.run(
+                ["schtasks", "/Query", "/TN", task_name, "/V", "/FO", "LIST"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=get_subprocess_creation_flags(),
+            )
+            if result.returncode != 0:
+                return info
+
+            fields: dict[str, str] = {}
+            for raw in (result.stdout or "").splitlines():
+                if ":" not in raw:
+                    continue
+                key, _, value = raw.partition(":")
+                key = key.strip().lower()
+                value = value.strip()
+                if key and value:
+                    fields[key] = value
+
+            info["exists"] = True
+            status = fields.get("status") or fields.get("scheduled task state") or "Ready"
+            info["status"] = status
+
+            schedule_type = (
+                fields.get("schedule type")
+                or fields.get("scheduled task type")
+                or ""
+            ).strip()
+            start_time = (fields.get("start time") or "").strip()
+            # Normalize "2:00:00 AM" → "02:00" when possible
+            time_disp = start_time
+            m = re.match(
+                r"^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$",
+                start_time,
+                re.IGNORECASE,
+            )
+            if m:
+                hour = int(m.group(1))
+                minute = int(m.group(2))
+                ampm = (m.group(3) or "").upper()
+                if ampm == "PM" and hour < 12:
+                    hour += 12
+                elif ampm == "AM" and hour == 12:
+                    hour = 0
+                time_disp = f"{hour:02d}:{minute:02d}"
+
+            days = (
+                fields.get("days")
+                or fields.get("day")
+                or fields.get("days of week")
+                or ""
+            ).strip()
+            day_of_month = (fields.get("day of month") or "").strip()
+
+            parts = []
+            if schedule_type:
+                parts.append(schedule_type)
+            if days and "week" in schedule_type.lower():
+                parts.append(f"on {days}")
+            elif day_of_month and "month" in schedule_type.lower():
+                parts.append(f"on day {day_of_month}")
+            if time_disp:
+                parts.append(f"at {time_disp}")
+            info["schedule_text"] = " ".join(parts) if parts else "Scheduled"
+
+            # Keep a local copy so UI can fall back if query is slow later
+            schedules = dict(self.settings_manager.get("retention_schedules") or {})
+            schedules[repo_name] = {
+                "enabled": True,
+                "summary": info["schedule_text"],
+                "task_name": task_name,
+                "status": info["status"],
+            }
+            self.settings_manager.set("retention_schedules", schedules)
+            try:
+                self.settings_manager.save_settings()
+            except Exception:
+                pass
+            return info
+        except Exception:
+            schedules = self.settings_manager.get("retention_schedules") or {}
+            saved = schedules.get(repo_name) or {}
+            if saved.get("enabled"):
+                info["exists"] = True
+                info["status"] = saved.get("status") or "Scheduled"
+                info["schedule_text"] = saved.get("summary") or "Scheduled"
+            return info
+
+    def refresh_retention_schedule_status(self) -> None:
+        """Update Schedule Retention status strip and action buttons."""
+        status_lbl = getattr(self, "retention_task_status_label", None)
+        schedule_lbl = getattr(self, "retention_task_schedule_label", None)
+        name_lbl = getattr(self, "retention_task_name_label", None)
+        create_btn = getattr(self, "retention_create_task_btn", None)
+        delete_btn = getattr(self, "retention_delete_task_btn", None)
+        if status_lbl is None:
+            return
+
+        repo_name = self._get_current_retention_repo() if hasattr(self, "_get_current_retention_repo") else ""
+        info = self._query_retention_scheduled_task(repo_name) if repo_name else {
+            "exists": False,
+            "task_name": "—",
+            "status": "",
+            "schedule_text": "",
+        }
+
+        if info.get("exists"):
+            status_lbl.setText("Scheduled")
+            status_lbl.setProperty("retentionScheduled", True)
+            schedule_lbl.setText(info.get("schedule_text") or "—")
+            name_lbl.setText(info.get("task_name") or "—")
+            if create_btn is not None:
+                create_btn.setText("Update Scheduled Task")
+                create_btn.setMinimumWidth(178)
+                create_btn.setToolTip(
+                    "Update the existing system task with the current retention settings"
+                )
+            if delete_btn is not None:
+                delete_btn.setEnabled(True)
+        else:
+            status_lbl.setText("Not scheduled")
+            status_lbl.setProperty("retentionScheduled", False)
+            schedule_lbl.setText("—")
+            name_lbl.setText(info.get("task_name") or "—")
+            if create_btn is not None:
+                create_btn.setText("Create Scheduled Task")
+                create_btn.setMinimumWidth(168)
+                create_btn.setToolTip(
+                    "Create a system task to run retention automatically"
+                )
+            if delete_btn is not None:
+                delete_btn.setEnabled(False)
+        status_lbl.style().unpolish(status_lbl)
+        status_lbl.style().polish(status_lbl)
+
     def get_repository_by_name(self, repo_name):
         """Get repository by name with decrypted password"""
         if not repo_name:
@@ -4549,7 +4483,7 @@ class ResticManagerWindow(QMainWindow):
         if repo.get("password"):
             try:
                 password = self.settings_manager.password_manager.decrypt(repo["password"])
-            except:
+            except Exception:
                 self.log(f"Error: Failed to decrypt password for repository '{repo_name}'")
         
         return repo, password
@@ -6342,6 +6276,7 @@ class ResticManagerWindow(QMainWindow):
         meta: list | None = None,
         confirm_label: str = "Continue",
         danger: bool = False,
+        show_cancel: bool = True,
     ) -> bool:
         """Modern confirm dialog matching Forget / Copy chrome. Returns True if confirmed."""
         dialog = FramedDialog(
@@ -6396,11 +6331,12 @@ class ResticManagerWindow(QMainWindow):
         footer = QHBoxLayout()
         footer.setSpacing(8)
         footer.addStretch(1)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("dialogSecondary")
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.clicked.connect(dialog.reject)
-        footer.addWidget(cancel_btn)
+        if show_cancel:
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.setObjectName("dialogSecondary")
+            cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel_btn.clicked.connect(dialog.reject)
+            footer.addWidget(cancel_btn)
         confirm_btn = QPushButton(confirm_label)
         confirm_btn.setObjectName("dangerBtn" if danger else "dialogPrimary")
         confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -8524,104 +8460,198 @@ class ResticManagerWindow(QMainWindow):
         
         # Show progress dialog (create once for first repo, reuse for others)
         if not hasattr(self, '_backup_progress_dialog') or not self._backup_progress_dialog.isVisible():
-            self._backup_progress_dialog = QDialog(self)
-            self._backup_progress_dialog.setWindowTitle(f"Running Backup Job: {job['name']}")
-            self._backup_progress_dialog.setModal(False)
-            self._backup_progress_dialog.setMinimumWidth(500)
-            self._backup_progress_dialog.setMinimumHeight(350)
-            
-            dialog_layout = QVBoxLayout()
-            self._backup_progress_dialog.setLayout(dialog_layout)
-            
-            # Multi-repo progress indicator
-            multi_repo_label = QLabel()
-            dialog_layout.addWidget(multi_repo_label)
+            dialog = FramedDialog(
+                f"Running Backup Job: {job['name']}",
+                self,
+                show_maximize=False,
+                show_minimize=False,
+                modal=False,
+            )
+            dialog.setMinimumWidth(560)
+            dialog.setMinimumHeight(420)
+            dialog.body_layout.setContentsMargins(16, 12, 16, 16)
+            dialog.body_layout.setSpacing(12)
+            layout = dialog.body_layout
+
+            heading = QLabel(f"Running “{job['name']}”")
+            heading.setObjectName("pageTitle")
+            heading.setStyleSheet("font-size: 18px;")
+            heading.setWordWrap(True)
+            layout.addWidget(heading)
+            self._backup_heading_label = heading
+
+            multi_repo_label = QLabel("")
+            multi_repo_label.setObjectName("pageSubtitle")
+            multi_repo_label.setWordWrap(True)
+            multi_repo_label.setVisible(False)
+            layout.addWidget(multi_repo_label)
             self._multi_repo_label = multi_repo_label
-            
-            info_label = QLabel()
-            dialog_layout.addWidget(info_label)
-            self._backup_info_label = info_label
-            
+
+            meta_strip = QFrame()
+            meta_strip.setObjectName("browseMetaStrip")
+            meta_strip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            meta_row = QHBoxLayout(meta_strip)
+            meta_row.setContentsMargins(14, 10, 14, 10)
+            meta_row.setSpacing(20)
+
+            self._backup_job_meta = QLabel(job.get("name") or "—")
+            self._backup_job_meta.setObjectName("browseMetaValue")
+            self._backup_job_meta.setWordWrap(True)
+            job_col = QVBoxLayout()
+            job_col.setSpacing(2)
+            job_lab = QLabel("Job")
+            job_lab.setObjectName("browseMetaLabel")
+            job_col.addWidget(job_lab)
+            job_col.addWidget(self._backup_job_meta)
+            meta_row.addLayout(job_col, 0)
+
+            self._backup_repo_meta = QLabel("—")
+            self._backup_repo_meta.setObjectName("browseMetaValue")
+            self._backup_repo_meta.setWordWrap(True)
+            self._backup_repo_meta.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            repo_col = QVBoxLayout()
+            repo_col.setSpacing(2)
+            repo_lab = QLabel("Repository")
+            repo_lab.setObjectName("browseMetaLabel")
+            repo_col.addWidget(repo_lab)
+            repo_col.addWidget(self._backup_repo_meta)
+            meta_row.addLayout(repo_col, 1)
+
+            layout.addWidget(meta_strip)
+
+            paths_lab = QLabel("Paths")
+            paths_lab.setObjectName("browseMetaLabel")
+            layout.addWidget(paths_lab)
+            paths_label = QLabel("")
+            paths_label.setObjectName("pageSubtitle")
+            paths_label.setWordWrap(True)
+            paths_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            layout.addWidget(paths_label)
+            self._backup_info_label = paths_label
+
             progress_bar = QProgressBar()
+            progress_bar.setObjectName("backupProgressBar")
             progress_bar.setRange(0, 100)
             progress_bar.setValue(0)
-            dialog_layout.addWidget(progress_bar)
+            progress_bar.setMinimumHeight(14)
+            layout.addWidget(progress_bar)
             self._backup_progress_bar = progress_bar
-            
-            status_label = QLabel("Starting backup...")
-            dialog_layout.addWidget(status_label)
+
+            status_label = QLabel("Starting backup…")
+            status_label.setObjectName("pageSubtitle")
+            status_label.setWordWrap(True)
+            layout.addWidget(status_label)
             self._backup_status_label = status_label
-            
-            # Current file label
+
             current_file_label = QLabel("")
+            current_file_label.setObjectName("pageSubtitle")
             current_file_label.setWordWrap(True)
             current_file_label.setMaximumHeight(40)
-            dialog_layout.addWidget(current_file_label)
+            layout.addWidget(current_file_label)
             self._backup_current_file_label = current_file_label
-            
+
+            output_shell = QFrame()
+            output_shell.setObjectName("backupProgressLogShell")
+            output_shell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            output_shell_layout = QVBoxLayout(output_shell)
+            output_shell_layout.setContentsMargins(10, 10, 10, 10)
+            output_shell_layout.setSpacing(0)
+
             output_text = QPlainTextEdit()
+            output_text.setObjectName("backupProgressLog")
             output_text.setReadOnly(True)
-            output_text.setStyleSheet(themes.STYLESHEET_SCROLL)
-            dialog_layout.addWidget(output_text)
+            output_text.setPlaceholderText("Backup output will appear here…")
+            output_text.setMinimumHeight(140)
+            output_shell_layout.addWidget(output_text)
+            layout.addWidget(output_shell, stretch=1)
             self._backup_output_text = output_text
-            
-            # Buttons layout
+
             buttons_layout = QHBoxLayout()
-            
+            buttons_layout.setSpacing(8)
+
             cancel_btn = QPushButton("Cancel Backup")
-            cancel_btn.setToolTip("Cancel the running backup job. This will stop the backup and unlock the repository.")
+            cancel_btn.setObjectName("dangerBtn")
+            cancel_btn.setToolTip(
+                "Cancel the running backup job. This will stop the backup and unlock the repository."
+            )
             cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             cancel_btn.clicked.connect(lambda: self._cancel_backup())
             buttons_layout.addWidget(cancel_btn)
             self._backup_cancel_btn = cancel_btn
-            
-            buttons_layout.addStretch()
-            
+
+            buttons_layout.addStretch(1)
+
             close_btn = QPushButton("Close")
+            close_btn.setObjectName("dialogPrimary")
             close_btn.setEnabled(False)
-            close_btn.setToolTip("Close this dialog. The backup will continue running in the background.")
+            close_btn.setToolTip(
+                "Close this dialog. The backup will continue running in the background."
+            )
             close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            close_btn.clicked.connect(self._backup_progress_dialog.close)
+            close_btn.clicked.connect(dialog.close)
             buttons_layout.addWidget(close_btn)
             self._backup_close_btn = close_btn
-            
-            dialog_layout.addLayout(buttons_layout)
-            
-            # Override close event to warn about active backup
+
+            layout.addLayout(buttons_layout)
+
             def closeEvent(event):
                 if hasattr(self, '_backup_worker') and self._backup_worker.isRunning():
-                    reply = QMessageBox.question(
-                        self._backup_progress_dialog,
-                        "Backup In Progress",
-                        "Backup is still running. Closing this window will not stop the backup.\n\n"
-                        "The backup will continue in the background and locks will remain until completion.\n\n"
-                        "Do you want to close anyway?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                    )
-                    if reply == QMessageBox.StandardButton.No:
+                    if not self._framed_confirm(
+                        title="Backup In Progress",
+                        heading="Close while backup is still running?",
+                        body=(
+                            "Closing this window will not stop the backup. "
+                            "It will continue in the background and locks will remain until completion."
+                        ),
+                        note="Use Cancel Backup if you want to stop the job.",
+                        confirm_label="Close anyway",
+                        danger=True,
+                    ):
                         event.ignore()
                         return
                 event.accept()
-            
-            self._backup_progress_dialog.closeEvent = closeEvent
-            
-            self._backup_progress_dialog.show()
+
+            dialog.closeEvent = closeEvent
+            self._backup_progress_dialog = dialog
+            dialog.show()
         
         # Update dialog for current repository
+        if hasattr(self, "_backup_heading_label"):
+            self._backup_heading_label.setText(f"Running “{job['name']}”")
+        if hasattr(self, "_backup_job_meta"):
+            self._backup_job_meta.setText(job.get("name") or "—")
+        if hasattr(self, "_backup_repo_meta"):
+            self._backup_repo_meta.setText(repo_name)
+        try:
+            self._backup_progress_dialog.title_bar.set_title(
+                f"Running Backup Job: {job['name']}"
+            )
+        except Exception:
+            pass
+
         if self._total_repos > 1:
-            self._multi_repo_label.setText(f"ðŸ“¦ Repository {repo_index + 1} of {self._total_repos}")
-            self._multi_repo_label.setStyleSheet("font-weight: bold; color: #2196F3; font-size: 11pt;")
+            self._multi_repo_label.setText(
+                f"Repository {repo_index + 1} of {self._total_repos}"
+            )
+            self._multi_repo_label.setVisible(True)
         else:
             self._multi_repo_label.setText("")
+            self._multi_repo_label.setVisible(False)
         
-        self._backup_info_label.setText(
-            f"Backup Job: {job['name']}\n"
-            f"Repository: {repo_name}\n\n"
-            f"Paths:\n" + "\n".join(f"  â€¢ {p}" for p in job["paths"])
-        )
+        paths = job.get("paths") or []
+        if paths:
+            self._backup_info_label.setText(
+                "\n".join(f"- {p}" for p in paths)
+            )
+        else:
+            self._backup_info_label.setText("No paths configured")
         
         self._backup_progress_bar.setValue(0)
-        self._backup_status_label.setText("Starting backup...")
+        self._backup_status_label.setText("Starting backup…")
         self._backup_current_file_label.setText("")
         self._backup_close_btn.setEnabled(False)
         self._backup_cancel_btn.setEnabled(True)
@@ -8639,7 +8669,10 @@ class ResticManagerWindow(QMainWindow):
         
         # Start backup
         backup_timeout = job.get("timeout", 7200)  # Default 2 hours if not set
-        self.log(f"Starting backup job: {job['name']} â†’ Repository {repo_index + 1}/{self._total_repos}: {repo_name}") 
+        self.log(
+            f"Starting backup job: {job['name']} -> "
+            f"Repository {repo_index + 1}/{self._total_repos}: {repo_name}"
+        )
         self.log(f"Command: restic {' '.join(args)}")
         self.log(f"Timeout: {backup_timeout} seconds ({backup_timeout // 60} minutes)")
         
@@ -8729,43 +8762,45 @@ class ResticManagerWindow(QMainWindow):
         if not hasattr(self, '_backup_worker') or not self._backup_worker.isRunning():
             return
         
-        reply = QMessageBox.question(
-            self._backup_progress_dialog,
-            "Cancel Backup",
-            "Are you sure you want to cancel this backup?\n\n"
-            "The backup will be stopped and the repository will be unlocked.\n\n"
-            "Any partial data may remain in the repository.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        if not self._framed_confirm(
+            title="Cancel Backup",
+            heading="Cancel this backup?",
+            body=(
+                "The backup will be stopped and the repository will be unlocked. "
+                "Any partial data may remain in the repository."
+            ),
+            confirm_label="Cancel Backup",
+            danger=True,
+        ):
+            return
+
+        self._backup_is_cancelled = True
         
-        if reply == QMessageBox.StandardButton.Yes:
-            self._backup_is_cancelled = True
-            
-            # Terminate the worker thread
-            if hasattr(self, '_backup_worker'):
-                self._backup_worker.terminate()
-                self._backup_worker.wait(2000)  # Wait up to 2 seconds
-                if self._backup_worker.isRunning():
-                    self._backup_worker.terminate()  # Force terminate
-            
-            # Update UI
-            if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText("âš  Backup cancelled by user")
-            
-            if hasattr(self, '_backup_progress_bar'):
-                self._backup_progress_bar.setRange(0, 100)
-                self._backup_progress_bar.setValue(0)
-            
-            if hasattr(self, '_backup_cancel_btn'):
-                self._backup_cancel_btn.setEnabled(False)
-            
-            if hasattr(self, '_backup_close_btn'):
-                self._backup_close_btn.setEnabled(True)
-            
-            self.log(f"Backup job '{self._backup_job_name}' cancelled by user")
-            
-            # Auto-unlock the repository
-            self._auto_unlock_after_cancel()
+        # Terminate the worker thread
+        if hasattr(self, '_backup_worker'):
+            self._backup_worker.terminate()
+            self._backup_worker.wait(2000)  # Wait up to 2 seconds
+            if self._backup_worker.isRunning():
+                self._backup_worker.terminate()  # Force terminate
+        
+        # Update UI
+        if hasattr(self, '_backup_status_label'):
+            self._backup_status_label.setText("Backup cancelled by user")
+        
+        if hasattr(self, '_backup_progress_bar'):
+            self._backup_progress_bar.setRange(0, 100)
+            self._backup_progress_bar.setValue(0)
+        
+        if hasattr(self, '_backup_cancel_btn'):
+            self._backup_cancel_btn.setEnabled(False)
+        
+        if hasattr(self, '_backup_close_btn'):
+            self._backup_close_btn.setEnabled(True)
+        
+        self.log(f"Backup job '{self._backup_job_name}' cancelled by user")
+        
+        # Auto-unlock the repository
+        self._auto_unlock_after_cancel()
     
     def _auto_unlock_after_cancel(self):
         """Automatically unlock repository after backup cancellation"""
@@ -9005,20 +9040,18 @@ class ResticManagerWindow(QMainWindow):
         """Toggle between day of week and day of month based on frequency"""
         is_weekly = frequency == "Weekly"
         is_monthly = frequency == "Monthly"
-        
-        # Show/hide day of week
-        if hasattr(self, 'retention_day_combo') and hasattr(self, '_retention_schedule_form'):
+
+        day_row = getattr(self, "retention_day_row", None)
+        if day_row is not None:
+            day_row.setVisible(is_weekly)
+        elif hasattr(self, "retention_day_combo"):
             self.retention_day_combo.setVisible(is_weekly)
-            label = self._retention_schedule_form.labelForField(self.retention_day_combo)
-            if label:
-                label.setVisible(is_weekly)
-        
-        # Show/hide day of month
-        if hasattr(self, 'retention_dom_spin') and hasattr(self, '_retention_schedule_form'):
+
+        dom_row = getattr(self, "retention_dom_row", None)
+        if dom_row is not None:
+            dom_row.setVisible(is_monthly)
+        elif hasattr(self, "retention_dom_spin"):
             self.retention_dom_spin.setVisible(is_monthly)
-            label = self._retention_schedule_form.labelForField(self.retention_dom_spin)
-            if label:
-                label.setVisible(is_monthly)
     
     def _get_retention_command_args(self):
         """Build restic forget command arguments from retention settings"""
@@ -9059,21 +9092,23 @@ class ResticManagerWindow(QMainWindow):
         """Create a scheduled task for retention policy"""
         repo_name = self._get_current_retention_repo()
         if not repo_name:
-            QMessageBox.warning(self, "No Repository", "Please select a repository")
+            show_framed_message(self, "No Repository", "Please select a repository.")
             return
         
         repo, password = self.get_repository_by_name(repo_name)
         if not repo:
-            QMessageBox.warning(self, "Repository Not Found", f"Repository '{repo_name}' not found")
+            show_framed_message(
+                self, "Repository Not Found", f"Repository '{repo_name}' not found."
+            )
             return
         
         # Validate at least one retention policy is set
         command_args = self._get_retention_command_args()
         if len(command_args) == 1:  # Only --prune, no keep policies
-            QMessageBox.warning(
-                self, 
-                "No Retention Policies", 
-                "Please configure at least one retention policy (Keep Last, Daily, Weekly, etc.)"
+            show_framed_message(
+                self,
+                "No Retention Policies",
+                "Please configure at least one retention policy (Keep Last, Daily, Weekly, etc.).",
             )
             return
         
@@ -9106,7 +9141,11 @@ class ResticManagerWindow(QMainWindow):
                 frequency, time, day_of_week, day_of_month
             )
         else:
-            QMessageBox.warning(self, "Unsupported Platform", f"Scheduled tasks not supported on {system}")
+            show_framed_message(
+                self,
+                "Unsupported Platform",
+                f"Scheduled tasks are not supported on {system}.",
+            )
             return
         
         if success:
@@ -9145,10 +9184,20 @@ $password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Enc
                     creationflags=get_subprocess_creation_flags()
                 )
                 if result.returncode != 0:
-                    QMessageBox.critical(self, "Password Encryption Failed", f"Failed to encrypt password:\n{result.stderr}")
+                    show_framed_message(
+                        self,
+                        "Password Encryption Failed",
+                        f"Failed to encrypt password:\n{result.stderr}",
+                        kind="error",
+                    )
                     return False
             except Exception as e:
-                QMessageBox.critical(self, "Password Encryption Failed", f"Error encrypting password:\n{str(e)}")
+                show_framed_message(
+                    self,
+                    "Password Encryption Failed",
+                    f"Error encrypting password:\n{str(e)}",
+                    kind="error",
+                )
                 return False
         
         # Build PowerShell script content with encrypted password loading
@@ -9235,7 +9284,12 @@ try {{
             with open(script_path, 'w', encoding='utf-8') as f:
                 f.write(ps_script)
         except Exception as e:
-            QMessageBox.critical(self, "Script Creation Failed", f"Failed to create PowerShell script:\n{e}")
+            show_framed_message(
+                self,
+                "Script Creation Failed",
+                f"Failed to create PowerShell script:\n{e}",
+                kind="error",
+            )
             return False
         
         # Build schtasks command
@@ -9266,27 +9320,47 @@ try {{
         try:
             result = subprocess.run(schtasks_cmd, capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
-                password_note = " (password encrypted with DPAPI)" if password else ""
-                QMessageBox.information(
-                    self,
-                    "Task Created Successfully",
-                    f"Scheduled task '{task_name}' created successfully{password_note}!\n\n"
-                    f"Schedule: {frequency} at {start_time}\n"
-                    f"Repository: {repo['name']}\n\n"
-                    f"Script location: {script_path}\n\n"
-                    f"You can view/manage it in Task Scheduler."
+                password_note = (
+                    "Password is stored encrypted with Windows DPAPI."
+                    if password
+                    else "No repository password was stored for this task."
+                )
+                schedule_text = f"{frequency} at {start_time}"
+                if frequency == "Weekly":
+                    schedule_text = f"{frequency} on {day_of_week} at {start_time}"
+                elif frequency == "Monthly":
+                    schedule_text = f"{frequency} on day {day_of_month} at {start_time}"
+                self._framed_confirm(
+                    title="Task Created",
+                    heading=f"Scheduled task “{task_name}” created",
+                    body="Retention will run on the system schedule even when this app is closed.",
+                    note=f"{password_note} You can view or manage the task in Task Scheduler.",
+                    meta=[
+                        ("Task", task_name),
+                        ("Repository", repo.get("name") or "—"),
+                        ("Schedule", schedule_text),
+                        ("Script", script_path),
+                    ],
+                    confirm_label="OK",
+                    show_cancel=False,
                 )
                 return True
             else:
                 error_msg = result.stderr if result.stderr else result.stdout
-                QMessageBox.critical(
+                show_framed_message(
                     self,
                     "Task Creation Failed",
-                    f"Failed to create scheduled task:\n\n{error_msg}"
+                    f"Failed to create scheduled task:\n\n{error_msg}",
+                    kind="error",
                 )
                 return False
         except Exception as e:
-            QMessageBox.critical(self, "Task Creation Failed", f"Error creating scheduled task:\n{e}")
+            show_framed_message(
+                self,
+                "Task Creation Failed",
+                f"Error creating scheduled task:\n{e}",
+                kind="error",
+            )
             return False
     
     def _create_linux_cron_job(self, task_name, repo, password, command_args, frequency, time, day_of_week, day_of_month):
@@ -9411,19 +9485,22 @@ try {{
         """Delete scheduled retention task"""
         repo_name = self._get_current_retention_repo()
         if not repo_name:
-            QMessageBox.warning(self, "No Repository", "Please select a repository")
+            show_framed_message(self, "No Repository", "Please select a repository.")
             return
         
         task_name = f"ResticRetention_{repo_name.replace(' ', '_')}"
-        
-        reply = QMessageBox.question(
-            self,
-            "Delete Scheduled Task",
-            f"Delete scheduled task '{task_name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.No:
+
+        if not self._framed_confirm(
+            title="Delete Scheduled Task",
+            heading=f"Delete scheduled task “{task_name}”?",
+            body="This removes the system task that runs retention for this repository. Snapshots are not deleted.",
+            meta=[
+                ("Repository", repo_name),
+                ("Task", task_name),
+            ],
+            confirm_label="Delete",
+            danger=True,
+        ):
             return
         
         import platform
@@ -9454,33 +9531,51 @@ try {{
                         files_deleted.append(".password")
                     
                     files_msg = f" (also removed {', '.join(files_deleted)} files)" if files_deleted else ""
-                    QMessageBox.information(self, "Task Deleted", f"Scheduled task '{task_name}' deleted successfully{files_msg}")
+                    show_framed_message(
+                        self,
+                        "Task Deleted",
+                        f"Scheduled task '{task_name}' deleted successfully{files_msg}.",
+                        kind="info",
+                    )
                     self.log(f"Deleted scheduled task: {task_name}{files_msg}")
+
+                    schedules = dict(self.settings_manager.get("retention_schedules") or {})
+                    if repo_name in schedules:
+                        schedules.pop(repo_name, None)
+                        self.settings_manager.set("retention_schedules", schedules)
+                        self.settings_manager.save_settings()
                     
                     # Refresh the repository combo to update indicators
                     self.update_retention_repo_combo()
                 else:
                     error_msg = result.stderr if result.stderr else "Task not found"
-                    QMessageBox.warning(self, "Delete Failed", f"Failed to delete task:\n{error_msg}")
+                    show_framed_message(
+                        self,
+                        "Delete Failed",
+                        f"Failed to delete task:\n{error_msg}",
+                    )
             else:
-                QMessageBox.information(
-                    self, 
-                    "Manual Deletion Required", 
-                    f"Please manually remove the cron job for '{task_name}'\n\nRun: crontab -e"
+                show_framed_message(
+                    self,
+                    "Manual Deletion Required",
+                    f"Please manually remove the cron job for '{task_name}'.\n\nRun: crontab -e",
+                    kind="info",
                 )
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to delete task:\n{e}")
+            show_framed_message(self, "Error", f"Failed to delete task:\n{e}")
     
     def apply_retention(self, dry_run=True):
         """Apply retention policy"""
         repo_name = self._get_current_retention_repo()
         if not repo_name:
-            QMessageBox.warning(self, "No Repository", "Please select a repository")
+            show_framed_message(self, "No Repository", "Please select a repository.")
             return
         
         repo, password = self.get_repository_by_name(repo_name)
         if not repo:
-            QMessageBox.warning(self, "Repository Not Found", f"Repository '{repo_name}' not found")
+            show_framed_message(
+                self, "Repository Not Found", f"Repository '{repo_name}' not found."
+            )
             return
         
         # Get retention command arguments
@@ -9488,16 +9583,30 @@ try {{
         
         # Check if at least one retention policy is set
         if len(command_args) == 1:  # Only --prune, no keep policies
-            QMessageBox.warning(
-                self, 
-                "No Retention Policies", 
-                "Please configure at least one retention policy (Keep Last, Daily, Weekly, etc.)"
+            show_framed_message(
+                self,
+                "No Retention Policies",
+                "Please configure at least one retention policy (Keep Last, Daily, Weekly, etc.).",
             )
             return
         
         # Add dry-run flag if preview mode
         if dry_run:
             command_args.append("--dry-run")
+        else:
+            if not self._framed_confirm(
+                title="Apply Policy",
+                heading=f"Apply retention to “{repo_name}”?",
+                body="This will forget snapshots that fall outside your keep rules and prune unused data. This cannot be undone.",
+                note="Run Dry Run first if you want to preview which snapshots would be removed.",
+                meta=[
+                    ("Repository", repo_name),
+                    ("Path", repo.get("path") or "—"),
+                ],
+                confirm_label="Apply",
+                danger=True,
+            ):
+                return
         
         mode_text = "Preview" if dry_run else "Applying"
         self.log(f"{mode_text} retention policy for {repo_name}")
@@ -9535,11 +9644,12 @@ try {{
                     self.log(f"Retention policy preview completed for {repo_name}")
                 else:
                     self.log(f"Retention policy applied successfully for {repo_name}")
-                    QMessageBox.information(
+                    show_framed_message(
                         self,
                         "Policy Applied",
-                        f"Retention policy applied successfully to '{repo_name}'!\n\n"
-                        f"Check the output below for details."
+                        f"Retention policy applied successfully to '{repo_name}'.\n\n"
+                        "Check the output below for details.",
+                        kind="info",
                     )
             else:
                 error_msg = "Failed to run retention policy. Check logs for details."
@@ -9558,10 +9668,11 @@ try {{
                 f"Error: {error_msg}"
             )
             self.log(f"Error applying retention policy: {error_msg}")
-            QMessageBox.critical(
+            show_framed_message(
                 self,
                 "Retention Error",
-                f"Failed to apply retention policy:\n\n{error_msg}"
+                f"Failed to apply retention policy:\n\n{error_msg}",
+                kind="error",
             )
     
     # Settings Methods

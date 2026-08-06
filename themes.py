@@ -2198,10 +2198,10 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: transparent;
             color: {t.accent};
             border: none;
-            padding: 4px 2px;
+            padding: 2px 2px 4px 2px;
             font-size: 12px;
             font-weight: 600;
-            min-height: 0;
+            min-height: 22px;
         }}
         QPushButton#linkBtn:hover {{
             color: {t.accent_hover};
@@ -2212,10 +2212,10 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: transparent;
             color: {t.danger};
             border: none;
-            padding: 4px 2px;
+            padding: 2px 2px 4px 2px;
             font-size: 12px;
             font-weight: 600;
-            min-height: 0;
+            min-height: 22px;
         }}
         QPushButton#dangerLinkBtn:hover {{
             color: {t.text};
@@ -2453,15 +2453,114 @@ def build_stylesheet(theme: AppTheme) -> str:
             background: transparent;
             border: none;
         }}
+        #retentionFormLabel {{
+            color: {t.muted};
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
         #restoreDestStrip {{
             background-color: {shell_bg};
             border: 1px solid {t.border};
             border-radius: 10px;
         }}
+        #retentionKeepCell {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        #retentionKeepField {{
+            background: transparent;
+            border: none;
+        }}
+        #retentionKeepLabel {{
+            color: {t.muted};
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
+        #retentionScroll, #retentionScrollContent {{
+            background: transparent;
+            border: none;
+        }}
+        QPlainTextEdit#retentionLog, QPlainTextEdit#backupProgressLog {{
+            background-color: transparent;
+            border: none;
+            border-radius: 0;
+            color: {t.text};
+            padding: 0;
+            font-size: 12px;
+            font-family: Consolas, "Courier New", monospace;
+        }}
+        QTimeEdit#retentionTimeEdit {{
+            background-color: {t.surface};
+            border: 1px solid {t.border};
+            border-radius: 6px;
+            color: {t.text};
+            padding: 4px 26px 4px 8px;
+            min-height: 18px;
+            max-height: 26px;
+            min-width: 120px;
+            selection-background-color: {t.accent};
+        }}
+        QTimeEdit#retentionTimeEdit::up-button,
+        QTimeEdit#retentionTimeEdit::down-button {{
+            subcontrol-origin: border;
+            width: 22px;
+            height: 13px;
+            border: none;
+            border-left: 1px solid {t.border};
+            background-color: {t.surface};
+        }}
+        QTimeEdit#retentionTimeEdit::up-button {{
+            subcontrol-position: top right;
+            border-top-right-radius: 6px;
+        }}
+        QTimeEdit#retentionTimeEdit::down-button {{
+            subcontrol-position: bottom right;
+            border-bottom-right-radius: 6px;
+        }}
+        QTimeEdit#retentionTimeEdit::up-arrow {{
+            image: url({_icon_url("spin_up.svg")});
+            width: 10px;
+            height: 6px;
+        }}
+        QTimeEdit#retentionTimeEdit::down-arrow {{
+            image: url({_icon_url("spin_down.svg")});
+            width: 10px;
+            height: 6px;
+        }}
+        QSpinBox#retentionKeepSpin {{
+            max-height: 26px;
+            min-height: 18px;
+        }}
+        #retentionInfoLabel {{
+            color: {t.muted};
+            font-size: 11px;
+            background: transparent;
+            border: none;
+            padding-top: 4px;
+        }}
         #browseMetaStrip {{
             background-color: {shell_bg};
             border: 1px solid {t.border};
             border-radius: 10px;
+        }}
+        #backupProgressLogShell {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        #retentionStatusStrip {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        #retentionStatusStrip QLabel#browseMetaValue[retentionScheduled="true"] {{
+            color: {t.ok};
+            font-weight: 600;
         }}
         #snapshotSummaryStrip {{
             background-color: {shell_bg};
