@@ -1429,7 +1429,7 @@ def build_stylesheet(theme: AppTheme) -> str:
         }}
 
         /* Framed dialogs (Settings / Notes / Host / host picker / System log) — transparent shell; #windowRoot paints chrome */
-        #settingsDialog, #notesDialog, #hostDialog, #dualSftpDialog, #systemLogDialog, #workspacesDialog {{
+        #settingsDialog, #notesDialog, #hostDialog, #dualSftpDialog, #systemLogDialog, #workspacesDialog, #backupJobDialog {{
             background-color: transparent;
         }}
         #framedDialogBody {{
@@ -1440,6 +1440,30 @@ def build_stylesheet(theme: AppTheme) -> str:
         #windowRoot[maximized="1"] #framedDialogBody {{
             border-bottom-left-radius: 0px;
             border-bottom-right-radius: 0px;
+        }}
+        #backupJobFooter {{
+            background-color: {t.surface};
+            border-top: 1px solid {t.border};
+        }}
+        QListWidget#backupJobList {{
+            background-color: {t.bg};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+            padding: 4px;
+            outline: none;
+        }}
+        QListWidget#backupJobList::item {{
+            padding: 6px 8px;
+            border-radius: 4px;
+        }}
+        QListWidget#backupJobList::item:selected {{
+            background-color: {t.accent_soft};
+            color: {t.text};
+        }}
+        #backupJobContent #pageSubtitle {{
+            color: {t.muted};
+            font-size: 12px;
+            font-style: italic;
         }}
 
         /* Settings dialog — left rail + content (mirrors main sidebar) */
@@ -2139,6 +2163,18 @@ def build_stylesheet(theme: AppTheme) -> str:
             background: transparent;
             border: none;
         }}
+        #repoStatusCell {{
+            background: transparent;
+            border: none;
+        }}
+        #repoStatusLabel {{
+            background: transparent;
+            border: none;
+            padding-bottom: 1px;
+        }}
+        #repoStatusDot {{
+            border: none;
+        }}
         #repoNameCell, #repoBadgesCell, #repoIconCell {{
             background: transparent;
             border: none;
@@ -2212,7 +2248,7 @@ def build_stylesheet(theme: AppTheme) -> str:
             selection-background-color: {t.accent_soft};
             selection-color: {t.text};
         }}
-        QTableWidget#jobsTable {{
+        QTableWidget#jobsTable, QTableWidget#repoTable {{
             selection-background-color: {jobs_sel};
             selection-color: {t.muted};
         }}
@@ -2223,15 +2259,15 @@ def build_stylesheet(theme: AppTheme) -> str:
             border-bottom: 1px solid {t.border};
             text-align: left;
         }}
-        QTableWidget#jobsTable::item {{
+        QTableWidget#jobsTable::item, QTableWidget#repoTable::item {{
             /* Fusion adds a small item inset; use 4px so text lines up with 8px header padding */
             padding: 8px 8px 8px 4px;
         }}
-        QTableWidget#jobsTable::item:selected {{
+        QTableWidget#jobsTable::item:selected, QTableWidget#repoTable::item:selected {{
             background-color: {jobs_sel};
             border-bottom: 1px solid {t.border};
         }}
-        QTableWidget#repoTable::item:selected, QTableWidget#snapshotsTable::item:selected {{
+        QTableWidget#snapshotsTable::item:selected {{
             background-color: {t.accent_soft};
             color: {t.text};
             border-bottom: 1px solid {t.border};
@@ -2241,7 +2277,8 @@ def build_stylesheet(theme: AppTheme) -> str:
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
         }}
-        QTableWidget#jobsTable QHeaderView::section {{
+        QTableWidget#jobsTable QHeaderView::section,
+        QTableWidget#repoTable QHeaderView::section {{
             background-color: {jobs_header_wash};
             color: {jobs_header_text};
             border: none;
@@ -2252,17 +2289,21 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-weight: 600;
             text-align: left;
         }}
-        QTableWidget#jobsTable QHeaderView::section:hover {{
+        QTableWidget#jobsTable QHeaderView::section:hover,
+        QTableWidget#repoTable QHeaderView::section:hover {{
             color: {t.text};
             background-color: {hover};
         }}
-        QTableWidget#jobsTable QHeaderView::section:first {{
+        QTableWidget#jobsTable QHeaderView::section:first,
+        QTableWidget#repoTable QHeaderView::section:first {{
             border-top-left-radius: 10px;
         }}
-        QTableWidget#jobsTable QHeaderView::section:last {{
+        QTableWidget#jobsTable QHeaderView::section:last,
+        QTableWidget#repoTable QHeaderView::section:last {{
             border-top-right-radius: 10px;
         }}
-        QTableWidget#jobsTable QTableCornerButton::section {{
+        QTableWidget#jobsTable QTableCornerButton::section,
+        QTableWidget#repoTable QTableCornerButton::section {{
             background-color: {jobs_header_wash};
             border: none;
             border-top-left-radius: 10px;
@@ -2272,12 +2313,27 @@ def build_stylesheet(theme: AppTheme) -> str:
             margin: 0;
             padding: 0;
         }}
-        QTableWidget#jobsTable QLabel#repoNameLabel {{
+        QTableWidget#jobsTable QLabel#repoNameLabel,
+        QTableWidget#repoTable QLabel#repoNameLabel {{
             background: transparent;
             padding: 0;
             margin: 0;
         }}
-        QTableWidget#repoTable QHeaderView::section, QTableWidget#snapshotsTable QHeaderView::section {{
+        QPushButton#iconMenuBtn {{
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            padding: 4px;
+            min-width: 28px;
+            min-height: 28px;
+        }}
+        QPushButton#iconMenuBtn:hover {{
+            background-color: {hover};
+        }}
+        QPushButton#iconMenuBtn:pressed {{
+            background-color: {hover_strong};
+        }}
+        QTableWidget#snapshotsTable QHeaderView::section {{
             background-color: {header_wash};
             color: {t.muted};
             border: none;
@@ -2287,17 +2343,17 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 11px;
             font-weight: 600;
         }}
-        QTableWidget#repoTable QHeaderView::section:hover, QTableWidget#snapshotsTable QHeaderView::section:hover {{
+        QTableWidget#snapshotsTable QHeaderView::section:hover {{
             color: {t.text};
             background-color: {hover};
         }}
-        QTableWidget#repoTable QHeaderView::section:first, QTableWidget#snapshotsTable QHeaderView::section:first {{
+        QTableWidget#snapshotsTable QHeaderView::section:first {{
             border-top-left-radius: 10px;
         }}
-        QTableWidget#repoTable QHeaderView::section:last, QTableWidget#snapshotsTable QHeaderView::section:last {{
+        QTableWidget#snapshotsTable QHeaderView::section:last {{
             border-top-right-radius: 10px;
         }}
-        QTableWidget#repoTable QTableCornerButton::section, QTableWidget#snapshotsTable QTableCornerButton::section {{
+        QTableWidget#snapshotsTable QTableCornerButton::section {{
             background-color: {header_wash};
             border: none;
             border-top-left-radius: 10px;
@@ -2400,10 +2456,10 @@ def build_stylesheet(theme: AppTheme) -> str:
             border: 1px solid {t.border};
             border-radius: 10px;
             margin-top: 8px;
-            padding-top: 16px;
+            padding-top: 18px;
             padding-left: 10px;
             padding-right: 10px;
-            padding-bottom: 8px;
+            padding-bottom: 14px;
             font-weight: 600;
             color: {t.text};
         }}

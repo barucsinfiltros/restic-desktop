@@ -506,6 +506,45 @@ def show_notification(title: str, message: str, icon_type: str = "info", duratio
         if DEBUG_MODE:
             print(f"Failed to show notification: {e}")
 
+
+def make_framed_progress_dialog(
+    parent,
+    title: str,
+    message: str,
+    *,
+    modal: bool = True,
+    min_width: int = 420,
+    min_height: Optional[int] = None,
+):
+    """Framed indeterminate progress dialog matching app chrome."""
+    dlg = FramedDialog(
+        title,
+        parent,
+        show_maximize=False,
+        show_minimize=False,
+        modal=modal,
+    )
+    dlg.setMinimumWidth(min_width)
+    if min_height is not None:
+        dlg.setMinimumHeight(min_height)
+    dlg.setMaximumWidth(max(min_width + 80, 560))
+    dlg.body_layout.setContentsMargins(20, 16, 20, 20)
+    dlg.body_layout.setSpacing(14)
+
+    label = QLabel(message)
+    label.setObjectName("pageSubtitle")
+    label.setWordWrap(True)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    dlg.body_layout.addWidget(label)
+
+    bar = QProgressBar()
+    bar.setRange(0, 0)
+    bar.setMinimumHeight(10)
+    bar.setTextVisible(False)
+    dlg.body_layout.addWidget(bar)
+
+    return dlg, label, bar
+
     
 # Password encryption key (derived from machine-specific data)
 def get_encryption_key():
@@ -1128,6 +1167,9 @@ class RepositoryDialog(FramedDialog):
         self.settings_manager = settings_manager
         self.password_manager = settings_manager.password_manager
         self.existing_repo = existing_repo
+        # Set by Test Connection; applied into check_status on save.
+        self._test_result: Optional[bool] = None
+        self._test_error: str = ""
         
         self.setMinimumWidth(520)
         self.body_layout.setContentsMargins(16, 12, 16, 16)
@@ -1184,22 +1226,23 @@ class RepositoryDialog(FramedDialog):
         form_card = QFrame()
         form_card.setObjectName("sectionCard")
         form_card_layout = QVBoxLayout(form_card)
-        form_card_layout.setContentsMargins(16, 14, 16, 14)
+        form_card_layout.setContentsMargins(16, 14, 16, 16)
         form_card_layout.setSpacing(8)
         form_card_layout.addLayout(form_layout)
 
-        layout.addWidget(form_card)
-        
-        # Initialize repository option
+        # Keep init option inside the card so it isn't cramped against the footer.
         if not existing_repo:
+            form_card_layout.addSpacing(8)
             self.init_repo_check = QCheckBox("Initialize repository now")
             self.init_repo_check.setChecked(False)
-            layout.addWidget(self.init_repo_check)
+            form_card_layout.addWidget(self.init_repo_check)
+
+        layout.addWidget(form_card)
         
         # Footer actions — compact, same row as OK/Cancel
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
-        button_layout.setContentsMargins(0, 8, 0, 0)
+        button_layout.setContentsMargins(0, 14, 0, 0)
 
         test_btn = QPushButton("Test")
         test_btn.setObjectName("dialogSecondary")
@@ -1263,23 +1306,13 @@ class RepositoryDialog(FramedDialog):
             QMessageBox.warning(self, "Test Connection", "Please enter a repository path.")
             return
         
-        # Show progress dialog
-        self._test_progress = QDialog(self)
-        self._test_progress.setWindowTitle("Testing Connection")
-        self._test_progress.setModal(True)
-        self._test_progress.setMinimumWidth(350)
-        
-        progress_layout = QVBoxLayout()
-        self._test_progress.setLayout(progress_layout)
-        
-        progress_label = QLabel(f"Testing connection to repository...\n\nPlease wait...")
-        progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        progress_layout.addWidget(progress_label)
-        
-        progress_bar = QProgressBar()
-        progress_bar.setRange(0, 0)  # Indeterminate progress
-        progress_layout.addWidget(progress_bar)
-        
+        # Show progress dialog (framed to match app chrome)
+        self._test_progress, _, _ = make_framed_progress_dialog(
+            self,
+            "Testing Connection",
+            "Testing connection to repository…\nPlease wait.",
+            min_width=400,
+        )
         self._test_progress.show()
         QApplication.processEvents()
         
@@ -1305,13 +1338,17 @@ class RepositoryDialog(FramedDialog):
                 pass
         
         if success:
+            self._test_result = True
+            self._test_error = ""
             QMessageBox.information(
                 self, 
                 "Connection Successful", 
                 "Successfully connected to the repository!\n\nThe repository is accessible and the password is correct."
             )
         else:
-            error_msg = stderr if stderr else "Unknown error"
+            self._test_result = False
+            self._test_error = (stderr or "Unknown error").strip()
+            error_msg = self._test_error or "Unknown error"
             QMessageBox.warning(
                 self, 
                 "Connection Failed", 
@@ -1329,12 +1366,30 @@ class RepositoryDialog(FramedDialog):
             "type": self.type_combo.currentText(),
             "path": self.path_input.text(),
             "password": encrypted_password,
-            "last_checked": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-        # Preserve auto-assigned identity colour on edit (never user-picked).
-        if self.existing_repo and self.existing_repo.get("color"):
-            data["color"] = self.existing_repo["color"]
+        # Preserve identity colour + prior check metadata on edit.
+        if self.existing_repo:
+            if self.existing_repo.get("color"):
+                data["color"] = self.existing_repo["color"]
+            data["last_checked"] = self.existing_repo.get("last_checked") or "Never"
+            data["check_status"] = self.existing_repo.get("check_status") or "unknown"
+            if self.existing_repo.get("check_error"):
+                data["check_error"] = self.existing_repo.get("check_error")
+        else:
+            data["last_checked"] = "Never"
+            data["check_status"] = "unknown"
+
+        # Apply in-dialog Test Connection result (if run this session).
+        if self._test_result is True:
+            data["last_checked"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            data["check_status"] = "healthy"
+            data.pop("check_error", None)
+        elif self._test_result is False:
+            data["last_checked"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            data["check_status"] = "unreachable"
+            if self._test_error:
+                data["check_error"] = self._test_error[:500]
         
         # Add initialize flag if this is a new repository
         if not self.existing_repo:
@@ -1348,54 +1403,79 @@ class BackupJobDialog(FramedDialog):
     
     def __init__(self, parent, settings_manager, existing_job=None):
         title = "New Backup Job" if not existing_job else "Edit Backup Job"
-        super().__init__(title, parent, show_maximize=True, show_minimize=False)
+        super().__init__(
+            title,
+            parent,
+            object_name="backupJobDialog",
+            show_maximize=True,
+            show_minimize=False,
+        )
         self.settings_manager = settings_manager
         self.existing_job = existing_job
         
-        self.setMinimumWidth(620)
-        self.setMinimumHeight(640)
+        self.setMinimumWidth(640)
+        self.setMinimumHeight(560)
+        self.resize(680, 720)
         
         self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(0)
         main_layout = self.body_layout
         
         # Create scroll area for the form content
         scroll_area = QScrollArea()
+        scroll_area.setObjectName("backupJobScroll")
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
         # Content widget inside scroll area
         content_widget = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(16, 12, 16, 16)
-        content_widget.setLayout(layout)
+        content_widget.setObjectName("backupJobContent")
+        layout = QVBoxLayout(content_widget)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(12)
         scroll_area.setWidget(content_widget)
-        
-        main_layout.addWidget(scroll_area)
-        
-        # Form layout
-        form_layout = QFormLayout()
+        main_layout.addWidget(scroll_area, stretch=1)
+
+        def _section(section_title: str):
+            card = QFrame()
+            card.setObjectName("sectionCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 14)
+            card_layout.setSpacing(8)
+            heading = QLabel(section_title)
+            heading.setObjectName("sectionCardTitle")
+            card_layout.addWidget(heading)
+            return card, card_layout
         
         # Job name
+        name_card, name_layout = _section("Job")
+        name_row = QHBoxLayout()
+        name_row.setSpacing(10)
+        name_label = QLabel("Job Name")
+        name_label.setMinimumWidth(88)
         self.name_input = QLineEdit()
+        self.name_input.setMinimumHeight(34)
+        self.name_input.setPlaceholderText("e.g. Daily Documents")
         if existing_job:
             self.name_input.setText(existing_job.get("name", ""))
-        form_layout.addRow("Job Name:", self.name_input)
-        
-        layout.addLayout(form_layout)
+        name_row.addWidget(name_label)
+        name_row.addWidget(self.name_input, stretch=1)
+        name_layout.addLayout(name_row)
+        layout.addWidget(name_card)
         
         # Repositories (multiple selection)
-        repos_group = QGroupBox("Target Repositories")
-        repos_layout = QVBoxLayout()
-        repos_group.setLayout(repos_layout)
-        
-        repos_help = QLabel("Select one or more repositories to backup to (for redundancy)")
-        repos_help.setStyleSheet("color: gray; font-style: italic; font-size: 9pt;")
+        repos_card, repos_layout = _section("Target Repositories")
+        repos_help = QLabel("Select one or more repositories to backup to (for redundancy).")
+        repos_help.setObjectName("pageSubtitle")
+        repos_help.setWordWrap(True)
         repos_layout.addWidget(repos_help)
         
         self.repos_list = QListWidget()
+        self.repos_list.setObjectName("backupJobList")
         self.repos_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        #self.repos_list.setMaximumHeight(180)
-        self.repos_list.setFixedHeight(180)
+        self.repos_list.setMinimumHeight(120)
+        self.repos_list.setMaximumHeight(160)
         repositories = settings_manager.get("repositories")
         for repo in repositories:
             item = QListWidgetItem(repo["name"])
@@ -1410,42 +1490,54 @@ class BackupJobDialog(FramedDialog):
                 if repo["name"] in selected_repos:
                     item.setSelected(True)
         repos_layout.addWidget(self.repos_list)
-        
-        layout.addWidget(repos_group)
+        layout.addWidget(repos_card)
         
         # Paths to backup
-        paths_group = QGroupBox("Paths to Backup")
-        paths_layout = QVBoxLayout()
-        paths_group.setLayout(paths_layout)
-        
+        paths_card, paths_layout = _section("Paths to Backup")
         self.paths_list = QListWidget()
-        #self.paths_list.setMaximumHeight(180)
-        self.paths_list.setFixedHeight(180)
+        self.paths_list.setObjectName("backupJobList")
+        self.paths_list.setMinimumHeight(100)
+        self.paths_list.setMaximumHeight(140)
         if existing_job and existing_job.get("paths"):
             for path in existing_job["paths"]:
                 self.paths_list.addItem(path)
         paths_layout.addWidget(self.paths_list)
         
         paths_btn_layout = QHBoxLayout()
+        paths_btn_layout.setContentsMargins(0, 4, 0, 0)
+        paths_btn_layout.setSpacing(8)
         add_path_btn = QPushButton("Add Path")
+        add_path_btn.setObjectName("dialogSecondary")
+        add_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_path_btn.clicked.connect(self.add_path)
         remove_path_btn = QPushButton("Remove")
+        remove_path_btn.setObjectName("dialogSecondary")
+        remove_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         remove_path_btn.clicked.connect(self.remove_path)
         paths_btn_layout.addWidget(add_path_btn)
         paths_btn_layout.addWidget(remove_path_btn)
         paths_btn_layout.addStretch()
         paths_layout.addLayout(paths_btn_layout)
-        
-        layout.addWidget(paths_group)
+        layout.addWidget(paths_card)
         
         # Options
-        options_group = QGroupBox("Options")
+        options_card, options_outer = _section("Options")
         options_layout = QFormLayout()
-        options_group.setLayout(options_layout)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        options_layout.setHorizontalSpacing(14)
+        options_layout.setVerticalSpacing(10)
+        try:
+            options_layout.setFieldGrowthPolicy(
+                QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+            )
+        except Exception:
+            pass
+        options_outer.addLayout(options_layout)
         
         # Tags
         self.tags_input = QLineEdit()
-        self.tags_input.setPlaceholderText("tag1,tag2,tag3")
+        self.tags_input.setMinimumHeight(34)
+        self.tags_input.setPlaceholderText("tag1, tag2, tag3")
         if existing_job:
             tags = existing_job.get("tags", [])
             self.tags_input.setText(",".join(tags))
@@ -1454,19 +1546,21 @@ class BackupJobDialog(FramedDialog):
         # Exclude patterns
         self.exclude_input = QTextEdit()
         self.exclude_input.setPlaceholderText("*.tmp\n*.log\nnode_modules/")
-        self.exclude_input.setMaximumHeight(80)
+        self.exclude_input.setMinimumHeight(72)
+        self.exclude_input.setMaximumHeight(96)
         if existing_job and existing_job.get("exclude_patterns"):
             self.exclude_input.setPlainText("\n".join(existing_job["exclude_patterns"]))
         options_layout.addRow("Exclude Patterns:", self.exclude_input)
         
         # Exclude caches
-        self.exclude_caches_check = QCheckBox()
+        self.exclude_caches_check = QCheckBox("Exclude cache directories")
         self.exclude_caches_check.setChecked(existing_job.get("exclude_caches", True) if existing_job else True)
-        options_layout.addRow("Exclude Caches:", self.exclude_caches_check)
+        options_layout.addRow("", self.exclude_caches_check)
         
         # Pack size
-        pack_layout = QHBoxLayout()
         self.pack_size_combo = QComboBox()
+        self.pack_size_combo.setMinimumHeight(34)
+        self.pack_size_combo.setFixedWidth(120)
         self.pack_size_combo.addItems(["8 MB", "16 MB", "32 MB", "64 MB", "128 MB"])
         # Set current value based on existing job
         if existing_job:
@@ -1485,65 +1579,76 @@ class BackupJobDialog(FramedDialog):
                 self.pack_size_combo.setCurrentText("16 MB")  # Default
         else:
             self.pack_size_combo.setCurrentText("16 MB")  # Default for new jobs
-        pack_layout.addWidget(self.pack_size_combo)
-        pack_layout.addStretch()
-        options_layout.addRow("Pack Size:", pack_layout)
+        options_layout.addRow("Pack Size:", self.pack_size_combo)
         
         # One file system
-        self.one_file_system_check = QCheckBox()
+        self.one_file_system_check = QCheckBox("Stay on one file system")
         self.one_file_system_check.setChecked(existing_job.get("one_file_system", False) if existing_job else False)
-        options_layout.addRow("One File System:", self.one_file_system_check)
+        options_layout.addRow("", self.one_file_system_check)
         
         # Timeout
-        timeout_layout = QHBoxLayout()
+        timeout_row = QHBoxLayout()
+        timeout_row.setSpacing(8)
         self.timeout_spin = QSpinBox()
+        self.timeout_spin.setMinimumHeight(34)
         self.timeout_spin.setMinimum(0)
         self.timeout_spin.setMaximum(24)  # Max 24 hours
         # Convert seconds to hours for display
         timeout_seconds = existing_job.get("timeout", 7200) if existing_job else 7200
         self.timeout_spin.setValue(timeout_seconds // 3600 if timeout_seconds > 0 else 0)
         self.timeout_spin.setSuffix(" hours")
-        timeout_layout.addWidget(self.timeout_spin)
-        timeout_layout.addWidget(QLabel("(0 = no timeout, default: 2 hours)"))
-        timeout_layout.addStretch()
-        options_layout.addRow("Backup Timeout:", timeout_layout)
+        timeout_hint = QLabel("0 = no timeout")
+        timeout_hint.setObjectName("pageSubtitle")
+        timeout_row.addWidget(self.timeout_spin)
+        timeout_row.addWidget(timeout_hint)
+        timeout_row.addStretch()
+        options_layout.addRow("Backup Timeout:", timeout_row)
         
         # Exclude if present
         self.exclude_if_present_input = QLineEdit()
+        self.exclude_if_present_input.setMinimumHeight(34)
         self.exclude_if_present_input.setPlaceholderText(".nobackup")
         if existing_job:
             self.exclude_if_present_input.setText(existing_job.get("exclude_if_present", ""))
         options_layout.addRow("Exclude If Present:", self.exclude_if_present_input)
         
         # Compression
-        compression_layout = QHBoxLayout()
+        compression_row = QHBoxLayout()
+        compression_row.setSpacing(8)
         self.compression_combo = QComboBox()
+        self.compression_combo.setMinimumHeight(34)
+        self.compression_combo.setFixedWidth(120)
         self.compression_combo.addItems(["off", "auto", "max"])
         current_compression = existing_job.get("compression", "auto") if existing_job else "auto"
         self.compression_combo.setCurrentText(current_compression)
-        compression_layout.addWidget(self.compression_combo)
-        compression_layout.addWidget(QLabel("(auto = automatic, max = maximum compression)"))
-        compression_layout.addStretch()
-        options_layout.addRow("Compression:", compression_layout)
+        compression_hint = QLabel("auto / max")
+        compression_hint.setObjectName("pageSubtitle")
+        compression_row.addWidget(self.compression_combo)
+        compression_row.addWidget(compression_hint)
+        compression_row.addStretch()
+        options_layout.addRow("Compression:", compression_row)
         
         # No cache
-        self.no_cache_check = QCheckBox()
+        self.no_cache_check = QCheckBox("No local cache")
         self.no_cache_check.setChecked(existing_job.get("no_cache", False) if existing_job else False)
         self.no_cache_check.setToolTip("Do not use local cache (slower but uses less disk space)")
-        options_layout.addRow("No Cache:", self.no_cache_check)
+        options_layout.addRow("", self.no_cache_check)
         
         # Ignore inode
-        self.ignore_inode_check = QCheckBox()
+        self.ignore_inode_check = QCheckBox("Ignore inode changes")
         self.ignore_inode_check.setChecked(existing_job.get("ignore_inode", False) if existing_job else False)
         self.ignore_inode_check.setToolTip("Ignore inode number changes when checking for modified files")
-        options_layout.addRow("Ignore Inode:", self.ignore_inode_check)
+        options_layout.addRow("", self.ignore_inode_check)
         
-        layout.addWidget(options_group)
+        layout.addWidget(options_card)
         
         # Scheduling options
-        schedule_group = QGroupBox("Scheduling (Optional)")
+        schedule_card, schedule_outer = _section("Scheduling")
         schedule_layout = QFormLayout()
-        schedule_group.setLayout(schedule_layout)
+        schedule_layout.setContentsMargins(0, 0, 0, 0)
+        schedule_layout.setHorizontalSpacing(14)
+        schedule_layout.setVerticalSpacing(10)
+        schedule_outer.addLayout(schedule_layout)
         
         # Enable scheduling
         self.schedule_enabled_check = QCheckBox("Enable automatic scheduling for this job")
@@ -1554,11 +1659,15 @@ class BackupJobDialog(FramedDialog):
         # Container for schedule settings (enabled/disabled based on checkbox)
         self.schedule_settings_widget = QWidget()
         schedule_settings_layout = QFormLayout()
+        schedule_settings_layout.setContentsMargins(0, 0, 0, 0)
+        schedule_settings_layout.setHorizontalSpacing(14)
+        schedule_settings_layout.setVerticalSpacing(10)
         self.schedule_settings_widget.setLayout(schedule_settings_layout)
         
         # Frequency
         self.frequency_combo = QComboBox()
         self.frequency_combo.setToolTip("How often to run the backup job")
+        self.frequency_combo.setMinimumHeight(34)
         self.frequency_combo.setFixedWidth(150)
         self.frequency_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         
@@ -1571,6 +1680,7 @@ class BackupJobDialog(FramedDialog):
         # Time
         self.time_edit = QTimeEdit()
         self.time_edit.setToolTip("Time to run the backup job")
+        self.time_edit.setMinimumHeight(34)
         self.time_edit.setFixedWidth(150)
         self.time_edit.setCursor(Qt.CursorShape.PointingHandCursor)
         
@@ -1586,6 +1696,7 @@ class BackupJobDialog(FramedDialog):
         
         # Days (for weekly)
         days_layout = QHBoxLayout()
+        days_layout.setSpacing(6)
         self.day_checkboxes = {}
         days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         selected_days = []
@@ -1601,6 +1712,7 @@ class BackupJobDialog(FramedDialog):
                 cb.setChecked(True)
             self.day_checkboxes[day] = cb
             days_layout.addWidget(cb)
+        days_layout.addStretch()
         
         self.days_widget = QWidget()
         self.days_widget.setLayout(days_layout)
@@ -1610,7 +1722,8 @@ class BackupJobDialog(FramedDialog):
         # Day of month (for monthly)
         self.day_of_month_spin = QSpinBox()
         self.day_of_month_spin.setToolTip("Day of the month to run the backup (1-31)")
-        self.day_of_month_spin.setFixedWidth(60)
+        self.day_of_month_spin.setMinimumHeight(34)
+        self.day_of_month_spin.setFixedWidth(80)
         self.day_of_month_spin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.day_of_month_spin.setMinimum(1)
         self.day_of_month_spin.setMaximum(28) # Limit to 28 to avoid issues with shorter months
@@ -1645,26 +1758,33 @@ class BackupJobDialog(FramedDialog):
         self.frequency_combo.currentTextChanged.connect(self.update_schedule_ui)
         self.schedule_enabled_check.stateChanged.connect(self.update_schedule_ui)
         
-        layout.addWidget(schedule_group)
+        layout.addWidget(schedule_card)
+        layout.addStretch(1)
         
         # Initial UI state
         self.update_schedule_ui()
         
-        # Buttons (outside scroll area, always visible at bottom)
-        button_layout = QHBoxLayout()
+        # Footer actions — always visible below the scroll area
+        footer = QFrame()
+        footer.setObjectName("backupJobFooter")
+        button_layout = QHBoxLayout(footer)
+        button_layout.setContentsMargins(16, 10, 16, 12)
+        button_layout.setSpacing(8)
         button_layout.addStretch()
         
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        button_layout.addWidget(buttons)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("dialogSecondary")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_btn)
+
+        ok_btn = QPushButton("OK")
+        ok_btn.setObjectName("dialogPrimary")
+        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ok_btn.clicked.connect(self.accept)
+        button_layout.addWidget(ok_btn)
         
-        button_wrap = QWidget()
-        button_wrap.setLayout(button_layout)
-        button_layout.setContentsMargins(16, 8, 16, 12)
-        main_layout.addWidget(button_wrap)
+        main_layout.addWidget(footer)
     
     def update_schedule_ui(self):
         """Update schedule UI based on selections"""
@@ -4176,32 +4296,25 @@ class ResticManagerWindow(QMainWindow):
             should_initialize = repo_data.pop("initialize", False)
             
             if should_initialize:
-                # Show progress dialog (non-modal so UI doesn't freeze)
-                self._add_repo_progress = QDialog(self)
-                self._add_repo_progress.setWindowTitle("Initializing Repository")
-                self._add_repo_progress.setModal(False)  # Non-modal to prevent UI freeze
-                self._add_repo_progress.setMinimumWidth(500)
-                self._add_repo_progress.setMinimumHeight(300)
-                
-                progress_layout = QVBoxLayout()
-                self._add_repo_progress.setLayout(progress_layout)
-                
-                progress_label = QLabel(
-                    f"Initializing repository '{repo_data['name']}'...\n\n"
-                    f"Please wait while the repository is being created."
+                # Show framed progress dialog (non-modal so UI doesn't freeze)
+                self._add_repo_progress, _, _ = make_framed_progress_dialog(
+                    self,
+                    "Initializing Repository",
+                    (
+                        f"Initializing repository “{repo_data['name']}”…\n"
+                        "Please wait while the repository is being created."
+                    ),
+                    modal=False,
+                    min_width=500,
+                    min_height=320,
                 )
-                progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                progress_layout.addWidget(progress_label)
-                
-                progress_bar = QProgressBar()
-                progress_bar.setRange(0, 0)  # Indeterminate progress
-                progress_layout.addWidget(progress_bar)
+                progress_layout = self._add_repo_progress.body_layout
                 
                 # Add output text area to show real-time progress
                 output_text = QPlainTextEdit()
                 output_text.setReadOnly(True)
                 output_text.setPlaceholderText("Waiting for initialization to start...")
-                output_text.setMaximumHeight(150)
+                output_text.setMinimumHeight(140)
                 progress_layout.addWidget(output_text)
                 
                 # Store reference to output text
@@ -4209,6 +4322,8 @@ class ResticManagerWindow(QMainWindow):
                 
                 # Add close button
                 close_btn = QPushButton("Close (initialization continues in background)")
+                close_btn.setObjectName("dialogSecondary")
+                close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 close_btn.clicked.connect(self._add_repo_progress.accept)
                 progress_layout.addWidget(close_btn)
                 
@@ -4277,6 +4392,10 @@ class ResticManagerWindow(QMainWindow):
         
         if success:
             # Add repository to list
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            repo_data["last_checked"] = stamp
+            repo_data["check_status"] = "healthy"
+            repo_data.pop("check_error", None)
             repositories = self.settings_manager.get("repositories")
             repositories.append(repo_data)
             themes.ensure_repo_colors(repositories)
@@ -4327,6 +4446,7 @@ class ResticManagerWindow(QMainWindow):
             self,
             on_edit=self.edit_repository_by_name,
             on_delete=self.delete_repository_by_name,
+            on_check=self.check_repository_by_name,
         )
 
     def _ensure_repository_colors(self) -> None:
@@ -4352,6 +4472,78 @@ class ResticManagerWindow(QMainWindow):
         index = self._repository_index_by_name(name)
         if index >= 0:
             self.delete_repository(index)
+
+    def check_repository_by_name(self, name: str) -> None:
+        """Run a quick connectivity check and update Status / Last Checked."""
+        index = self._repository_index_by_name(name)
+        if index < 0:
+            return
+        repositories = self.settings_manager.get("repositories") or []
+        repo = repositories[index]
+        path = repo.get("path") or ""
+        if not path:
+            QMessageBox.warning(self, "Check Connection", "Repository has no path configured.")
+            return
+
+        password = ""
+        if repo.get("password"):
+            try:
+                password = self.settings_manager.password_manager.decrypt(repo["password"])
+            except Exception:
+                password = ""
+
+        progress, _, _ = make_framed_progress_dialog(
+            self,
+            "Checking Connection",
+            f"Checking “{name}”…\nPlease wait.",
+            min_width=400,
+        )
+        progress.show()
+        QApplication.processEvents()
+
+        env = {"RESTIC_PASSWORD": password} if password else {}
+        args = ["-r", path, "snapshots", "--latest", "1"]
+        worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
+
+        def _done(success, stdout, stderr, idx=index, repo_name=name, dlg=progress):
+            try:
+                dlg.close()
+                dlg.deleteLater()
+            except Exception:
+                pass
+            repos = self.settings_manager.get("repositories") or []
+            if not (0 <= idx < len(repos)) or repos[idx].get("name") != repo_name:
+                return
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            repos[idx]["last_checked"] = stamp
+            if success:
+                repos[idx]["check_status"] = "healthy"
+                repos[idx].pop("check_error", None)
+                self.log(f"Repository check OK: {repo_name}")
+                show_notification(
+                    title="Repository Healthy",
+                    message=f"“{repo_name}” is reachable.",
+                    icon_type="success",
+                    duration="short",
+                )
+            else:
+                err = (stderr or "Unknown error").strip()
+                repos[idx]["check_status"] = "unreachable"
+                repos[idx]["check_error"] = err[:500]
+                self.log(f"Repository check failed: {repo_name}: {err}")
+                show_notification(
+                    title="Repository Unreachable",
+                    message=f"“{repo_name}” check failed.",
+                    icon_type="error",
+                    duration="long",
+                )
+            self.settings_manager.set("repositories", repos)
+            self.settings_manager.save_settings()
+            self.refresh_repository_list()
+
+        worker.finished.connect(_done)
+        worker.start()
+        self._repo_check_worker = worker  # prevent GC
     
     def edit_repository(self, index):
         """Edit repository at index"""
@@ -7926,6 +8118,8 @@ class ResticManagerWindow(QMainWindow):
                 self.scheduler_manager.delete_scheduled_task(job_data["name"])
             
             self.refresh_backup_jobs_list()
+            if hasattr(self, "refresh_dashboard_jobs_table"):
+                self.refresh_dashboard_jobs_table()
             self.log(f"Updated backup job: {job_data['name']}")
             QMessageBox.information(self, "Job Updated", f"Backup job '{job_data['name']}' updated successfully!")
     
@@ -7946,6 +8140,8 @@ class ResticManagerWindow(QMainWindow):
             self.settings_manager.set("backup_jobs", jobs)
             self.settings_manager.save_settings()
             self.refresh_backup_jobs_list()
+            if hasattr(self, "refresh_dashboard_jobs_table"):
+                self.refresh_dashboard_jobs_table()
             self.log(f"Deleted backup job and scheduled task: {job['name']}")
     
     def run_backup_job(self, job):

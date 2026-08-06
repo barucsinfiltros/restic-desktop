@@ -4,12 +4,13 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -22,6 +23,11 @@ from ui.charts import DonutChart, RoundedBarChart
 from ui.table_helpers import SortableTableItem, TableRowHover, make_repo_icon_cell
 
 import themes
+
+# Persist job identity on cells (survives display text / sort)
+_JOB_NAME_ROLE = int(Qt.ItemDataRole.UserRole) + 90
+_SNAPSHOT_ID_ROLE = int(Qt.ItemDataRole.UserRole) + 91
+_REPO_TEXT_ROLE = int(Qt.ItemDataRole.UserRole) + 92
 
 
 def create_dashboard_page(
@@ -164,6 +170,14 @@ def create_dashboard_page(
         paint_background=False,
         lighten_amount=0.08,
     )
+    host.dashboard_jobs_table.setContextMenuPolicy(
+        Qt.ContextMenuPolicy.CustomContextMenu
+    )
+    host.dashboard_jobs_table.customContextMenuRequested.connect(
+        lambda pos, t=host.dashboard_jobs_table: show_jobs_context_menu(
+            host, t.viewport().mapToGlobal(pos)
+        )
+    )
 
     # Rounded inset shell so header + rows share one bordered box (mock style)
     jobs_shell = QFrame()
@@ -283,6 +297,135 @@ def format_relative_time_short(value: str) -> str:
     return full.split(" (", 1)[0]
 
 
+def _job_from_table_row(host: Any, row: int) -> tuple[dict | None, str, str]:
+    """Return (job_dict_or_None, job_name, snapshot_id) for a dashboard jobs row."""
+    table = getattr(host, "dashboard_jobs_table", None)
+    if table is None or row < 0:
+        return None, "", ""
+    name_item = table.item(row, 1)
+    snap_item = table.item(row, 5)
+    job_name = ""
+    if name_item is not None:
+        job_name = str(name_item.data(_JOB_NAME_ROLE) or name_item.text() or "").strip()
+    snap_id = ""
+    if snap_item is not None:
+        snap_id = str(
+            snap_item.data(_SNAPSHOT_ID_ROLE) or snap_item.text() or ""
+        ).strip()
+        if snap_id == "—":
+            snap_id = ""
+    job = None
+    if job_name and hasattr(host, "settings_manager"):
+        jobs = host.settings_manager.get("backup_jobs") or []
+        job = next((j for j in jobs if j.get("name") == job_name), None)
+    return job, job_name, snap_id
+
+
+def show_jobs_context_menu(host: Any, global_pos) -> None:
+    """Right-click menu for Recent Backup Jobs rows."""
+    from rounded_menu import RoundedMenu
+
+    table = getattr(host, "dashboard_jobs_table", None)
+    if table is None:
+        return
+    index = table.indexAt(table.viewport().mapFromGlobal(global_pos))
+    if not index.isValid():
+        return
+    row = index.row()
+    table.selectRow(row)
+    job, job_name, snap_id = _job_from_table_row(host, row)
+    if not job_name:
+        return
+
+    menu = RoundedMenu(table)
+    run_act = menu.addAction("Run job")
+    edit_act = menu.addAction("Edit job")
+    menu.addSeparator()
+    copy_act = menu.addAction("Copy snapshot ID")
+    copy_act.setEnabled(bool(snap_id))
+    details_act = menu.addAction("Last run details…")
+    chosen = menu.exec(global_pos)
+    if chosen is None:
+        return
+
+    if chosen is run_act:
+        if job is None:
+            QMessageBox.warning(table, "Job Not Found", f"Job '{job_name}' was not found.")
+            return
+        if hasattr(host, "run_backup_job"):
+            host.run_backup_job(job)
+        return
+
+    if chosen is edit_act:
+        if job is None:
+            QMessageBox.warning(table, "Job Not Found", f"Job '{job_name}' was not found.")
+            return
+        if hasattr(host, "edit_backup_job"):
+            host.edit_backup_job(job)
+            if hasattr(host, "refresh_dashboard_jobs_table"):
+                host.refresh_dashboard_jobs_table()
+        return
+
+    if chosen is copy_act:
+        if not snap_id:
+            return
+        QGuiApplication.clipboard().setText(snap_id)
+        if hasattr(host, "log"):
+            host.log(f"Copied snapshot ID: {snap_id}")
+        return
+
+    if chosen is details_act:
+        _show_last_run_details(host, job_name, parent=table)
+
+
+def _show_last_run_details(host: Any, job_name: str, *, parent=None) -> None:
+    """Show the latest job_runs row for a job."""
+    try:
+        import history_db
+    except ImportError:
+        QMessageBox.information(parent, "Last Run Details", "History database is not available.")
+        return
+
+    db_path = None
+    if hasattr(host, "_history_db_path"):
+        try:
+            db_path = host._history_db_path()
+        except Exception:
+            db_path = None
+    try:
+        row = history_db.get_latest_job_run(job_name, db_path=db_path)
+    except Exception as exc:
+        QMessageBox.warning(parent, "Last Run Details", f"Could not read history:\n{exc}")
+        return
+
+    if not row:
+        QMessageBox.information(
+            parent,
+            "Last Run Details",
+            f"No recorded runs for '{job_name}' yet.\n\n"
+            "Run the job from the GUI, CLI, or a scheduled task to create history.",
+        )
+        return
+
+    status = "Success" if row.get("success") else "Failed"
+    duration = history_db.format_duration(row.get("duration_sec"))
+    error = (row.get("error_summary") or "").strip() or "—"
+    snap = (row.get("snapshot_short_id") or "").strip() or "—"
+    lines = [
+        f"Job: {row.get('job_name') or job_name}",
+        f"Repository: {row.get('repo_name') or '—'}",
+        f"Status: {status}",
+        f"Duration: {duration}",
+        f"Started: {row.get('started_at') or '—'}",
+        f"Finished: {row.get('finished_at') or '—'}",
+        f"Source: {row.get('source') or '—'}",
+        f"Exit code: {row.get('exit_code') if row.get('exit_code') is not None else '—'}",
+        f"Snapshot: {snap}",
+        f"Error: {error}",
+    ]
+    QMessageBox.information(parent, "Last Run Details", "\n".join(lines))
+
+
 def populate_jobs_table(host: Any) -> None:
     """Fill dashboard jobs table from settings_manager backup_jobs."""
     table = getattr(host, "dashboard_jobs_table", None)
@@ -333,8 +476,12 @@ def populate_jobs_table(host: Any) -> None:
         app_theme = themes.get_app_theme(theme_id)
         # Soft secondary text: theme muted, nudged slightly toward primary for readability.
         muted = themes._mix_hex(app_theme.muted, app_theme.text, 0.18)
+        success_color = app_theme.ok
+        failed_color = app_theme.danger
     except Exception:
         muted = "#9aa3b2"
+        success_color = "#22c55e"
+        failed_color = "#ef4444"
     muted_color = QColor(muted)
 
     def _format_size(nbytes: int) -> str:
@@ -431,12 +578,22 @@ def populate_jobs_table(host: Any) -> None:
             )
             if col == 0:
                 item.setData(Qt.ItemDataRole.UserRole, repo_text.lower())
+                item.setData(_JOB_NAME_ROLE, job_name)
+                item.setData(_REPO_TEXT_ROLE, repo_text)
+            elif col == 1:
+                item.setData(_JOB_NAME_ROLE, job_name)
             elif col == 2:
                 item.setData(Qt.ItemDataRole.UserRole, status_rank.get(status, 0))
+                item.setData(_JOB_NAME_ROLE, job_name)
             elif col == 3:
                 item.setData(Qt.ItemDataRole.UserRole, duration_sec)
             elif col == 4:
                 item.setData(Qt.ItemDataRole.UserRole, last_sort)
+            elif col == 5:
+                item.setData(
+                    _SNAPSHOT_ID_ROLE,
+                    snap_full or (snap_short if snap_short and snap_short != "—" else ""),
+                )
             elif col == 6:
                 item.setData(Qt.ItemDataRole.UserRole, size_bytes)
             if col == 1:
@@ -444,11 +601,11 @@ def populate_jobs_table(host: Any) -> None:
                 item.setData(TableRowHover.BASE_FG_ROLE, muted)
                 item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
             if col == 2 and status == "Success":
-                item.setForeground(Qt.GlobalColor.green)
-                item.setData(TableRowHover.LOCKED_FG_ROLE, "#22c55e")
+                item.setForeground(QColor(success_color))
+                item.setData(TableRowHover.LOCKED_FG_ROLE, success_color)
             elif col == 2 and status == "Failed":
-                item.setForeground(QColor("#ef4444"))
-                item.setData(TableRowHover.LOCKED_FG_ROLE, "#ef4444")
+                item.setForeground(QColor(failed_color))
+                item.setData(TableRowHover.LOCKED_FG_ROLE, failed_color)
             if col == 3:
                 item.setForeground(muted_color)
                 item.setData(TableRowHover.BASE_FG_ROLE, muted)
@@ -474,15 +631,16 @@ def populate_jobs_table(host: Any) -> None:
                 item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
             table.setItem(row, col, item)
 
-        table.setCellWidget(
-            row,
-            0,
-            make_repo_icon_cell(
-                list(repos),
-                lambda n, repos=repositories: themes.repo_color_for_name(n, repos),
-                parent=table,
-            ),
+        repo_cell = make_repo_icon_cell(
+            list(repos),
+            lambda n, repos=repositories: themes.repo_color_for_name(n, repos),
+            parent=table,
         )
+        repo_cell.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        repo_cell.customContextMenuRequested.connect(
+            lambda pos, w=repo_cell: show_jobs_context_menu(host, w.mapToGlobal(pos))
+        )
+        table.setCellWidget(row, 0, repo_cell)
     table.setSortingEnabled(was_sorting)
     if was_sorting:
         table.sortItems(sort_col, sort_order)

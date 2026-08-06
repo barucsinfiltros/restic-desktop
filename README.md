@@ -4,6 +4,14 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 ## What's New in Recent Updates
 
+### Repository Health Status ✨ NEW
+- 🟢 **Status column**: Configured Repositories shows ● Healthy / ● Warning / ● Unreachable / ● Unknown
+- 🔍 **Real checks**: Status comes from `restic snapshots --latest 1` (not from merely saving the form)
+- ⚠️ **Warning**: Last successful check older than 7 days
+- ⋯ **Actions menu**: Check connection, Edit, Delete (replaces inline Edit | Delete links)
+- 🎨 **Jobs-style table**: Softer headers, muted secondary columns, icon chips matching Recent Backup Jobs
+- 🕒 **Last Checked**: Updated only when a check (or dialog Test) actually runs
+
 ### SQLite History Store ✨ NEW
 - 🗄️ **Job & dashboard history**: Append-only SQLite database (`restic_history.db`) beside `restic_settings.json`
 - ⏱️ **Run duration**: Every GUI, CLI (`--run-job`), and Windows scheduled backup records start/finish, duration, success/fail, and a short error summary
@@ -12,6 +20,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 🔁 **Scheduled Windows tasks**: Generated PowerShell scripts call `python restic_manager.py --record-job-run …` after restic exits (no SQLite in PowerShell)
 - 🛠️ **Stdlib only**: Uses Python’s built-in `sqlite3` (`history_db.py`) — no new package dependencies
 - 📌 **Settings stay JSON**: Config remains in `restic_settings.json`; history/time-series data lives in the DB
+- 🖱️ **Jobs context menu**: Right-click a Recent Backup Jobs row for Run, Edit, Copy snapshot ID, Last run details
 
 ### Automated Backup Scheduling ✨ NEW
 - 📅 **Task Scheduler Integration**: Create scheduled tasks to automatically run backup jobs
@@ -219,13 +228,18 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - **Responsive Layout**: Proper sizing and scroll areas
 
 #### Repository Management ✅ FULLY IMPLEMENTED
+- **Configured Repositories table**:
+  - Name with coloured repository icon chip (same style as Dashboard → Recent Backup Jobs)
+  - **Status**: Healthy / Warning / Unreachable / Unknown (from real connectivity checks)
+  - Path, Type, Last Checked
+  - **⋯ menu**: Check connection, Edit, Delete
 - **Full Add/Edit Repository Dialog**:
   - Support for local, SFTP, S3, B2, Azure, GS, REST repositories
   - Repository name and type selection
   - Path/URL input with browse button for local paths
   - **Encrypted password field** with show/hide toggle
   - **Initialize repository option** with real-time progress dialog
-  - **Test connection button** - validates repository access with `restic snapshots --latest 1`
+  - **Test connection button** - validates repository access with `restic snapshots --latest 1` and updates Status
   - Edit existing repositories
   - Delete repositories with confirmation
 - **Windows UTF-8 Support**: Subprocess encoding fix for non-ASCII characters in Restic output
@@ -706,7 +720,16 @@ On first run, the application requires a valid license key:
    - Enter **Password** (will be encrypted automatically)
    - Check **Show password** if you want to verify it
    - Optionally check **Initialize repository now** for new repos
-4. Click **OK**
+4. Optionally click **Test** to verify the path and password (updates Status when you save)
+5. Click **OK**
+
+**Repository Status:** In the Configured Repositories table, use **⋯ → Check connection** to refresh Status and Last Checked. Status values:
+- **Healthy** — last check succeeded
+- **Warning** — last success was more than 7 days ago
+- **Unreachable** — last check failed
+- **Unknown** — not checked yet
+
+### Creating a Backup Job
 scrollable dialog:
    - Enter a **Job Name** (e.g., "Daily Documents Backup")
    - Select your repository from the dropdown
