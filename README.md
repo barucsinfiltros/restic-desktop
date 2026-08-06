@@ -30,7 +30,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 📊 **Recent Backup Jobs**: New **Duration** column (`HH:MM:SS`); **Status** comes from the last recorded run (Success / Failed / Scheduled / Ready) — failed runs no longer look like Success
 - 💾 **Dashboard cache**: Refresh samples per-repo size/snapshot counts into `repo_stats` and upserts a `dashboard_cache` blob so the next launch paints cards and charts immediately
 - 🔁 **Scheduled Windows tasks**: Generated PowerShell scripts call `python restic_manager.py --record-job-run …` after restic exits (no SQLite in PowerShell)
-- 🛠️ **Stdlib only**: Uses Python’s built-in `sqlite3` (`history_db.py`) — no new package dependencies
+- 🛠️ **Stdlib only**: Uses Python’s built-in `sqlite3` (`core/history_db.py`) — no new package dependencies
 - 📌 **Settings stay JSON**: Config remains in `restic_settings.json`; history/time-series data lives in the DB
 - 🖱️ **Jobs context menu**: Right-click a Recent Backup Jobs row for Run, Edit, Copy snapshot ID, Last run details
 
@@ -175,7 +175,7 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 #### Core Infrastructure
 - **Settings Manager**: JSON-based settings storage (restic_settings.json)
-- **History Database**: SQLite store (`restic_history.db`) for job runs, repo stats samples, and dashboard cache (`history_db.py`)
+- **History Database**: SQLite store (`restic_history.db`) for job runs, repo stats samples, and dashboard cache (`core/history_db.py`)
 - **License System**: Machine-bound license key activation (NEW v1.3.0)
   - Cross-platform machine ID generation (Windows, Linux, macOS)
   - HMAC-SHA256 cryptographic signatures prevent forgery
@@ -623,11 +623,11 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 
 ```
 restic_manager.py              # Main application
-history_db.py                  # SQLite history helpers (job runs, repo stats, dashboard cache)
 restic_settings.json           # Settings / config (auto-created in the working directory)
 restic_history.db              # Job history + dashboard cache (auto-created beside settings)
 license.key                    # License key (created after activation)
 scheduled_tasks/               # Generated Windows backup PowerShell scripts + DPAPI password files
+core/                          # Non-UI helpers (SQLite history / job run recording)
 ui/                            # App UI package (themes, title bar, dialogs, pages, charts, …)
 tools/                         # Optional utilities (machine ID checker, license tests)
 icons/                         # App / toolbar SVG + Windows/Linux app icons
@@ -1198,7 +1198,7 @@ def prune_repository(self):
 1. **Settings Storage**: Simple JSON file for configuration only
    - Added `backup_jobs` array for persistent job storage
    - Each job stores full configuration (paths, tags, excludes, advanced options)
-   - **History / time-series** (durations, failures, dashboard samples) live in SQLite `restic_history.db` via `history_db.py`
+   - **History / time-series** (durations, failures, dashboard samples) live in SQLite `restic_history.db` via `core/history_db.py`
 
 2. **Password Security**: Fernet encryption with PBKDF2HMAC key derivation
    - Machine-specific encryption (prevents password portability across machines)

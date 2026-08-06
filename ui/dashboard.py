@@ -383,7 +383,7 @@ def show_jobs_context_menu(host: Any, global_pos) -> None:
 def _show_last_run_details(host: Any, job_name: str, *, parent=None) -> None:
     """Show the latest job_runs row for a job."""
     try:
-        import history_db
+        import core.history_db as history_db
     except ImportError:
         QMessageBox.information(parent, "Last Run Details", "History database is not available.")
         return
@@ -444,7 +444,7 @@ def populate_jobs_table(host: Any) -> None:
 
     latest_runs: dict = {}
     try:
-        import history_db
+        import core.history_db as history_db
 
         db_path = None
         if hasattr(host, "_history_db_path"):
@@ -539,7 +539,7 @@ def populate_jobs_table(host: Any) -> None:
         duration_sec = -1.0
         if last_hist is not None:
             try:
-                import history_db as _history_db
+                import core.history_db as _history_db
 
                 duration_text = _history_db.format_duration(last_hist.get("duration_sec"))
             except Exception:

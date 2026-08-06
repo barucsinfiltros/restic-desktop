@@ -16,7 +16,8 @@ a = Analysis(
     binaries=[],
     datas=[('icons', 'icons')],
     hiddenimports=[
-        'history_db',
+        'core',
+        'core.history_db',
         'ui',
         'ui.themes',
         'ui.title_bar',

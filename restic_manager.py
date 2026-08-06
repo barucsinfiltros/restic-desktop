@@ -43,7 +43,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # Import theme + chrome modules
 import ui.themes as themes
-import history_db
+import core.history_db as history_db
 from ui.title_bar import TitleBar
 from ui.framed_dialog import FramedDialog
 from ui.rounded_menu import RoundedMenu
