@@ -34,7 +34,7 @@ class TitleBar(QWidget):
     def __init__(
         self,
         window: QWidget,
-        title: str = "Restic Manager",
+        title: str = "Restic Desktop",
         parent=None,
         *,
         show_minimize: bool = True,

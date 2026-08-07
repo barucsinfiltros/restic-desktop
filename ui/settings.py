@@ -352,7 +352,7 @@ def create_settings_page(host: Any) -> QWidget:
     if sys.platform == "win32":
         storage_info = (
             "Password hash is stored in the Windows Registry "
-            "(HKCU\\Software\\ResticManager). "
+            "(HKCU\\Software\\ResticDesktop). "
         )
     else:
         storage_info = "Password hash is stored in the application settings file. "
@@ -480,7 +480,7 @@ def create_settings_page(host: Any) -> QWidget:
     # ── About ────────────────────────────────────────────────────
     about_card = SectionCard("About", parent=content)
     about = QLabel(
-        f"Restic Backup Manager {VERSION}\n"
+        f"Restic Desktop {VERSION}\n"
         f"© {YEAR}\n\n"
         "A PyQt6 GUI for managing Restic backups",
         about_card,

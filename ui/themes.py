@@ -2482,7 +2482,7 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 11px;
         }}
 
-        /* Restic Manager — modern nav + dashboard cards */
+        /* Restic Desktop — modern nav + dashboard cards */
         #navSidebar {{
             background-color: {t.sidebar};
             border-right: 1px solid {t.border};
@@ -3254,7 +3254,7 @@ def prefer_ui_font():
     return "Segoe UI"
 
 # ---------------------------------------------------------------------------
-# Restic Manager compatibility helpers
+# Restic Desktop compatibility helpers
 # ---------------------------------------------------------------------------
 
 # Map legacy QDarkStyle theme ids → new AppTheme ids.

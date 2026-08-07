@@ -39,7 +39,7 @@ class NavSidebar(QFrame):
     def __init__(
         self,
         *,
-        app_name: str = "Restic Backup Manager",
+        app_name: str = "Restic Desktop",
         version: str = "",
         year: str = "",
         muted: str = "#8b95a5",
