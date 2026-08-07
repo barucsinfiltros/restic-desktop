@@ -1615,6 +1615,28 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: {t.accent};
             border-color: {t.accent};
         }}
+        QRadioButton {{
+            color: {t.text};
+            spacing: 8px;
+            background: transparent;
+        }}
+        QRadioButton::indicator {{
+            width: 14px;
+            height: 14px;
+            border-radius: 8px;
+            border: 1px solid {t.border};
+            background-color: {t.surface};
+        }}
+        QRadioButton::indicator:hover {{
+            border-color: {t.accent};
+        }}
+        QRadioButton::indicator:checked {{
+            background-color: {t.accent};
+            border-color: {t.accent};
+        }}
+        QRadioButton:disabled {{
+            color: {t.muted};
+        }}
         QComboBox {{
             padding: 4px 26px 4px 8px;
             min-height: 18px;
