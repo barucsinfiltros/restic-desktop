@@ -1,5 +1,5 @@
 """
-License Key Generator for Restic Backup Manager
+License Key Generator for Restic Desktop
 Version: 1.0.0
 
 This script generates license keys tied to specific machine IDs.
@@ -54,7 +54,7 @@ def generate_license_key(machine_id: str, expiry_days: int = None) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate license keys for Restic Backup Manager',
+        description='Generate license keys for Restic Desktop',
         formatter_class=argparse.RawTextHelpFormatter
     )
     
