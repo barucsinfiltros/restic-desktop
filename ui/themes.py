@@ -1947,6 +1947,15 @@ def build_stylesheet(theme: AppTheme) -> str:
             border-bottom-left-radius: 0px;
             border-bottom-right-radius: 0px;
         }}
+        #framedMessageDetails {{
+            background-color: {t.surface};
+            color: {t.text};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+            padding: 8px;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 11px;
+        }}
         #backupJobFooter {{
             background-color: {t.surface};
             border-top: 1px solid {t.border};

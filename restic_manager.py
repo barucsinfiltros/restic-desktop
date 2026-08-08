@@ -574,6 +574,37 @@ def make_framed_progress_dialog(
     return dlg, label, bar
 
 
+def _clean_restic_check_log(text: str, *, max_lines: int = 80) -> str:
+    """Keep useful check output; drop intermediate progress spam."""
+    import re
+
+    progress_re = re.compile(
+        r"\[\d+:\d+(?::\d+)?\]\s+\d+(?:\.\d+)?%\s+\d+\s*/\s*\d+",
+        re.IGNORECASE,
+    )
+    kept: list[str] = []
+    last_progress: dict[str, str] = {}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if progress_re.search(line):
+            # Keep only the latest progress line per phase prefix
+            key = "packs" if "pack" in line.lower() else (
+                "snapshots" if "snapshot" in line.lower() else "progress"
+            )
+            last_progress[key] = line
+            continue
+        kept.append(line)
+    # Append final progress snapshots at the end
+    for key in ("snapshots", "packs", "progress"):
+        if key in last_progress:
+            kept.append(last_progress[key])
+    if len(kept) > max_lines:
+        kept = kept[: max_lines - 1] + ["…"]
+    return "\n".join(kept)
+
+
 def show_framed_message(
     parent,
     title: str,
@@ -582,12 +613,14 @@ def show_framed_message(
     kind: str = "warning",
     buttons: str = "ok",
     min_width: int = 420,
+    details: str = "",
 ) -> bool:
     """
     Framed alert dialog matching app chrome.
 
     kind: \"info\" | \"warning\" | \"error\"
     buttons: \"ok\" | \"yes_no\"
+    details: optional scrollable log / long text under the message
     Returns True for OK/Yes, False for No/Cancel.
     """
     dlg = FramedDialog(
@@ -598,13 +631,17 @@ def show_framed_message(
         modal=True,
     )
     dlg.setMinimumWidth(min_width)
-    dlg.setMaximumWidth(max(min_width + 120, 560))
+    if details:
+        dlg.setMinimumWidth(max(min_width, 560))
+        dlg.resize(620, 480)
+        dlg.setMaximumWidth(900)
+        dlg.setMaximumHeight(720)
+    else:
+        dlg.setMaximumWidth(max(min_width + 120, 560))
     dlg.body_layout.setContentsMargins(20, 16, 20, 20)
     dlg.body_layout.setSpacing(14)
 
-    heading = title
-
-    title_lbl = QLabel(heading)
+    title_lbl = QLabel(title)
     title_lbl.setObjectName("pageTitle")
     title_lbl.setStyleSheet("font-size: 18px;")
     title_lbl.setWordWrap(True)
@@ -614,6 +651,15 @@ def show_framed_message(
     body.setObjectName("pageSubtitle")
     body.setWordWrap(True)
     dlg.body_layout.addWidget(body)
+
+    if details:
+        log = QPlainTextEdit()
+        log.setObjectName("framedMessageDetails")
+        log.setReadOnly(True)
+        log.setPlainText(details)
+        log.setMinimumHeight(180)
+        log.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        dlg.body_layout.addWidget(log, stretch=1)
 
     footer = QHBoxLayout()
     footer.setSpacing(8)
@@ -1098,6 +1144,7 @@ class ResticCommand:
         
         NOTE: Uses a ring buffer (maxlen=1000) to prevent memory overflow on large backups.
         Only the most recent 1000 lines are kept in memory.
+        Progress lines that use carriage-return (\\r) updates are also forwarded.
         """
         cmd = [self.restic_path] + args
         
@@ -1118,7 +1165,7 @@ class ResticCommand:
                 encoding='utf-8',
                 errors='replace',
                 env={**os.environ, **(env or {})},
-                bufsize=1,  # Line buffered
+                bufsize=0,
                 universal_newlines=True,
                 creationflags=get_subprocess_creation_flags()
             )
@@ -1129,30 +1176,55 @@ class ResticCommand:
             stderr_lines = deque(maxlen=1000)
             stdout_queue = Queue()
             stderr_queue = Queue()
-            
-            # Thread to read stdout
-            def read_stdout():
+
+            def _read_stream(stream, queue):
+                """Forward newline and carriage-return delimited progress chunks."""
                 try:
-                    for line in iter(process.stdout.readline, ''):
-                        if line:
-                            stdout_queue.put(line)
-                    process.stdout.close()
-                except:
-                    pass
-            
-            # Thread to read stderr
-            def read_stderr():
-                try:
-                    for line in iter(process.stderr.readline, ''):
-                        if line:
-                            stderr_queue.put(line)
-                    process.stderr.close()
-                except:
+                    buf = ""
+                    while True:
+                        chunk = stream.read(256)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        while True:
+                            idx_n = buf.find("\n")
+                            idx_r = buf.find("\r")
+                            if idx_n < 0 and idx_r < 0:
+                                break
+                            if idx_n < 0:
+                                idx, skip = idx_r, 1
+                            elif idx_r < 0:
+                                idx, skip = idx_n, 1
+                            elif idx_r + 1 == idx_n:
+                                # \r\n
+                                idx, skip = idx_n, 1
+                                # drop the \r from content by cutting at idx_r
+                                line = buf[:idx_r]
+                                buf = buf[idx_n + 1 :]
+                                if line.strip():
+                                    queue.put(line.rstrip("\r") + "\n")
+                                continue
+                            elif idx_r < idx_n:
+                                idx, skip = idx_r, 1
+                            else:
+                                idx, skip = idx_n, 1
+                            line = buf[:idx]
+                            buf = buf[idx + skip :]
+                            if line.strip():
+                                queue.put(line.rstrip("\r") + "\n")
+                    if buf.strip():
+                        queue.put(buf.rstrip("\r") + "\n")
+                    stream.close()
+                except Exception:
                     pass
             
             # Start reader threads
-            stdout_thread = threading.Thread(target=read_stdout, daemon=True)
-            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stdout_thread = threading.Thread(
+                target=_read_stream, args=(process.stdout, stdout_queue), daemon=True
+            )
+            stderr_thread = threading.Thread(
+                target=_read_stream, args=(process.stderr, stderr_queue), daemon=True
+            )
             stdout_thread.start()
             stderr_thread.start()
             
@@ -1317,41 +1389,75 @@ class ResticWorker(QThread):
             self.finished.emit(False, "", error_msg)
     
     def _parse_progress(self, line: str):
-        """Parse progress line from restic JSON output"""
-        # Always emit the raw line for display in output text
-        self.progress.emit(line)
-        
+        """Parse progress line from restic JSON or human-readable check output."""
+        text = (line or "").strip()
+        if not text:
+            return
+        # Always emit the raw line for display
+        self.progress.emit(text)
+
         try:
-            # Try to parse as JSON for structured progress data
-            data = json.loads(line)
-            
+            data = json.loads(text)
             if data.get("message_type") == "status":
-                # This is a progress update
                 progress_info = {
-                    "percent": data.get("percent_done", 0) * 100,
+                    "percent": float(data.get("percent_done", 0) or 0) * 100,
                     "files_done": data.get("files_done", 0),
                     "total_files": data.get("total_files", 0),
                     "bytes_done": data.get("bytes_done", 0),
                     "total_bytes": data.get("total_bytes", 0),
                     "current_files": data.get("current_files", []),
-                    "eta": data.get("seconds_remaining", 0)
+                    "eta": data.get("seconds_remaining", 0),
+                    "raw": text,
                 }
                 self.progress_data.emit(progress_info)
-            elif data.get("message_type") == "summary":
-                # Final summary - emit 100% completion
+                return
+            if data.get("message_type") == "summary":
                 progress_info = {
                     "percent": 100,
-                    "files_done": data.get("files_new", 0) + data.get("files_changed", 0) + data.get("files_unmodified", 0),
-                    "total_files": data.get("files_new", 0) + data.get("files_changed", 0) + data.get("files_unmodified", 0),
+                    "files_done": data.get("files_new", 0)
+                    + data.get("files_changed", 0)
+                    + data.get("files_unmodified", 0),
+                    "total_files": data.get("files_new", 0)
+                    + data.get("files_changed", 0)
+                    + data.get("files_unmodified", 0),
                     "bytes_done": data.get("total_bytes_processed", 0),
                     "total_bytes": data.get("total_bytes_processed", 0),
                     "current_files": [],
-                    "eta": 0
+                    "eta": 0,
+                    "raw": text,
                 }
                 self.progress_data.emit(progress_info)
-        except json.JSONDecodeError:
-            # Not JSON, line already emitted above
+                return
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
+
+        # Human-readable check / pack progress, e.g.:
+        # [0:12] 45.23%  123 / 272 packs
+        import re
+
+        info: Dict[str, Any] = {"raw": text}
+        pct = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+        packs = re.search(r"(\d+)\s*/\s*(\d+)\s*packs?", text, re.IGNORECASE)
+        elapsed = re.search(r"\[(\d+:\d+(?::\d+)?)\]", text)
+        if pct:
+            try:
+                info["percent"] = float(pct.group(1))
+            except ValueError:
+                pass
+        if packs:
+            try:
+                done = int(packs.group(1))
+                total = int(packs.group(2))
+                info["packs_done"] = done
+                info["packs_total"] = total
+                if "percent" not in info and total > 0:
+                    info["percent"] = (done / total) * 100.0
+            except ValueError:
+                pass
+        if elapsed:
+            info["elapsed"] = elapsed.group(1)
+        if "percent" in info or "packs_done" in info or elapsed:
+            self.progress_data.emit(info)
 
 
 # class MountMonitorThread(QThread):
@@ -7399,12 +7505,21 @@ class ResticManagerWindow(QMainWindow):
         progress.body_layout.addWidget(status)
 
         bar = QProgressBar()
-        bar.setRange(0, 0)  # indeterminate
+        # Data checks get a determinate bar once restic reports % / packs.
+        if ctype in ("partial", "full"):
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setTextVisible(True)
+            bar.setFormat("%p%")
+        else:
+            bar.setRange(0, 0)  # indeterminate for quick metadata check
+            bar.setTextVisible(False)
         bar.setFixedHeight(18)
-        bar.setTextVisible(False)
         progress.body_layout.addWidget(bar)
 
-        detail = QLabel("Working…")
+        detail = QLabel(
+            "Reading pack data…" if ctype in ("partial", "full") else "Checking metadata…"
+        )
         detail.setObjectName("settingsHint")
         detail.setWordWrap(True)
         progress.body_layout.addWidget(detail)
@@ -7419,6 +7534,7 @@ class ResticManagerWindow(QMainWindow):
         progress.body_layout.addLayout(footer)
 
         self._verify_progress = progress
+        self._verify_progress_bar = bar
         self._verify_progress_detail = detail
         progress.show()
         progress.raise_()
@@ -7428,23 +7544,83 @@ class ResticManagerWindow(QMainWindow):
         env = build_repo_env(
             repo, password or "", password_manager=self.settings_manager.password_manager
         )
+        # Force periodic progress lines even when stdout/stderr are pipes (non-TTY).
+        if ctype in ("partial", "full"):
+            env["RESTIC_PROGRESS_FPS"] = "2"
+
         args = repo_restic_prefix(repo) + ["check"]
         if ctype == "partial":
             args.extend(["--read-data-subset=10%"])
         elif ctype == "full":
             args.extend(["--read-data"])
 
+        stream_progress = ctype in ("partial", "full")
         self._verify_worker = ResticWorker(
-            self.restic_cmd, args, env, timeout=timeouts.get(ctype, 1800)
+            self.restic_cmd,
+            args,
+            env,
+            timeout=timeouts.get(ctype, 1800),
+            use_progress=stream_progress,
         )
         self._verify_worker.finished.connect(self._on_verify_complete)
-        if hasattr(self._verify_worker, "progress"):
-            self._verify_worker.progress.connect(
-                lambda msg: self._verify_progress_detail.setText(msg or "Working…")
-                if getattr(self, "_verify_progress_detail", None) is not None
-                else None
-            )
+        if stream_progress:
+            self._verify_worker.progress.connect(self._on_verify_progress_line)
+            self._verify_worker.progress_data.connect(self._on_verify_progress_data)
         self._verify_worker.start()
+
+    def _on_verify_progress_line(self, text: str) -> None:
+        """Show latest restic status text while a check is running."""
+        detail = getattr(self, "_verify_progress_detail", None)
+        if detail is None:
+            return
+        msg = (text or "").strip()
+        if not msg:
+            return
+        # Prefer compact progress lines; keep phase messages too.
+        if len(msg) > 160:
+            msg = msg[:157] + "…"
+        detail.setText(msg)
+
+    def _on_verify_progress_data(self, info: dict) -> None:
+        """Update check progress bar from parsed restic status."""
+        bar = getattr(self, "_verify_progress_bar", None)
+        detail = getattr(self, "_verify_progress_detail", None)
+        if bar is None:
+            return
+        percent = info.get("percent")
+        if percent is not None:
+            try:
+                pct = max(0, min(100, int(float(percent))))
+            except (TypeError, ValueError):
+                pct = 0
+            if bar.maximum() == 0:
+                bar.setRange(0, 100)
+                bar.setTextVisible(True)
+                bar.setFormat("%p%")
+            bar.setValue(pct)
+
+        parts = []
+        if percent is not None:
+            try:
+                parts.append(f"{float(percent):.1f}%")
+            except (TypeError, ValueError):
+                pass
+        if info.get("packs_total"):
+            parts.append(f"{info.get('packs_done', 0)} / {info['packs_total']} packs")
+        if info.get("elapsed"):
+            parts.append(f"elapsed {info['elapsed']}")
+        if info.get("bytes_done") and info.get("total_bytes"):
+            try:
+                parts.append(
+                    f"{self.format_bytes(int(info['bytes_done']))} / "
+                    f"{self.format_bytes(int(info['total_bytes']))}"
+                )
+            except (TypeError, ValueError):
+                pass
+        if detail is not None and parts:
+            detail.setText(" · ".join(parts))
+        elif detail is not None and info.get("raw"):
+            detail.setText(str(info["raw"])[:160])
 
     def verify_repository(self):
         """Legacy entry point — opens check level picker for the dashboard combo repo."""
@@ -7665,6 +7841,7 @@ class ResticManagerWindow(QMainWindow):
                 pass
             self._verify_progress = None
             self._verify_progress_detail = None
+            self._verify_progress_bar = None
 
         msg_parent = getattr(self, "_health_dialog", None) or self
         
@@ -7686,27 +7863,39 @@ class ResticManagerWindow(QMainWindow):
         
         if success:
             check_label = {"quick": "Quick Check", "partial": "Partial Data Check", "full": "Full Data Check"}.get(check_type, "Check")
-            message = f"Repository '{repo_name}' verified successfully!\n\n{check_label} completed.\n\n{(stdout or '')[:400]}"
-            
+            summary = (
+                f"Repository '{repo_name}' verified successfully!\n\n"
+                f"{check_label} completed."
+            )
             if should_rebuild_index:
-                message += "\n\n⚠ Index rebuild recommended."
-            
-            show_framed_message(msg_parent, "Verification Complete", message, kind="info")
+                summary += "\n\n⚠ Index rebuild recommended."
+            details = _clean_restic_check_log(output_combined)
+            show_framed_message(
+                msg_parent,
+                "Verification Complete",
+                summary,
+                kind="info",
+                min_width=560,
+                details=details,
+            )
             self.log(f"Repository {repo_name} verified successfully ({check_type})")
             
             if should_rebuild_index:
                 self.log(f"Warning: Index rebuild recommended for {repo_name}")
         else:
-            error_msg = stderr if stderr else "Unknown error"
+            error_msg = (stderr or stdout or "Unknown error").strip()
+            cleaned = _clean_restic_check_log(error_msg)
             
             if should_rebuild_index:
                 reply = show_framed_message(
                     msg_parent,
                     "Verification Failed — Index Issues",
-                    f"Repository verification failed with index issues:\n\n{error_msg[:400]}\n\n"
+                    "Repository verification failed with index issues.\n\n"
                     "The index may need to be rebuilt. Rebuild now?",
                     kind="warning",
                     buttons="yes_no",
+                    min_width=560,
+                    details=cleaned,
                 )
                 
                 if reply:
@@ -7715,8 +7904,10 @@ class ResticManagerWindow(QMainWindow):
                 show_framed_message(
                     msg_parent,
                     "Verification Failed",
-                    f"Repository verification failed:\n\n{error_msg[:500]}",
+                    f"Repository '{repo_name}' verification failed.",
                     kind="error",
+                    min_width=560,
+                    details=cleaned,
                 )
             
             self.log(f"Repository {repo_name} verification failed: {error_msg}")
