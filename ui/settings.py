@@ -1,10 +1,10 @@
-"""Modern settings page builder."""
+"""Modern settings page builder with in-page section navigation."""
 from __future__ import annotations
 
 import sys
 from typing import Any, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,10 +12,13 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +28,15 @@ from ui.cards import SectionCard
 
 _LABEL_W = 150
 _FIELD_COMPACT_W = 160
+_NAV_W = 188
+
+_SECTIONS = (
+    ("Application", "Paths, theme, refresh, and settings backup."),
+    ("Security", "Optional password required when the app starts."),
+    ("Dependencies", "Check and install required system tools."),
+    ("License", "Activation status and machine identity."),
+    ("About", "Version and application information."),
+)
 
 
 def _secondary_btn(
@@ -88,7 +100,6 @@ def set_settings_status(label: QLabel, text: str, kind: str = "muted") -> None:
         "muted": "settingsStatusMuted",
     }
     label.setObjectName(names.get(kind, "settingsStatusMuted"))
-    # Force stylesheet re-resolve after objectName change
     label.style().unpolish(label)
     label.style().polish(label)
     label.update()
@@ -109,70 +120,58 @@ def _app_password_active(host: Any) -> tuple[bool, str]:
     return False, ""
 
 
-def create_settings_page(host: Any) -> QWidget:
-    """Build the settings page and attach widgets onto ``host``."""
-    from restic_manager import VERSION, YEAR
+def _section_card(parent: QWidget) -> SectionCard:
+    """Surface card without a duplicate section title (page header covers that)."""
+    card = SectionCard("", parent=parent)
+    card.title_label.hide()
+    # Drop the empty header row so body content sits flush under the page title.
+    header_item = card.body.takeAt(0)
+    if header_item is not None:
+        header_layout = header_item.layout()
+        if header_layout is not None:
+            while header_layout.count():
+                child = header_layout.takeAt(0)
+                w = child.widget()
+                if w is not None:
+                    w.setParent(None)
+    return card
 
-    page = QWidget()
-    page.setVisible(False)
-    page.setObjectName("settingsPage")
-    page_layout = QVBoxLayout(page)
-    page_layout.setContentsMargins(0, 0, 0, 0)
-    page_layout.setSpacing(0)
 
-    scroll = QScrollArea(page)
+def _wrap_scroll(inner: QWidget) -> QScrollArea:
+    scroll = QScrollArea()
     scroll.setObjectName("settingsScroll")
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    page_layout.addWidget(scroll)
+    holder = QWidget()
+    holder.setObjectName("settingsScrollContent")
+    hold = QVBoxLayout(holder)
+    hold.setContentsMargins(0, 0, 8, 0)
+    hold.setSpacing(0)
+    hold.addWidget(inner)
+    hold.addStretch(1)
+    scroll.setWidget(holder)
+    return scroll
 
-    content = QWidget()
-    content.setObjectName("settingsScrollContent")
-    layout = QVBoxLayout(content)
-    layout.setContentsMargins(24, 20, 24, 20)
-    layout.setSpacing(16)
 
-    # Header (Save lives on the window title bar)
-    header = QHBoxLayout()
-    header.setSpacing(12)
-    title_col = QVBoxLayout()
-    title_col.setSpacing(2)
-    title = QLabel("Settings", content)
-    title.setObjectName("pageTitle")
-    title_col.addWidget(title)
-    subtitle = QLabel(
-        "Configure application paths, appearance, security, and licensing.",
-        content,
-    )
-    subtitle.setObjectName("pageSubtitle")
-    title_col.addWidget(subtitle)
-    header.addLayout(title_col, stretch=1)
-    layout.addLayout(header)
+def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
+    card = _section_card(parent)
 
-    # ── Application ──────────────────────────────────────────────
-    app_card = SectionCard("Application", parent=content)
-
-    host.restic_path_input = QLineEdit(app_card)
+    host.restic_path_input = QLineEdit(card)
     host.restic_path_input.setText(host.settings_manager.get("restic_path") or "")
     host.restic_path_input.setMinimumHeight(30)
     host.restic_path_input.setSizePolicy(
         QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
     )
-    restic_field = QWidget(app_card)
+    restic_field = QWidget(card)
     restic_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     restic_row = QHBoxLayout(restic_field)
     restic_row.setContentsMargins(0, 0, 0, 0)
     restic_row.setSpacing(8)
     restic_row.addWidget(host.restic_path_input, stretch=1)
     restic_row.addWidget(
-        _secondary_btn(
-            "Browse",
-            host.browse_restic_path,
-            parent=restic_field,
-            min_width=88,
-        ),
+        _secondary_btn("Browse", host.browse_restic_path, parent=restic_field, min_width=88),
         0,
     )
     restic_row.addWidget(
@@ -185,9 +184,9 @@ def create_settings_page(host: Any) -> QWidget:
         ),
         0,
     )
-    app_card.body.addWidget(_form_row("Restic path", restic_field, parent=app_card))
+    card.body.addWidget(_form_row("Restic path", restic_field, parent=card))
 
-    host.theme_combo = QComboBox(app_card)
+    host.theme_combo = QComboBox(card)
     themes.populate_theme_combo(host.theme_combo)
     current_theme_id = themes.resolve_theme_id(host.settings_manager.get("theme"))
     current_theme_name = themes.get_app_theme(current_theme_id).name
@@ -198,19 +197,17 @@ def create_settings_page(host: Any) -> QWidget:
     host.theme_combo.setFixedHeight(30)
     host.theme_combo.setCursor(Qt.CursorShape.PointingHandCursor)
     host.theme_combo.currentTextChanged.connect(host.change_theme)
-    app_card.body.addWidget(
-        _form_row("Theme", host.theme_combo, parent=app_card, compact=True)
-    )
+    card.body.addWidget(_form_row("Theme", host.theme_combo, parent=card, compact=True))
 
-    host.auto_refresh_check = QCheckBox("Enable automatic snapshot refresh", app_card)
+    host.auto_refresh_check = QCheckBox("Enable automatic snapshot refresh", card)
     host.auto_refresh_check.setChecked(
         bool(host.settings_manager.get("auto_refresh_snapshots"))
     )
-    app_card.body.addWidget(
-        _form_row("Auto refresh", host.auto_refresh_check, parent=app_card, compact=True)
+    card.body.addWidget(
+        _form_row("Auto refresh", host.auto_refresh_check, parent=card, compact=True)
     )
 
-    host.refresh_interval_spin = QSpinBox(app_card)
+    host.refresh_interval_spin = QSpinBox(card)
     host.refresh_interval_spin.setMinimum(10)
     host.refresh_interval_spin.setMaximum(3600)
     try:
@@ -221,16 +218,11 @@ def create_settings_page(host: Any) -> QWidget:
     host.refresh_interval_spin.setSuffix(" seconds")
     host.refresh_interval_spin.setFixedWidth(_FIELD_COMPACT_W)
     host.refresh_interval_spin.setFixedHeight(30)
-    app_card.body.addWidget(
-        _form_row(
-            "Refresh interval",
-            host.refresh_interval_spin,
-            parent=app_card,
-            compact=True,
-        )
+    card.body.addWidget(
+        _form_row("Refresh interval", host.refresh_interval_spin, parent=card, compact=True)
     )
 
-    host.log_retention_spin = QSpinBox(app_card)
+    host.log_retention_spin = QSpinBox(card)
     host.log_retention_spin.setMinimum(1)
     host.log_retention_spin.setMaximum(365)
     try:
@@ -244,16 +236,11 @@ def create_settings_page(host: Any) -> QWidget:
     host.log_retention_spin.setToolTip(
         "How long to keep application activity logs in the history database"
     )
-    app_card.body.addWidget(
-        _form_row(
-            "Log retention",
-            host.log_retention_spin,
-            parent=app_card,
-            compact=True,
-        )
+    card.body.addWidget(
+        _form_row("Log retention", host.log_retention_spin, parent=card, compact=True)
     )
 
-    host.temp_restore_path_input = QLineEdit(app_card)
+    host.temp_restore_path_input = QLineEdit(card)
     host.temp_restore_path_input.setText(
         host.settings_manager.get("temp_restore_path") or ""
     )
@@ -261,7 +248,7 @@ def create_settings_page(host: Any) -> QWidget:
     host.temp_restore_path_input.setSizePolicy(
         QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
     )
-    temp_field = QWidget(app_card)
+    temp_field = QWidget(card)
     temp_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     temp_row = QHBoxLayout(temp_field)
     temp_row.setContentsMargins(0, 0, 0, 0)
@@ -276,24 +263,21 @@ def create_settings_page(host: Any) -> QWidget:
         ),
         0,
     )
-    app_card.body.addWidget(
-        _form_row("Temp restore path", temp_field, parent=app_card)
-    )
+    card.body.addWidget(_form_row("Temp restore path", temp_field, parent=card))
 
     temp_hint = QLabel(
         "Used for “Restore to original location” (files are staged here, then moved).",
-        app_card,
+        card,
     )
     temp_hint.setObjectName("settingsHint")
     temp_hint.setWordWrap(True)
-    # Indent under the field column
-    hint_wrap = QWidget(app_card)
+    hint_wrap = QWidget(card)
     hint_row = QHBoxLayout(hint_wrap)
     hint_row.setContentsMargins(_LABEL_W + 12, 0, 0, 0)
     hint_row.addWidget(temp_hint, stretch=1)
-    app_card.body.addWidget(hint_wrap)
+    card.body.addWidget(hint_wrap)
 
-    app_btns = QWidget(app_card)
+    app_btns = QWidget(card)
     app_btns.setObjectName("settingsCardBtns")
     app_btns_row = QHBoxLayout(app_btns)
     app_btns_row.setContentsMargins(0, 8, 0, 0)
@@ -319,13 +303,14 @@ def create_settings_page(host: Any) -> QWidget:
         0,
     )
     app_btns_row.addStretch(1)
-    app_card.body.addWidget(app_btns)
-    layout.addWidget(app_card)
+    card.body.addWidget(app_btns)
+    return card
 
-    # ── Security ─────────────────────────────────────────────────
-    security_card = SectionCard("Security", parent=content)
 
-    status_strip = QFrame(security_card)
+def _build_security_panel(host: Any, parent: QWidget) -> QWidget:
+    card = _section_card(parent)
+
+    status_strip = QFrame(card)
     status_strip.setObjectName("settingsStatusStrip")
     status_strip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     status_strip_row = QHBoxLayout(status_strip)
@@ -337,7 +322,7 @@ def create_settings_page(host: Any) -> QWidget:
     host.password_status_label = QLabel(status_strip)
     host.password_status_label.setObjectName("settingsStatusMuted")
     status_strip_row.addWidget(host.password_status_label, stretch=1)
-    security_card.body.addWidget(status_strip)
+    card.body.addWidget(status_strip)
 
     password_active, storage_suffix = _app_password_active(host)
     if password_active:
@@ -361,14 +346,14 @@ def create_settings_page(host: Any) -> QWidget:
         f"{storage_info}"
         "Protection uses cryptographic hashing. To disable it, authenticate and use "
         "Remove Password.",
-        security_card,
+        card,
     )
     note.setObjectName("settingsNote")
     note.setWordWrap(True)
     note.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-    security_card.body.addWidget(note)
+    card.body.addWidget(note)
 
-    pw_btns = QWidget(security_card)
+    pw_btns = QWidget(card)
     pw_btns_row = QHBoxLayout(pw_btns)
     pw_btns_row.setContentsMargins(0, 4, 0, 0)
     pw_btns_row.setSpacing(8)
@@ -388,18 +373,19 @@ def create_settings_page(host: Any) -> QWidget:
     )
     pw_btns_row.addWidget(host.remove_password_btn, 0)
     pw_btns_row.addStretch(1)
-    security_card.body.addWidget(pw_btns)
-    layout.addWidget(security_card)
+    card.body.addWidget(pw_btns)
+    return card
 
-    # ── Dependencies ─────────────────────────────────────────────
-    deps_card = SectionCard("System Dependencies", parent=content)
 
-    deps_intro = QLabel("Check and install required system dependencies.", deps_card)
+def _build_dependencies_panel(host: Any, parent: QWidget) -> QWidget:
+    card = _section_card(parent)
+
+    deps_intro = QLabel("Check and install required system dependencies.", card)
     deps_intro.setObjectName("settingsHint")
     deps_intro.setWordWrap(True)
-    deps_card.body.addWidget(deps_intro)
+    card.body.addWidget(deps_intro)
 
-    deps_row_w = QWidget(deps_card)
+    deps_row_w = QWidget(card)
     deps_row = QHBoxLayout(deps_row_w)
     deps_row.setContentsMargins(0, 4, 0, 0)
     deps_row.setSpacing(12)
@@ -420,25 +406,26 @@ def create_settings_page(host: Any) -> QWidget:
     )
     host.restic_install_btn.setVisible(False)
     deps_row.addWidget(host.restic_install_btn, 0)
-    deps_card.body.addWidget(deps_row_w)
-    layout.addWidget(deps_card)
+    card.body.addWidget(deps_row_w)
+    return card
 
-    # ── License ──────────────────────────────────────────────────
-    license_card = SectionCard("License", parent=content)
 
-    host.license_status_label = QLabel(license_card)
+def _build_license_panel(host: Any, parent: QWidget) -> QWidget:
+    card = _section_card(parent)
+
+    host.license_status_label = QLabel(card)
     host.license_status_label.setObjectName("settingsStatusMuted")
     host.license_status_label.setWordWrap(True)
-    license_card.body.addWidget(host.license_status_label)
+    card.body.addWidget(host.license_status_label)
 
-    host.machine_id_display = QLineEdit(license_card)
+    host.machine_id_display = QLineEdit(card)
     host.machine_id_display.setReadOnly(True)
     host.machine_id_display.setMinimumHeight(30)
     host.machine_id_display.setObjectName("settingsMachineId")
     host.machine_id_display.setSizePolicy(
         QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
     )
-    mid_field = QWidget(license_card)
+    mid_field = QWidget(card)
     mid_row = QHBoxLayout(mid_field)
     mid_row.setContentsMargins(0, 0, 0, 0)
     mid_row.setSpacing(8)
@@ -447,11 +434,9 @@ def create_settings_page(host: Any) -> QWidget:
         _secondary_btn("Copy", host.copy_machine_id, parent=mid_field, min_width=72),
         0,
     )
-    license_card.body.addWidget(
-        _form_row("Machine ID", mid_field, parent=license_card)
-    )
+    card.body.addWidget(_form_row("Machine ID", mid_field, parent=card))
 
-    lic_btns = QWidget(license_card)
+    lic_btns = QWidget(card)
     lic_btns_row = QHBoxLayout(lic_btns)
     lic_btns_row.setContentsMargins(0, 8, 0, 0)
     lic_btns_row.setSpacing(8)
@@ -474,26 +459,105 @@ def create_settings_page(host: Any) -> QWidget:
         0,
     )
     lic_btns_row.addStretch(1)
-    license_card.body.addWidget(lic_btns)
-    layout.addWidget(license_card)
+    card.body.addWidget(lic_btns)
+    return card
 
-    # ── About ────────────────────────────────────────────────────
-    about_card = SectionCard("About", parent=content)
+
+def _build_about_panel(host: Any, parent: QWidget) -> QWidget:
+    from restic_manager import VERSION, YEAR
+
+    card = _section_card(parent)
     about = QLabel(
         f"Restic Desktop {VERSION}\n"
         f"© {YEAR}\n\n"
         "A PyQt6 GUI for managing Restic backups",
-        about_card,
+        card,
     )
     about.setObjectName("settingsAbout")
     about.setAlignment(Qt.AlignmentFlag.AlignCenter)
     about.setWordWrap(True)
-    about_card.body.addWidget(about)
-    layout.addWidget(about_card)
+    card.body.addWidget(about)
+    return card
 
-    layout.addStretch(1)
-    scroll.setWidget(content)
 
-    # Initialize license display (needs widgets attached)
+def create_settings_page(host: Any) -> QWidget:
+    """Build the settings page with a left section nav and stacked panels."""
+    page = QWidget()
+    page.setVisible(False)
+    page.setObjectName("settingsPage")
+    root = QHBoxLayout(page)
+    root.setContentsMargins(0, 0, 0, 0)
+    root.setSpacing(0)
+
+    # ── Left section rail ────────────────────────────────────────
+    rail = QFrame(page)
+    rail.setObjectName("settingsNavRail")
+    rail.setFixedWidth(_NAV_W)
+    rail.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    rail_layout = QVBoxLayout(rail)
+    rail_layout.setContentsMargins(12, 16, 12, 16)
+    rail_layout.setSpacing(8)
+
+    nav_header = QLabel("SETTINGS", rail)
+    nav_header.setObjectName("settingsNavHeader")
+    rail_layout.addWidget(nav_header)
+
+    nav = QListWidget(rail)
+    nav.setObjectName("settingsNav")
+    nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    nav.setSpacing(2)
+    nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    for name, _hint in _SECTIONS:
+        item = QListWidgetItem(name)
+        item.setSizeHint(QSize(0, 32))
+        nav.addItem(item)
+    rail_layout.addWidget(nav, stretch=1)
+    root.addWidget(rail)
+
+    # ── Right content ────────────────────────────────────────────
+    content = QWidget(page)
+    content.setObjectName("settingsContent")
+    content_layout = QVBoxLayout(content)
+    content_layout.setContentsMargins(24, 18, 24, 20)
+    content_layout.setSpacing(12)
+
+    host._settings_section_title = QLabel(_SECTIONS[0][0], content)
+    host._settings_section_title.setObjectName("pageTitle")
+    content_layout.addWidget(host._settings_section_title)
+
+    host._settings_section_subtitle = QLabel(_SECTIONS[0][1], content)
+    host._settings_section_subtitle.setObjectName("pageSubtitle")
+    host._settings_section_subtitle.setWordWrap(True)
+    content_layout.addWidget(host._settings_section_subtitle)
+
+    stack = QStackedWidget(content)
+    stack.setObjectName("settingsStack")
+    panels = [
+        _build_application_panel(host, content),
+        _build_security_panel(host, content),
+        _build_dependencies_panel(host, content),
+        _build_license_panel(host, content),
+        _build_about_panel(host, content),
+    ]
+    for panel in panels:
+        stack.addWidget(_wrap_scroll(panel))
+    content_layout.addWidget(stack, stretch=1)
+    root.addWidget(content, stretch=1)
+
+    host._settings_nav = nav
+    host._settings_stack = stack
+
+    def _on_nav_changed(row: int) -> None:
+        if row < 0 or row >= len(_SECTIONS):
+            return
+        name, hint = _SECTIONS[row]
+        host._settings_section_title.setText(name)
+        host._settings_section_subtitle.setText(hint)
+        stack.setCurrentIndex(row)
+
+    nav.currentRowChanged.connect(_on_nav_changed)
+    nav.setCurrentRow(0)
+
     host.refresh_license_status()
     return page

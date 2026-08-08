@@ -1924,28 +1924,32 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-style: italic;
         }}
 
-        /* Settings dialog — left rail + content (mirrors main sidebar) */
+        /* Settings page — in-page left rail + stacked panels */
+        #settingsPage {{
+            background-color: {t.bg};
+        }}
         #settingsNavRail {{
-            background-color: {t.sidebar};
+            background-color: {t.surface};
             border-right: 1px solid {t.border};
         }}
         #settingsNavHeader {{
             color: {t.muted};
             font-size: 11px;
             font-weight: 700;
-            letter-spacing: 0.04em;
+            letter-spacing: 0.06em;
             text-transform: uppercase;
-            padding: 0 6px 4px 6px;
+            padding: 0 8px 6px 8px;
         }}
         #settingsNav {{
             background-color: transparent;
             border: none;
             outline: none;
             color: {t.text};
+            font-size: 13px;
         }}
         #settingsNav::item {{
-            padding: 6px 10px;
-            border-radius: 6px;
+            padding: 8px 10px;
+            border-radius: 8px;
             color: {t.muted};
         }}
         #settingsNav::item:hover {{
@@ -1957,6 +1961,7 @@ def build_stylesheet(theme: AppTheme) -> str:
         #settingsNav::item:selected:!active {{
             background-color: {t.accent_soft};
             color: {t.text};
+            font-weight: 600;
         }}
         #settingsContent {{
             background-color: {t.bg};
