@@ -355,6 +355,38 @@ def insert_log(
         return int(cur.lastrowid)
 
 
+def get_recent_job_runs(
+    *,
+    repo_name: Optional[str] = None,
+    limit: int = 8,
+    db_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Most recent job runs, optionally filtered by repository."""
+    migrate(db_path)
+    limit = max(1, min(100, int(limit)))
+    with _connect(db_path) as conn:
+        if repo_name:
+            rows = conn.execute(
+                """
+                SELECT * FROM job_runs
+                WHERE repo_name = ?
+                ORDER BY finished_at DESC, id DESC
+                LIMIT ?
+                """,
+                (repo_name, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM job_runs
+                ORDER BY finished_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def load_logs(
     *,
     since_days: Optional[int] = None,

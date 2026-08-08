@@ -10,11 +10,13 @@ from ui.settings import create_settings_page
 from ui.sidebar import NavSidebar
 from ui.snapshots import create_snapshots_page, populate_snapshots_table
 from ui.restore import create_restore_page
+from ui.health_dialog import RepositoryHealthDialog
 
 __all__ = [
     "NavSidebar",
     "StatCard",
     "SectionCard",
+    "RepositoryHealthDialog",
     "create_dashboard_page",
     "create_repositories_page",
     "create_snapshots_page",

@@ -1,8 +1,10 @@
 """Reusable dashboard card widgets."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from typing import Optional
+
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QCursor, QEnterEvent, QMouseEvent
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ui.icons import tinted_icon
@@ -23,6 +25,7 @@ class StatCard(QFrame):
     """Metric card: large tinted icon chip + value / label / subtitle."""
 
     _CARD_HEIGHT = 112
+    clicked = pyqtSignal()
 
     def __init__(
         self,
@@ -31,6 +34,7 @@ class StatCard(QFrame):
         icon_name: str = "",
         accent: str = "#5a8cc8",
         subtitle: str = "",
+        clickable: bool = False,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -38,6 +42,14 @@ class StatCard(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(self._CARD_HEIGHT)
+        self._clickable = clickable
+        self._hover_title = ""
+        self._hover_rows: list[tuple[str, str]] = []
+        self._hover_footer = ""
+        if clickable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setProperty("clickable", "true")
+            self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
         row = QHBoxLayout(self)
         row.setContentsMargins(18, 14, 18, 14)
@@ -70,6 +82,9 @@ class StatCard(QFrame):
         # Keep one line so refresh text cannot grow the card / skew the row.
         self.subtitle_label.setWordWrap(False)
         self.subtitle_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.subtitle_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
         col.addWidget(self.subtitle_label)
         self.subtitle_label.setVisible(bool(subtitle))
 
@@ -79,6 +94,49 @@ class StatCard(QFrame):
         self._accent = accent
         self._icon_name = icon_name
         self._apply_icon()
+
+    def set_hover_tip(
+        self,
+        *,
+        title: str,
+        rows: Optional[list[tuple[str, str]]] = None,
+        footer: str = "",
+    ) -> None:
+        """Use a themed popup instead of the native OS tooltip."""
+        self._hover_title = title or ""
+        self._hover_rows = list(rows or [])
+        self._hover_footer = footer or ""
+        self.setToolTip("")
+        self.subtitle_label.setToolTip("")
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._clickable and event.button() == Qt.MouseButton.LeftButton:
+            from ui.hover_tip import ThemedHoverTip
+
+            ThemedHoverTip.instance().hide()
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802
+        super().enterEvent(event)
+        if self._hover_title or self._hover_rows:
+            from ui.hover_tip import ThemedHoverTip
+
+            tip = ThemedHoverTip.instance()
+            tip.cancel_hide()
+            tip.set_content(
+                title=self._hover_title,
+                rows=self._hover_rows,
+                footer=self._hover_footer,
+            )
+            tip.show_near(QCursor.pos())
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        super().leaveEvent(event)
+        if self._hover_title or self._hover_rows:
+            from ui.hover_tip import ThemedHoverTip
+
+            ThemedHoverTip.instance().schedule_hide(150)
 
     def _apply_icon(self) -> None:
         self._chip.setStyleSheet(
@@ -101,7 +159,13 @@ class StatCard(QFrame):
     def set_subtitle(self, text: str, *, tooltip: str = "") -> None:
         self.subtitle_label.setText(text)
         self.subtitle_label.setVisible(bool(text))
-        self.subtitle_label.setToolTip(tooltip or text or "")
+        # Prefer themed hover tip when configured; otherwise keep native tip.
+        if not (self._hover_title or self._hover_rows):
+            self.subtitle_label.setToolTip(tooltip or text or "")
+        else:
+            self.subtitle_label.setToolTip("")
+        # Re-assert fixed height so long subtitles cannot stretch the card row.
+        self.setFixedHeight(self._CARD_HEIGHT)
 
     def set_accent(self, color: str) -> None:
         self._accent = color

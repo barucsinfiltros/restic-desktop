@@ -72,22 +72,25 @@ def create_dashboard_page(
     host.stats_labels = {}
 
     card_specs = [
-        ("total_repos", "Repositories", "repository.svg", "#3b82f6", "Total configured"),
-        ("total_snapshots", "Snapshots", "layers.svg", "#22c55e", "Total snapshots"),
-        ("total_size", "Total Size", "drive.svg", "#a855f7", "Of all backups"),
-        ("status", "Status", "health.svg", "#22c55e", "Last backup"),
+        ("total_repos", "Repositories", "repository.svg", "#3b82f6", "Total configured", False),
+        ("total_snapshots", "Snapshots", "layers.svg", "#22c55e", "Total snapshots", False),
+        ("total_size", "Total Size", "drive.svg", "#a855f7", "Of all backups", False),
+        ("status", "Status", "health.svg", "#22c55e", "Click for health details", True),
     ]
-    for key, title_text, icon_name, accent, sub in card_specs:
+    for key, title_text, icon_name, accent, sub, clickable in card_specs:
         card = StatCard(
             title_text,
             icon_name=icon_name,
             accent=accent,
             subtitle=sub,
+            clickable=clickable,
             parent=page,
         )
         host.stat_cards[key] = card
         # Back-compat: existing code updates stats_labels[key].setText(...)
         host.stats_labels[key] = card.value_label
+        if clickable:
+            card.clicked.connect(host.open_repository_health_dialog)
         cards_row.addWidget(card, stretch=1)
     # Map last_backup updates onto status card value + subtitle
     host.stats_labels["last_backup"] = _StatusBridge(host)
@@ -205,17 +208,22 @@ class _StatusBridge:
         self._host = host
 
     def setText(self, text: str) -> None:  # noqa: N802 — Qt naming
-        from ui.dashboard import format_relative_time, format_relative_time_short
-
         card = self._host.stat_cards.get("status")
         if not card:
             return
-        if not text or text in ("—", "Never", "Loading..."):
-            card.set_value("—" if text != "Loading..." else "…")
+        if text in ("Loading...", "…"):
+            card.set_value("…")
+            card.set_subtitle("Refreshing…")
+            return
+        # Prefer real health aggregate when available
+        if hasattr(self._host, "refresh_dashboard_health_status"):
+            self._host.refresh_dashboard_health_status(fallback_last_backup=text)
+            return
+        from ui.dashboard import format_relative_time, format_relative_time_short
+
+        if not text or text in ("—", "Never"):
+            card.set_value("—")
             card.set_subtitle("No recent backup" if text == "Never" else "Last backup")
-            if text == "Loading...":
-                card.set_value("…")
-                card.set_subtitle("Refreshing…")
             return
         card.set_value("Healthy")
         short = format_relative_time_short(text)

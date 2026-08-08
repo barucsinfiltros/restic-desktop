@@ -27,7 +27,7 @@ import ui.themes as themes
 from ui.cards import SectionCard
 from ui.icons import tinted_icon
 
-_LABEL_W = 150
+_LABEL_W = 200
 _FIELD_COMPACT_W = 160
 _NAV_W = 200
 _NAV_ICON = 18
@@ -35,6 +35,7 @@ _NAV_ICON = 18
 # (label, subtitle, icon_file)
 _SECTIONS = (
     ("Application", "Paths, theme, refresh, and settings backup.", "settings.svg"),
+    ("Health", "Backup freshness, integrity checks, and restore tests.", "health.svg"),
     ("Security", "Optional password required when the app starts.", "lock.svg"),
     ("Dependencies", "Check and install required system tools.", "drive.svg"),
     ("License", "Activation status and machine identity.", "key.svg"),
@@ -65,6 +66,67 @@ def _secondary_btn(
     return btn
 
 
+def _unit_combo(parent: QWidget) -> QComboBox:
+    combo = QComboBox(parent)
+    combo.setFixedWidth(100)
+    combo.setFixedHeight(30)
+    combo.setCursor(Qt.CursorShape.PointingHandCursor)
+    for unit_id, label in (
+        ("hours", "Hours"),
+        ("days", "Days"),
+        ("months", "Months"),
+    ):
+        combo.addItem(label, unit_id)
+    return combo
+
+
+def _sync_interval_spin(spin: QSpinBox, unit_combo: QComboBox) -> None:
+    unit = unit_combo.currentData() or "hours"
+    caps = {"hours": 8760, "days": 365, "months": 24}
+    spin.setMaximum(caps.get(unit, 999))
+    if spin.value() > spin.maximum():
+        spin.setValue(spin.maximum())
+
+
+def _interval_field(
+    host: Any,
+    parent: QWidget,
+    *,
+    spin_attr: str,
+    unit_attr: str,
+    value: int,
+    unit: str,
+) -> QWidget:
+    spin = QSpinBox(parent)
+    spin.setMinimum(1)
+    spin.setMaximum(999)
+    spin.setFixedWidth(90)
+    spin.setFixedHeight(30)
+    spin.setValue(max(1, min(999, value)))
+    setattr(host, spin_attr, spin)
+
+    unit_combo = _unit_combo(parent)
+    idx = unit_combo.findData(unit if unit in ("hours", "days", "months") else "days")
+    if idx >= 0:
+        unit_combo.setCurrentIndex(idx)
+    setattr(host, unit_attr, unit_combo)
+
+    def _on_unit(_text: str = "") -> None:
+        _sync_interval_spin(spin, unit_combo)
+
+    unit_combo.currentTextChanged.connect(_on_unit)
+    _on_unit()
+
+    field = QWidget(parent)
+    row = QHBoxLayout(field)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(8)
+    row.addWidget(spin, 0)
+    row.addWidget(unit_combo, 0)
+    row.addStretch(1)
+    return field
+
+
 def _form_row(
     label: str,
     field: QWidget,
@@ -82,6 +144,7 @@ def _form_row(
     lab = QLabel(label, wrap)
     lab.setObjectName("settingsFormLabel")
     lab.setFixedWidth(_LABEL_W)
+    lab.setWordWrap(True)
     lab.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     row.addWidget(lab, 0)
 
@@ -266,6 +329,16 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
         ),
         0,
     )
+    temp_row.addWidget(
+        _secondary_btn(
+            "Clear",
+            host.clear_temp_restore_path,
+            parent=temp_field,
+            min_width=72,
+            tooltip="Clear the configured temp restore path",
+        ),
+        0,
+    )
     card.body.addWidget(_form_row("Temp restore path", temp_field, parent=card))
 
     temp_hint = QLabel(
@@ -307,6 +380,132 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
     )
     app_btns_row.addStretch(1)
     card.body.addWidget(app_btns)
+    return card
+
+
+def _build_health_panel(host: Any, parent: QWidget) -> QWidget:
+    card = _section_card(parent)
+
+    intro = QLabel(
+        "These thresholds drive the Dashboard Status card and Repository Health dialog.",
+        card,
+    )
+    intro.setObjectName("settingsHint")
+    intro.setWordWrap(True)
+    card.body.addWidget(intro)
+
+    from core.health import HealthThresholds
+
+    thresholds = HealthThresholds.from_settings(host.settings_manager)
+
+    card.body.addWidget(
+        _form_row(
+            "Backup overdue after",
+            _interval_field(
+                host,
+                card,
+                spin_attr="health_backup_overdue_spin",
+                unit_attr="health_backup_overdue_unit",
+                value=thresholds.backup_overdue_value,
+                unit=thresholds.backup_overdue_unit,
+            ),
+            parent=card,
+            compact=True,
+        )
+    )
+    host.health_backup_overdue_spin.setToolTip(
+        "Mark backups overdue when the newest snapshot is older than this"
+    )
+
+    card.body.addWidget(
+        _form_row(
+            "Check every",
+            _interval_field(
+                host,
+                card,
+                spin_attr="health_check_interval_spin",
+                unit_attr="health_check_interval_unit",
+                value=thresholds.check_interval_value,
+                unit=thresholds.check_interval_unit,
+            ),
+            parent=card,
+            compact=True,
+        )
+    )
+
+    card.body.addWidget(
+        _form_row(
+            "Restore test every",
+            _interval_field(
+                host,
+                card,
+                spin_attr="health_restore_interval_spin",
+                unit_attr="health_restore_interval_unit",
+                value=thresholds.restore_test_interval_value,
+                unit=thresholds.restore_test_interval_unit,
+            ),
+            parent=card,
+            compact=True,
+        )
+    )
+
+    host.health_check_level_combo = QComboBox(card)
+    host.health_check_level_combo.setFixedWidth(220)
+    host.health_check_level_combo.setFixedHeight(30)
+    host.health_check_level_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+    for level_id, label in (
+        ("quick", "Quick (metadata only)"),
+        ("partial", "Partial (10% data)"),
+        ("full", "Full data check"),
+    ):
+        host.health_check_level_combo.addItem(label, level_id)
+    current_level = str(
+        host.settings_manager.get("health_default_check_level") or "quick"
+    ).lower()
+    idx = host.health_check_level_combo.findData(current_level)
+    if idx >= 0:
+        host.health_check_level_combo.setCurrentIndex(idx)
+    card.body.addWidget(
+        _form_row(
+            "Default check level",
+            host.health_check_level_combo,
+            parent=card,
+            compact=True,
+        )
+    )
+
+    host.health_restore_files_spin = QSpinBox(card)
+    host.health_restore_files_spin.setMinimum(1)
+    host.health_restore_files_spin.setMaximum(50)
+    try:
+        max_files = int(host.settings_manager.get("health_restore_test_max_files") or 5)
+    except (TypeError, ValueError):
+        max_files = 5
+    host.health_restore_files_spin.setValue(max(1, min(50, max_files)))
+    host.health_restore_files_spin.setSuffix(" files")
+    host.health_restore_files_spin.setFixedWidth(_FIELD_COMPACT_W)
+    host.health_restore_files_spin.setFixedHeight(30)
+    host.health_restore_files_spin.setToolTip(
+        "How many sample files to restore during a restore verification test"
+    )
+    card.body.addWidget(
+        _form_row(
+            "Restore test sample",
+            host.health_restore_files_spin,
+            parent=card,
+            compact=True,
+        )
+    )
+
+    note = QLabel(
+        "Restore tests extract sample files into your Temp restore path, verify them, "
+        "then delete the test folder. They never overwrite original locations.",
+        card,
+    )
+    note.setObjectName("settingsNote")
+    note.setWordWrap(True)
+    note.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    card.body.addWidget(note)
     return card
 
 
@@ -555,6 +754,7 @@ def create_settings_page(host: Any) -> QWidget:
     stack.setObjectName("settingsStack")
     panels = [
         _build_application_panel(host, content),
+        _build_health_panel(host, content),
         _build_security_panel(host, content),
         _build_dependencies_panel(host, content),
         _build_license_panel(host, content),

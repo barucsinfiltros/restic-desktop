@@ -1018,6 +1018,54 @@ def build_stylesheet(theme: AppTheme) -> str:
             height: 5px;
         }}
 
+        /* Native tooltips (fallback) */
+        QToolTip {{
+            background-color: {t.surface};
+            color: {t.text};
+            border: 1px solid {t.border};
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 12px;
+        }}
+
+        /* Themed hover tip popup (Status card, etc.) */
+        #themedHoverTip {{
+            background-color: {t.surface};
+            color: {t.text};
+            border: 1px solid {t.border};
+            border-radius: 12px;
+            min-width: 260px;
+            max-width: 360px;
+        }}
+        #themedHoverTipTitle {{
+            color: {t.text};
+            font-size: 13px;
+            font-weight: 700;
+            background: transparent;
+            border: none;
+        }}
+        #themedHoverTipName {{
+            color: {t.text};
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        }}
+        #themedHoverTipDetail {{
+            color: {t.muted};
+            font-size: 12px;
+            background: transparent;
+            border: none;
+        }}
+        #themedHoverTipFooter {{
+            color: {t.accent};
+            font-size: 11px;
+            font-weight: 600;
+            padding-top: 4px;
+            background: transparent;
+            border: none;
+        }}
+
         QScrollBar:vertical {{
             background: {sb_track};
             width: 8px;
@@ -2671,6 +2719,9 @@ def build_stylesheet(theme: AppTheme) -> str:
             border: 1px solid {t.border};
             border-radius: 14px;
         }}
+        #statCard[clickable="true"]:hover {{
+            border-color: {t.accent};
+        }}
         #statCardIcon {{
             background-color: {t.accent_soft};
             border: none;
@@ -2690,6 +2741,81 @@ def build_stylesheet(theme: AppTheme) -> str:
         #statCardSubtitle {{
             color: {t.muted};
             font-size: 11px;
+        }}
+        #healthScroll, #healthContent {{
+            background: transparent;
+            border: none;
+        }}
+        #healthFooter {{
+            background-color: {t.surface};
+            border-top: 1px solid {t.border};
+        }}
+        #healthHero {{
+            background-color: {t.surface};
+            border: 1px solid {t.border};
+            border-radius: 12px;
+        }}
+        #healthHeroMsg {{
+            color: {t.muted};
+            font-size: 12px;
+        }}
+        #healthMetricLabel {{
+            color: {t.muted};
+            font-size: 11px;
+        }}
+        #healthMetricValue {{
+            color: {t.text};
+            font-size: 14px;
+            font-weight: 600;
+        }}
+        #healthMetricOk {{
+            color: {t.ok};
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        #healthMetricWarn {{
+            color: {t.muted};
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        #healthDetailCard {{
+            background-color: {t.surface};
+            border: 1px solid {t.border};
+            border-radius: 12px;
+        }}
+        #healthDetailTitle {{
+            color: {t.text};
+            font-size: 14px;
+            font-weight: 600;
+        }}
+        #healthKvLabel {{
+            color: {t.muted};
+            font-size: 12px;
+        }}
+        #healthKvValue {{
+            color: {t.text};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #healthKvOk {{
+            color: {t.ok};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #healthKvErr {{
+            color: {t.danger};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #healthEventTitle {{
+            color: {t.text};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        #healthRecRow {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 8px;
         }}
         #sectionCard, #chartCard {{
             background-color: {t.surface};
