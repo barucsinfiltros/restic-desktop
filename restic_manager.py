@@ -1093,8 +1093,14 @@ class ResticCommand:
         self.restic_path = restic_path
         self.debug = debug
     
-    def run(self, args: List[str], env: Optional[Dict[str, str]] = None, 
-            input_data: Optional[str] = None, timeout: int = 300) -> Tuple[bool, str, str]:
+    def run(
+        self,
+        args: List[str],
+        env: Optional[Dict[str, str]] = None,
+        input_data: Optional[str] = None,
+        timeout: int = 300,
+        process_callback=None,
+    ) -> Tuple[bool, str, str]:
         """
         Execute a restic command
         Returns: (success, stdout, stderr)
@@ -1104,6 +1110,7 @@ class ResticCommand:
         if self.debug:
             print(f"[RESTIC] Running: {' '.join(cmd)}")
         
+        process = None
         try:
             process = subprocess.Popen(
                 cmd,
@@ -1116,6 +1123,8 @@ class ResticCommand:
                 env={**os.environ, **(env or {})},
                 creationflags=get_subprocess_creation_flags()
             )
+            if process_callback is not None:
+                process_callback(process)
             
             stdout, stderr = process.communicate(input=input_data, timeout=timeout)
             success = process.returncode == 0
@@ -1130,10 +1139,18 @@ class ResticCommand:
             return success, stdout, stderr
             
         except subprocess.TimeoutExpired:
-            process.kill()
+            if process is not None:
+                process.kill()
+                try:
+                    process.communicate(timeout=2)
+                except Exception:
+                    pass
             return False, "", f"Command timeout after {timeout} seconds"
         except Exception as e:
             return False, "", str(e)
+        finally:
+            if process_callback is not None:
+                process_callback(None)
     
     def run_with_progress(self, args: List[str], env: Optional[Dict[str, str]] = None,
                          progress_callback=None, timeout: int = 3600) -> Tuple[bool, str, str]:
@@ -1357,6 +1374,25 @@ class ResticWorker(QThread):
         self.env = env or {}
         self.timeout = timeout
         self.use_progress = use_progress
+        self._process = None
+
+    def _set_process(self, process) -> None:
+        """Track standard-command subprocesses so shutdown can stop them safely."""
+        self._process = process
+
+    def cancel(self) -> None:
+        """Request cancellation and stop a tracked standard-command subprocess."""
+        self.requestInterruption()
+        process = self._process
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        except Exception:
+            pass
     
     def run(self):
         """Execute the Restic command in a separate thread"""
@@ -1370,7 +1406,12 @@ class ResticWorker(QThread):
                 )
             else:
                 # Standard execution
-                success, stdout, stderr = self.restic_cmd.run(self.args, self.env, timeout=self.timeout)
+                success, stdout, stderr = self.restic_cmd.run(
+                    self.args,
+                    self.env,
+                    timeout=self.timeout,
+                    process_callback=self._set_process,
+                )
             
             self.finished.emit(success, stdout, stderr)
         except Exception as e:
@@ -3030,6 +3071,8 @@ class ResticSettingsManager:
             "last_repository": "",
             "auto_refresh_snapshots": True,
             "snapshot_refresh_interval": 60,  # seconds
+            "auto_check_repository_status": False,
+            "repository_status_check_interval_minutes": 60,
             "log_level": "info",
             "log_retention_days": 30,
             "temp_restore_path": "C:\\temp\\restic_restore",  # Temporary location for restore to original
@@ -3712,6 +3755,24 @@ class ResticManagerWindow(QMainWindow):
         )
         self.current_repository = None
         self._dashboard_loaded = False  # Track if dashboard has been loaded
+        self._repo_status_queue = deque()
+        self._repo_status_worker = None
+        self._repo_status_monitor_active = False
+        self._backup_batch_active = False
+        self._repo_status_timer = QTimer(self)
+        self._repo_status_timer.timeout.connect(
+            self._start_repository_status_monitor_pass
+        )
+        self._repo_status_start_timer = QTimer(self)
+        self._repo_status_start_timer.setSingleShot(True)
+        self._repo_status_start_timer.timeout.connect(
+            self._start_repository_status_monitor_pass
+        )
+        self._repo_status_retry_timer = QTimer(self)
+        self._repo_status_retry_timer.setSingleShot(True)
+        self._repo_status_retry_timer.timeout.connect(
+            self._resume_repository_status_monitor
+        )
         
         self._update_splash("Creating main window...")
         self.setWindowTitle(f"Restic Desktop {VERSION}")
@@ -3799,6 +3860,7 @@ class ResticManagerWindow(QMainWindow):
         # Check Restic installation at startup
         self._update_splash("Checking Restic installation...")
         QTimer.singleShot(100, self._check_restic_at_startup)
+        self._configure_repository_status_monitor()
     
     def _update_splash(self, message):
         """Update splash screen message if available"""
@@ -4598,24 +4660,290 @@ class ResticManagerWindow(QMainWindow):
         if index >= 0:
             self.delete_repository(index)
 
-    def check_repository_by_name(self, name: str) -> None:
-        """Run a quick connectivity check and update Status / Last Checked."""
+    def _configure_repository_status_monitor(self) -> None:
+        """Apply the persisted app-open repository monitoring settings."""
+        self._repo_status_timer.stop()
+        self._repo_status_start_timer.stop()
+        self._repo_status_retry_timer.stop()
+
+        if not bool(self.settings_manager.get("auto_check_repository_status")):
+            self._repo_status_queue.clear()
+            worker = self._repo_status_worker
+            try:
+                worker_running = (
+                    isinstance(worker, QThread) and worker.isRunning()
+                )
+            except RuntimeError:
+                worker_running = False
+            if not worker_running:
+                self._repo_status_monitor_active = False
+            return
+
+        try:
+            minutes = int(
+                self.settings_manager.get(
+                    "repository_status_check_interval_minutes"
+                )
+                or 60
+            )
+        except (TypeError, ValueError):
+            minutes = 60
+        minutes = max(5, min(1440, minutes))
+        self._repo_status_timer.setInterval(minutes * 60 * 1000)
+        self._repo_status_timer.start()
+        # Let startup authentication, window construction, and the restic probe
+        # settle before the first silent connectivity pass.
+        if not self._repo_status_monitor_active:
+            self._repo_status_start_timer.start(2000)
+        elif self._repo_status_queue:
+            worker = self._repo_status_worker
+            try:
+                worker_running = (
+                    isinstance(worker, QThread) and worker.isRunning()
+                )
+            except RuntimeError:
+                worker_running = False
+            if not worker_running:
+                self._schedule_repository_status_retry()
+
+    def _repository_status_operations_busy(self) -> bool:
+        """Return whether a lock-sensitive foreground operation is active."""
+        if self._backup_batch_active:
+            return True
+        for attr in (
+            "_backup_worker",
+            "_restore_worker",
+            "_copy_worker",
+            "_verify_worker",
+            "_repo_check_worker",
+        ):
+            worker = getattr(self, attr, None)
+            try:
+                if isinstance(worker, QThread) and worker.isRunning():
+                    return True
+            except RuntimeError:
+                # The Qt object may already be scheduled for deletion.
+                continue
+        return False
+
+    def _schedule_repository_status_retry(self) -> None:
+        """Retry a deferred pass soon without waiting for the full interval."""
+        if bool(self.settings_manager.get("auto_check_repository_status")):
+            self._repo_status_retry_timer.start(60 * 1000)
+
+    def _resume_repository_status_monitor(self) -> None:
+        """Resume a paused queue or start a newly deferred pass."""
+        if self._repo_status_monitor_active:
+            self._run_next_repository_status_check()
+        else:
+            self._start_repository_status_monitor_pass()
+
+    def _repository_status_blocks_foreground_operation(
+        self, operation_name: str
+    ) -> bool:
+        """Prevent a foreground operation from racing an automatic check."""
+        if not self._repo_status_monitor_active:
+            return False
+        show_framed_message(
+            self,
+            "Repository Check In Progress",
+            (
+                "An automatic repository status check is currently running. "
+                f"Please retry {operation_name} shortly."
+            ),
+            kind="info",
+        )
+        return True
+
+    def _prepare_repository_status_check(
+        self, name: str
+    ) -> tuple[list[str] | None, dict | None, str]:
+        """Build a lightweight snapshots command, or return a configuration error."""
         index = self._repository_index_by_name(name)
         if index < 0:
-            return
+            return None, None, "Repository is no longer configured."
         repositories = self.settings_manager.get("repositories") or []
         repo = repositories[index]
         path = repo.get("path") or ""
         if not path:
-            QMessageBox.warning(self, "Check Connection", "Repository has no path configured.")
-            return
+            return None, None, "Repository has no path configured."
 
         password = ""
         if repo.get("password"):
             try:
                 password = self.settings_manager.password_manager.decrypt(repo["password"])
-            except Exception:
-                password = ""
+            except Exception as exc:
+                return None, None, f"Could not decrypt repository credentials: {exc}"
+
+        try:
+            env = build_repo_env(
+                repo,
+                password,
+                password_manager=self.settings_manager.password_manager,
+            )
+            args = repo_restic_prefix(repo) + ["snapshots", "--latest", "1"]
+        except Exception as exc:
+            return None, None, f"Could not prepare repository check: {exc}"
+        return args, env, ""
+
+    def _record_repository_status_result(
+        self,
+        name: str,
+        success: bool,
+        error_text: str = "",
+        *,
+        automatic: bool,
+    ) -> bool:
+        """Persist one connectivity result and emit appropriately quiet feedback."""
+        repositories = self.settings_manager.get("repositories") or []
+        index = next(
+            (i for i, repo in enumerate(repositories) if repo.get("name") == name),
+            -1,
+        )
+        if index < 0:
+            return False
+
+        repo = repositories[index]
+        previous_status = str(repo.get("check_status") or "unknown").lower()
+        new_status = "healthy" if success else "unreachable"
+        repo["last_checked"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        repo["check_status"] = new_status
+
+        if success:
+            repo.pop("check_error", None)
+            self.log(f"Repository check OK: {name}")
+            if not automatic or previous_status == "unreachable":
+                show_notification(
+                    title="Repository Healthy",
+                    message=f"“{name}” is reachable.",
+                    icon_type="success",
+                    duration="short",
+                )
+        else:
+            error = (error_text or "Unknown error").strip()
+            repo["check_error"] = error[:500]
+            self.log(f"Repository check failed: {name}: {error}")
+            if not automatic or previous_status != "unreachable":
+                show_notification(
+                    title="Repository Unreachable",
+                    message=f"“{name}” check failed.",
+                    icon_type="error",
+                    duration="long",
+                )
+
+        self.settings_manager.set("repositories", repositories)
+        self.settings_manager.save_settings()
+        return True
+
+    def _start_repository_status_monitor_pass(self) -> None:
+        """Start one serialized automatic pass across all repositories."""
+        if not bool(self.settings_manager.get("auto_check_repository_status")):
+            return
+        if self._repo_status_monitor_active:
+            return
+        if self._repository_status_operations_busy():
+            self.log("Automatic repository status check deferred: operation in progress")
+            self._schedule_repository_status_retry()
+            return
+
+        repositories = self.settings_manager.get("repositories") or []
+        self._repo_status_queue = deque(
+            str(repo.get("name"))
+            for repo in repositories
+            if str(repo.get("name") or "").strip()
+        )
+        if not self._repo_status_queue:
+            return
+
+        self._repo_status_monitor_active = True
+        self.log(
+            f"Starting automatic repository status check "
+            f"({len(self._repo_status_queue)} repositories)"
+        )
+        self._run_next_repository_status_check()
+
+    def _run_next_repository_status_check(self) -> None:
+        """Run the next queued automatic check, maintaining one worker at a time."""
+        if not bool(self.settings_manager.get("auto_check_repository_status")):
+            self._repo_status_queue.clear()
+
+        if not self._repo_status_queue:
+            self._finish_repository_status_monitor_pass()
+            return
+
+        if self._repository_status_operations_busy():
+            self.log("Automatic repository status pass paused: operation in progress")
+            self._schedule_repository_status_retry()
+            return
+
+        name = self._repo_status_queue.popleft()
+        args, env, prepare_error = self._prepare_repository_status_check(name)
+        if args is None or env is None:
+            self._record_repository_status_result(
+                name,
+                False,
+                prepare_error,
+                automatic=True,
+            )
+            QTimer.singleShot(0, self._run_next_repository_status_check)
+            return
+
+        worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
+        self._repo_status_worker = worker
+
+        def _done(success, stdout, stderr, repo_name=name, check_worker=worker):
+            error = stderr or stdout or "Unknown error"
+            self._record_repository_status_result(
+                repo_name,
+                success,
+                error if not success else "",
+                automatic=True,
+            )
+            check_worker.deleteLater()
+            if self._repo_status_worker is check_worker:
+                self._repo_status_worker = None
+            QTimer.singleShot(0, self._run_next_repository_status_check)
+
+        worker.finished.connect(_done)
+        worker.start()
+
+    def _finish_repository_status_monitor_pass(self) -> None:
+        """Finalize a monitoring pass and update status presentation once."""
+        self._repo_status_retry_timer.stop()
+        self._repo_status_monitor_active = False
+        self._repo_status_worker = None
+        self.refresh_repository_list()
+        self.refresh_dashboard_health_status()
+        self.log("Automatic repository status check complete")
+
+    def check_repository_by_name(self, name: str) -> None:
+        """Run a user-requested connectivity check and persist its result."""
+        if self._repo_status_monitor_active:
+            QMessageBox.information(
+                self,
+                "Check Connection",
+                "An automatic repository status check is already in progress.",
+            )
+            return
+        manual_worker = getattr(self, "_repo_check_worker", None)
+        try:
+            manual_running = (
+                isinstance(manual_worker, QThread) and manual_worker.isRunning()
+            )
+        except RuntimeError:
+            manual_running = False
+        if manual_running:
+            QMessageBox.information(
+                self,
+                "Check Connection",
+                "Another repository connection check is already in progress.",
+            )
+            return
+
+        args, env, prepare_error = self._prepare_repository_status_check(name)
+        if args is None or env is None:
+            QMessageBox.warning(self, "Check Connection", prepare_error)
+            return
 
         progress, _, _ = make_framed_progress_dialog(
             self,
@@ -4626,49 +4954,26 @@ class ResticManagerWindow(QMainWindow):
         progress.show()
         QApplication.processEvents()
 
-        env = build_repo_env(
-            repo,
-            password,
-            password_manager=self.settings_manager.password_manager,
-        )
-        args = repo_restic_prefix(repo) + ["snapshots", "--latest", "1"]
         worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
 
-        def _done(success, stdout, stderr, idx=index, repo_name=name, dlg=progress):
+        def _done(success, stdout, stderr, repo_name=name, dlg=progress):
             try:
                 dlg.close()
                 dlg.deleteLater()
             except Exception:
                 pass
-            repos = self.settings_manager.get("repositories") or []
-            if not (0 <= idx < len(repos)) or repos[idx].get("name") != repo_name:
-                return
-            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            repos[idx]["last_checked"] = stamp
-            if success:
-                repos[idx]["check_status"] = "healthy"
-                repos[idx].pop("check_error", None)
-                self.log(f"Repository check OK: {repo_name}")
-                show_notification(
-                    title="Repository Healthy",
-                    message=f"“{repo_name}” is reachable.",
-                    icon_type="success",
-                    duration="short",
-                )
-            else:
-                err = (stderr or "Unknown error").strip()
-                repos[idx]["check_status"] = "unreachable"
-                repos[idx]["check_error"] = err[:500]
-                self.log(f"Repository check failed: {repo_name}: {err}")
-                show_notification(
-                    title="Repository Unreachable",
-                    message=f"“{repo_name}” check failed.",
-                    icon_type="error",
-                    duration="long",
-                )
-            self.settings_manager.set("repositories", repos)
-            self.settings_manager.save_settings()
+            error = stderr or stdout or "Unknown error"
+            self._record_repository_status_result(
+                repo_name,
+                success,
+                error if not success else "",
+                automatic=False,
+            )
             self.refresh_repository_list()
+            self.refresh_dashboard_health_status()
+            if self._repo_check_worker is worker:
+                self._repo_check_worker = None
+            worker.deleteLater()
 
         worker.finished.connect(_done)
         worker.start()
@@ -6427,6 +6732,8 @@ class ResticManagerWindow(QMainWindow):
     
     def copy_snapshot_to_repository(self):
         """Copy selected snapshot to another repository"""
+        if self._repository_status_blocks_foreground_operation("the copy"):
+            return
         selected = self.snapshots_table.selectedItems()
         if not selected:
             QMessageBox.warning(self, "No Selection", "Please select a snapshot first")
@@ -7390,6 +7697,10 @@ class ResticManagerWindow(QMainWindow):
         on_complete=None,
     ):
         """Run restic check and persist integrity results on the repository."""
+        if self._repository_status_blocks_foreground_operation(
+            "the integrity check"
+        ):
+            return
         from core.health import HealthThresholds
 
         name = repo_name or (
@@ -8669,6 +8980,8 @@ class ResticManagerWindow(QMainWindow):
     
     def start_restore(self):
         """Start file restore operation"""
+        if self._repository_status_blocks_foreground_operation("the restore"):
+            return
         repo_name = self.restore_repo_combo.currentText()
         snapshot_text = self.restore_snapshot_combo.currentText()
         restore_path = self.restore_path_input.text().strip()
@@ -9421,6 +9734,8 @@ class ResticManagerWindow(QMainWindow):
 
     def run_backup_job(self, job):
         """Run a backup job (supports multiple repositories)"""
+        if self._repository_status_blocks_foreground_operation("the backup"):
+            return
         # Get repository/repositories list
         # Support both old format (single "repository") and new format (multiple "repositories")
         if "repositories" in job and job["repositories"]:
@@ -9442,6 +9757,7 @@ class ResticManagerWindow(QMainWindow):
         self._repositories_to_backup = repositories_to_backup
         self._backup_job = job
         self._backup_all_succeeded = True
+        self._backup_batch_active = True
         
         # Start first repository backup
         self._run_single_repository_backup(job, repositories_to_backup[0], 0)
@@ -9783,6 +10099,7 @@ class ResticManagerWindow(QMainWindow):
             self._run_single_repository_backup(self._backup_job, next_repo, self._current_repo_index)
         else:
             # All repositories completed
+            self._backup_batch_active = False
             self.log(f"Backup job '{self._backup_job['name']}' completed for all {self._total_repos} repositories")
             if getattr(self, "_backup_all_succeeded", False):
                 self._stamp_job_last_run(self._backup_job)
@@ -9830,6 +10147,7 @@ class ResticManagerWindow(QMainWindow):
             return
 
         self._backup_is_cancelled = True
+        self._backup_batch_active = False
         
         # Terminate the worker thread
         if hasattr(self, '_backup_worker'):
@@ -10918,6 +11236,14 @@ try {{
         self.settings_manager.set("theme", theme_id)
         self.settings_manager.set("auto_refresh_snapshots", self.auto_refresh_check.isChecked())
         self.settings_manager.set("snapshot_refresh_interval", self.refresh_interval_spin.value())
+        self.settings_manager.set(
+            "auto_check_repository_status",
+            self.repo_status_monitor_check.isChecked(),
+        )
+        self.settings_manager.set(
+            "repository_status_check_interval_minutes",
+            self.repo_status_interval_spin.value(),
+        )
         self.settings_manager.set("log_retention_days", self.log_retention_spin.value())
         self.settings_manager.set("temp_restore_path", self.temp_restore_path_input.text())
         if hasattr(self, "health_backup_overdue_spin"):
@@ -10963,6 +11289,7 @@ try {{
             )
         
         self.settings_manager.save_settings()
+        self._configure_repository_status_monitor()
 
         # Refresh dashboard health badge after threshold changes
         if hasattr(self, "refresh_dashboard_health_status"):
@@ -12242,6 +12569,10 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
                     self._unmount_snapshot(mount_info)
         
         # Wait for all worker threads to finish (with timeout)
+        self._repo_status_timer.stop()
+        self._repo_status_start_timer.stop()
+        self._repo_status_retry_timer.stop()
+        self._repo_status_queue.clear()
         self._cleanup_worker_threads()
         
         event.accept()
@@ -12253,7 +12584,8 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             '_diff_worker', '_forget_worker', '_copy_worker', '_prune_worker',
             '_unlock_worker', '_stats_worker', '_verify_worker', '_restore_worker',
             '_backup_worker', '_init_worker', '_test_worker', '_lock_check_worker',
-            '_auto_unlock_worker', '_cancel_unlock_worker'
+            '_auto_unlock_worker', '_cancel_unlock_worker', '_repo_check_worker',
+            '_repo_status_worker'
         ]
         
         threads_to_wait = []
@@ -12273,6 +12605,9 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         # Wait for all threads with a reasonable timeout
         if threads_to_wait:
             for thread in threads_to_wait:
+                cancel = getattr(thread, "cancel", None)
+                if callable(cancel):
+                    cancel()
                 # Try to quit gracefully first
                 thread.quit()
                 thread.wait(1000)  # Wait 1 second per thread

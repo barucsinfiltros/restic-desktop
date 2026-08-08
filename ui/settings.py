@@ -288,6 +288,54 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
         _form_row("Refresh interval", host.refresh_interval_spin, parent=card, compact=True)
     )
 
+    host.repo_status_monitor_check = QCheckBox(
+        "Enable automatic repository status checks", card
+    )
+    host.repo_status_monitor_check.setChecked(
+        bool(host.settings_manager.get("auto_check_repository_status"))
+    )
+    host.repo_status_monitor_check.setToolTip(
+        "Periodically test whether configured repositories are reachable while "
+        "Restic Desktop is open"
+    )
+    card.body.addWidget(
+        _form_row(
+            "Repository status",
+            host.repo_status_monitor_check,
+            parent=card,
+            compact=True,
+        )
+    )
+
+    host.repo_status_interval_spin = QSpinBox(card)
+    host.repo_status_interval_spin.setMinimum(5)
+    host.repo_status_interval_spin.setMaximum(1440)
+    try:
+        status_interval = int(
+            host.settings_manager.get("repository_status_check_interval_minutes")
+            or 60
+        )
+    except (TypeError, ValueError):
+        status_interval = 60
+    host.repo_status_interval_spin.setValue(max(5, min(1440, status_interval)))
+    host.repo_status_interval_spin.setSuffix(" minutes")
+    host.repo_status_interval_spin.setFixedWidth(_FIELD_COMPACT_W)
+    host.repo_status_interval_spin.setFixedHeight(30)
+    host.repo_status_interval_spin.setEnabled(
+        host.repo_status_monitor_check.isChecked()
+    )
+    host.repo_status_monitor_check.toggled.connect(
+        host.repo_status_interval_spin.setEnabled
+    )
+    card.body.addWidget(
+        _form_row(
+            "Status frequency",
+            host.repo_status_interval_spin,
+            parent=card,
+            compact=True,
+        )
+    )
+
     host.log_retention_spin = QSpinBox(card)
     host.log_retention_spin.setMinimum(1)
     host.log_retention_spin.setMaximum(365)
