@@ -25,17 +25,20 @@ from PyQt6.QtWidgets import (
 
 import ui.themes as themes
 from ui.cards import SectionCard
+from ui.icons import tinted_icon
 
 _LABEL_W = 150
 _FIELD_COMPACT_W = 160
-_NAV_W = 188
+_NAV_W = 200
+_NAV_ICON = 18
 
+# (label, subtitle, icon_file)
 _SECTIONS = (
-    ("Application", "Paths, theme, refresh, and settings backup."),
-    ("Security", "Optional password required when the app starts."),
-    ("Dependencies", "Check and install required system tools."),
-    ("License", "Activation status and machine identity."),
-    ("About", "Version and application information."),
+    ("Application", "Paths, theme, refresh, and settings backup.", "settings.svg"),
+    ("Security", "Optional password required when the app starts.", "lock.svg"),
+    ("Dependencies", "Check and install required system tools.", "drive.svg"),
+    ("License", "Activation status and machine identity.", "key.svg"),
+    ("About", "Version and application information.", "about.svg"),
 )
 
 
@@ -480,6 +483,22 @@ def _build_about_panel(host: Any, parent: QWidget) -> QWidget:
     return card
 
 
+def refresh_settings_nav_icons(host: Any) -> None:
+    """Retint settings section icons for the current theme and selection."""
+    nav = getattr(host, "_settings_nav", None)
+    if nav is None:
+        return
+    theme_id = themes.resolve_theme_id(host.settings_manager.get("theme"))
+    theme = themes.get_app_theme(theme_id)
+    selected = nav.currentRow()
+    for i, (_name, _hint, icon_name) in enumerate(_SECTIONS):
+        item = nav.item(i)
+        if item is None:
+            continue
+        color = theme.accent if i == selected else theme.muted
+        item.setIcon(tinted_icon(icon_name, color, _NAV_ICON))
+
+
 def create_settings_page(host: Any) -> QWidget:
     """Build the settings page with a left section nav and stacked panels."""
     page = QWidget()
@@ -505,12 +524,13 @@ def create_settings_page(host: Any) -> QWidget:
     nav = QListWidget(rail)
     nav.setObjectName("settingsNav")
     nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    nav.setIconSize(QSize(_NAV_ICON, _NAV_ICON))
     nav.setSpacing(2)
     nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    for name, _hint in _SECTIONS:
+    for name, _hint, _icon in _SECTIONS:
         item = QListWidgetItem(name)
-        item.setSizeHint(QSize(0, 32))
+        item.setSizeHint(QSize(0, 34))
         nav.addItem(item)
     rail_layout.addWidget(nav, stretch=1)
     root.addWidget(rail)
@@ -551,13 +571,15 @@ def create_settings_page(host: Any) -> QWidget:
     def _on_nav_changed(row: int) -> None:
         if row < 0 or row >= len(_SECTIONS):
             return
-        name, hint = _SECTIONS[row]
+        name, hint, _icon = _SECTIONS[row]
         host._settings_section_title.setText(name)
         host._settings_section_subtitle.setText(hint)
         stack.setCurrentIndex(row)
+        refresh_settings_nav_icons(host)
 
     nav.currentRowChanged.connect(_on_nav_changed)
     nav.setCurrentRow(0)
+    refresh_settings_nav_icons(host)
 
     host.refresh_license_status()
     return page

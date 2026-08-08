@@ -1948,7 +1948,7 @@ def build_stylesheet(theme: AppTheme) -> str:
             font-size: 13px;
         }}
         #settingsNav::item {{
-            padding: 8px 10px;
+            padding: 8px 10px 8px 8px;
             border-radius: 8px;
             color: {t.muted};
         }}

@@ -10966,6 +10966,10 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         if hasattr(self, "nav_sidebar"):
             self.nav_sidebar.recolor(app_theme.muted, app_theme.accent)
 
+        from ui.settings import refresh_settings_nav_icons
+
+        refresh_settings_nav_icons(self)
+
         if hasattr(self, "_jobs_table_hover"):
             # No grey row wash — descriptions only lighten slightly on hover.
             self._jobs_table_hover.set_paint_background(False)
