@@ -9,7 +9,6 @@ from PyQt6.QtGui import (
     QColor,
     QFont,
     QFontMetrics,
-    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -36,16 +35,6 @@ def _lighten(color: QColor, amount: float = 0.28) -> QColor:
         int(color.red() + (255 - color.red()) * amount),
         int(color.green() + (255 - color.green()) * amount),
         int(color.blue() + (255 - color.blue()) * amount),
-        color.alpha(),
-    )
-
-
-def _darken(color: QColor, amount: float = 0.22) -> QColor:
-    amount = max(0.0, min(1.0, amount))
-    return QColor(
-        int(color.red() * (1.0 - amount)),
-        int(color.green() * (1.0 - amount)),
-        int(color.blue() * (1.0 - amount)),
         color.alpha(),
     )
 
@@ -209,17 +198,20 @@ class _DonutRing(QWidget):
             return
 
         start_deg = 90.0  # top
-        # Tiny overlap kills anti-alias hairline seams; no visible borders/gaps.
-        overlap = 0.45
+        positive_slices = sum(1 for size in self._sizes if size > 0)
+        # A narrow card-coloured gap makes each segment distinct without
+        # introducing heavy outlines.
+        gap_deg = 1.2 if positive_slices > 1 else 0.0
         for size, color in zip(self._sizes, self._colors):
             if size <= 0:
                 continue
             span = (size / total) * 360.0
-            draw_span = span + overlap
+            draw_span = max(0.2, span - gap_deg)
+            draw_start = start_deg - gap_deg / 2.0
             path = QPainterPath()
-            path.arcMoveTo(outer, start_deg)
-            path.arcTo(outer, start_deg, -draw_span)
-            end_deg = start_deg - draw_span
+            path.arcMoveTo(outer, draw_start)
+            path.arcTo(outer, draw_start, -draw_span)
+            end_deg = draw_start - draw_span
             path.arcTo(inner, end_deg, draw_span)
             path.closeSubpath()
             painter.setPen(Qt.PenStyle.NoPen)
@@ -249,27 +241,32 @@ class _DonutRing(QWidget):
 
             start_deg -= span
 
-        # Centre labels — size number slightly larger for the main readout.
-        painter.setPen(self._text)
+        # Centre the size/caption as one compact typographic block.
         title_font = QFont(painter.font())
         title_font.setPointSize(17)
         title_font.setBold(True)
-        painter.setFont(title_font)
-        title_br = painter.fontMetrics().boundingRect(self._total_label)
-        painter.drawText(
-            int(cx - title_br.width() / 2),
-            int(cy - 1),
-            self._total_label,
-        )
-        painter.setPen(self._muted)
-        cap_font = QFont(painter.font())
+        cap_font = QFont(title_font)
         cap_font.setPointSize(10)
         cap_font.setBold(False)
-        painter.setFont(cap_font)
-        cap_br = painter.fontMetrics().boundingRect(self._total_caption)
+
+        title_h = QFontMetrics(title_font).height()
+        cap_h = QFontMetrics(cap_font).height()
+        gap = 2.0
+        block_top = cy - (title_h + gap + cap_h) / 2.0
+
+        painter.setPen(self._text)
+        painter.setFont(title_font)
         painter.drawText(
-            int(cx - cap_br.width() / 2),
-            int(cy + title_br.height() - 1),
+            QRectF(inner.left(), block_top, inner.width(), title_h),
+            Qt.AlignmentFlag.AlignCenter,
+            self._total_label,
+        )
+
+        painter.setPen(self._muted)
+        painter.setFont(cap_font)
+        painter.drawText(
+            QRectF(inner.left(), block_top + title_h + gap, inner.width(), cap_h),
+            Qt.AlignmentFlag.AlignCenter,
             self._total_caption,
         )
         painter.end()
@@ -605,7 +602,7 @@ class RoundedBarChart(QWidget):
 
         # Repository names sit beside their bars, replacing the detached legend.
         longest_name = max((fm.horizontalAdvance(name) for name in self._names), default=0)
-        label_w = min(132.0, max(82.0, float(longest_name + 12)))
+        label_w = min(150.0, max(88.0, float(longest_name + 12)))
         left = 12.0 + label_w
         right = 38.0
         top = 12.0
@@ -618,24 +615,18 @@ class RoundedBarChart(QWidget):
         )
 
         max_v = max(self._values) or 1.0
-        if max_v <= 5:
-            x_max = max(1.0, math.ceil(max_v))
-        else:
-            # A little headroom leaves space for values at the end of each bar.
-            raw = max_v * 1.15
-            if raw <= 10:
-                x_max = float(math.ceil(raw))
-            else:
-                step = 5 if raw <= 50 else 10
-                x_max = float(math.ceil(raw / step) * step)
-
         ticks = 4
+        # Equal integer intervals avoid uneven labels such as 0, 2, 4, 7, 9.
+        tick_step = max(1, math.ceil(max_v / ticks))
+        x_max = float(tick_step * ticks)
+        grid_color = QColor(self._grid)
+        grid_color.setAlpha(85)
         for i in range(ticks + 1):
             t = i / ticks
             x = plot.left() + t * plot.width()
-            painter.setPen(QPen(self._grid, 1, Qt.PenStyle.DashLine))
+            painter.setPen(QPen(grid_color, 1, Qt.PenStyle.SolidLine))
             painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
-            val = int(round(x_max * t))
+            val = i * tick_step
             painter.setPen(self._muted)
             label = str(val)
             br = painter.fontMetrics().boundingRect(label)
@@ -647,9 +638,11 @@ class RoundedBarChart(QWidget):
 
         n = len(self._values)
         row_h = plot.height() / max(1, n)
-        bar_h = max(10.0, min(24.0, row_h * 0.56))
+        bar_h = max(10.0, min(22.0, row_h * 0.52))
         radius = bar_h / 2.0
         label_rect = QRectF(8, 0, label_w - 4, bar_h + 4)
+        track_color = QColor(self._grid)
+        track_color.setAlpha(48)
 
         for i, (name, value, color) in enumerate(
             zip(self._names, self._values, self._colors)
@@ -658,6 +651,11 @@ class RoundedBarChart(QWidget):
             width = (value / x_max) * plot.width() if x_max else 0.0
             rect = QRectF(plot.left(), cy - bar_h / 2.0, max(width, 0.0), bar_h)
             self._bar_rects.append(rect)
+
+            track = QRectF(plot.left(), rect.top(), plot.width(), bar_h)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(track_color)
+            painter.drawRoundedRect(track, radius, radius)
 
             painter.setFont(tick_font)
             painter.setPen(self._text if i == self._hover_index else self._muted)
@@ -688,12 +686,9 @@ class RoundedBarChart(QWidget):
 
             fill = color
             if i == self._hover_index:
-                fill = _lighten(color, 0.12)
-            grad = QLinearGradient(rect.topLeft(), rect.topRight())
-            grad.setColorAt(0.0, _lighten(fill, 0.35))
-            grad.setColorAt(1.0, _darken(fill, 0.18))
+                fill = _lighten(color, 0.10)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.fillPath(path, grad)
+            painter.fillPath(path, fill)
 
             if value > 0:
                 painter.setPen(self._text)
