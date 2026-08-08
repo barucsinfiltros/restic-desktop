@@ -224,34 +224,6 @@ def _wrap_scroll(inner: QWidget) -> QScrollArea:
 def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
     card = _section_card(parent)
 
-    host.restic_path_input = QLineEdit(card)
-    host.restic_path_input.setText(host.settings_manager.get("restic_path") or "")
-    host.restic_path_input.setMinimumHeight(30)
-    host.restic_path_input.setSizePolicy(
-        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-    )
-    restic_field = QWidget(card)
-    restic_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    restic_row = QHBoxLayout(restic_field)
-    restic_row.setContentsMargins(0, 0, 0, 0)
-    restic_row.setSpacing(8)
-    restic_row.addWidget(host.restic_path_input, stretch=1)
-    restic_row.addWidget(
-        _secondary_btn("Browse", host.browse_restic_path, parent=restic_field, min_width=88),
-        0,
-    )
-    restic_row.addWidget(
-        _secondary_btn(
-            "Test",
-            host.test_restic_path,
-            parent=restic_field,
-            tooltip="Test if restic can be executed from this path",
-            min_width=72,
-        ),
-        0,
-    )
-    card.body.addWidget(_form_row("Restic path", restic_field, parent=card))
-
     host.theme_combo = QComboBox(card)
     themes.populate_theme_combo(host.theme_combo)
     current_theme_id = themes.resolve_theme_id(host.settings_manager.get("theme"))
@@ -264,6 +236,7 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
     host.theme_combo.setCursor(Qt.CursorShape.PointingHandCursor)
     host.theme_combo.currentTextChanged.connect(host.change_theme)
     card.body.addWidget(_form_row("Theme", host.theme_combo, parent=card, compact=True))
+    card.body.addSpacing(16)
 
     host.auto_refresh_check = QCheckBox("Enable automatic snapshot refresh", card)
     host.auto_refresh_check.setChecked(
@@ -287,6 +260,7 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
     card.body.addWidget(
         _form_row("Refresh interval", host.refresh_interval_spin, parent=card, compact=True)
     )
+    card.body.addSpacing(16)
 
     host.repo_status_monitor_check = QCheckBox(
         "Enable automatic repository status checks", card
@@ -335,6 +309,7 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
             compact=True,
         )
     )
+    card.body.addSpacing(16)
 
     host.log_retention_spin = QSpinBox(card)
     host.log_retention_spin.setMinimum(1)
@@ -634,6 +609,40 @@ def _build_dependencies_panel(host: Any, parent: QWidget) -> QWidget:
     deps_intro.setObjectName("settingsHint")
     deps_intro.setWordWrap(True)
     card.body.addWidget(deps_intro)
+
+    host.restic_path_input = QLineEdit(card)
+    host.restic_path_input.setText(host.settings_manager.get("restic_path") or "")
+    host.restic_path_input.setMinimumHeight(30)
+    host.restic_path_input.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+    )
+    restic_field = QWidget(card)
+    restic_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    restic_row = QHBoxLayout(restic_field)
+    restic_row.setContentsMargins(0, 0, 0, 0)
+    restic_row.setSpacing(8)
+    restic_row.addWidget(host.restic_path_input, stretch=1)
+    restic_row.addWidget(
+        _secondary_btn(
+            "Browse",
+            host.browse_restic_path,
+            parent=restic_field,
+            min_width=88,
+        ),
+        0,
+    )
+    restic_row.addWidget(
+        _secondary_btn(
+            "Test",
+            host.test_restic_path,
+            parent=restic_field,
+            tooltip="Test if restic can be executed from this path",
+            min_width=72,
+        ),
+        0,
+    )
+    card.body.addWidget(_form_row("Restic path", restic_field, parent=card))
+    card.body.addSpacing(16)
 
     deps_row_w = QWidget(card)
     deps_row = QHBoxLayout(deps_row_w)

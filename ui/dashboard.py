@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 
 from ui.cards import SectionCard, StatCard
 from ui.charts import DonutChart, RoundedBarChart
+from ui.icons import icon
 from ui.table_helpers import SortableTableItem, TableRowHover, make_repo_icon_cell
 
 import ui.themes as themes
@@ -35,6 +36,8 @@ def create_dashboard_page(
     *,
     on_refresh: Optional[Callable[[], None]] = None,
     on_view_logs: Optional[Callable[[], None]] = None,
+    on_new_backup: Optional[Callable[[], None]] = None,
+    on_restore_files: Optional[Callable[[], None]] = None,
 ) -> QWidget:
     """
     Build the modern dashboard and attach widgets onto ``host``
@@ -62,6 +65,23 @@ def create_dashboard_page(
     title_col.addWidget(subtitle)
     host.dashboard_subtitle = subtitle
     header.addLayout(title_col, stretch=1)
+
+    if on_new_backup is not None:
+        new_backup = QPushButton("New Backup")
+        new_backup.setObjectName("toolbarBtn")
+        new_backup.setIcon(icon("jobs.svg", 16))
+        new_backup.setCursor(Qt.CursorShape.PointingHandCursor)
+        new_backup.setFixedHeight(28)
+        new_backup.clicked.connect(on_new_backup)
+        header.addWidget(new_backup, 0, Qt.AlignmentFlag.AlignVCenter)
+    if on_restore_files is not None:
+        restore_files = QPushButton("Restore Files")
+        restore_files.setObjectName("toolbarBtn")
+        restore_files.setIcon(icon("restore.svg", 16))
+        restore_files.setCursor(Qt.CursorShape.PointingHandCursor)
+        restore_files.setFixedHeight(28)
+        restore_files.clicked.connect(on_restore_files)
+        header.addWidget(restore_files, 0, Qt.AlignmentFlag.AlignVCenter)
     layout.addLayout(header)
 
     # Stat cards

@@ -2632,10 +2632,10 @@ def build_stylesheet(theme: AppTheme) -> str:
             background-color: {t.surface};
             color: {t.text};
             border: 1px solid {t.border};
-            border-radius: 8px;
-            padding: 8px 14px;
+            border-radius: 7px;
+            padding: 4px 12px;
             font-size: 12px;
-            min-height: 32px;
+            min-height: 26px;
         }}
         QPushButton#toolbarBtn:hover {{
             border-color: {t.accent};

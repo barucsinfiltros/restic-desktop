@@ -109,7 +109,7 @@ except ImportError:
     wintypes = None
 
 # Version and debug settings
-VERSION = "v2.1.1"
+VERSION = "v2.2.0"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 _STARTUP_WINDOW_PROBE = None  # installed when --debug; traces flash windows
@@ -3984,6 +3984,8 @@ class ResticManagerWindow(QMainWindow):
             self,
             on_refresh=self.refresh_dashboard,
             on_view_logs=lambda: self.switch_page(6),
+            on_new_backup=self.open_backup_wizard,
+            on_restore_files=self.open_restore_wizard,
         )
         # Hidden compatibility widgets for verify/rebuild/stats helpers
         self.dashboard_repo_combo = QComboBox(self)
@@ -4716,6 +4718,7 @@ class ResticManagerWindow(QMainWindow):
             "_copy_worker",
             "_verify_worker",
             "_repo_check_worker",
+            "_browse_restore_worker",
         ):
             worker = getattr(self, attr, None)
             try:
@@ -5770,9 +5773,9 @@ class ResticManagerWindow(QMainWindow):
         loading_item = QTreeWidgetItem(["Loading snapshot contents...", "", "", ""])
         file_list.addTopLevelItem(loading_item)
         
-        # Execute restic ls command in background thread
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "ls", snapshot_id, "--long"]
+        # Execute restic ls with the same backend/auth options as restore.
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["ls", snapshot_id, "--long"]
         
         # Create worker
         worker = ResticWorker(self.restic_cmd, args, env)
@@ -6251,12 +6254,28 @@ class ResticManagerWindow(QMainWindow):
         password: str,
         parent_dialog,
         to_original: bool = False,
+        target_dir: str = "",
     ):
         """Restore selected snapshot paths to a chosen folder or original locations."""
-        if not paths_to_restore:
+        if self._restore_operation_running():
+            show_framed_message(
+                parent_dialog,
+                "Restore In Progress",
+                "Another restore is already running. Wait for it to finish first.",
+                kind="info",
+            )
+            return
+        if self._repository_status_blocks_foreground_operation("the restore"):
             return
 
+        item_label = (
+            f"{len(paths_to_restore)} item(s)"
+            if paths_to_restore
+            else "the entire snapshot"
+        )
         preview = "\n".join([f"  • {p}" for p in paths_to_restore[:10]])
+        if not preview:
+            preview = "  • All files and folders"
         if len(paths_to_restore) > 10:
             preview += f"\n  … and {len(paths_to_restore) - 10} more"
 
@@ -6282,7 +6301,7 @@ class ResticManagerWindow(QMainWindow):
             result = QMessageBox.warning(
                 parent_dialog,
                 "Confirm Restore to Original",
-                f"Restore {len(paths_to_restore)} item(s) to their ORIGINAL locations?\n\n"
+                f"Restore {item_label} to the ORIGINAL locations?\n\n"
                 "This can overwrite existing files.\n\n"
                 f"Items:\n{preview}",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -6295,18 +6314,19 @@ class ResticManagerWindow(QMainWindow):
                 return
             dest_label = "original locations"
         else:
-            target_dir = QFileDialog.getExistingDirectory(
-                parent_dialog,
-                "Select Restore Target Directory",
-                os.path.expanduser("~"),
-            )
+            if not target_dir:
+                target_dir = QFileDialog.getExistingDirectory(
+                    parent_dialog,
+                    "Select Restore Target Directory",
+                    os.path.expanduser("~"),
+                )
             if not target_dir:
                 return
 
             result = QMessageBox.question(
                 parent_dialog,
                 "Confirm Restore",
-                f"Restore {len(paths_to_restore)} item(s) to:\n{target_dir}\n\n"
+                f"Restore {item_label} to:\n{target_dir}\n\n"
                 f"Items:\n{preview}",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
@@ -6314,37 +6334,51 @@ class ResticManagerWindow(QMainWindow):
                 return
             dest_label = target_dir
 
+        try:
+            check_path = target_dir
+            while not os.path.exists(check_path):
+                parent = os.path.dirname(check_path)
+                if not parent or parent == check_path:
+                    break
+                check_path = parent
+            if check_path and os.path.exists(check_path):
+                free_gb = shutil.disk_usage(check_path).free / (1024**3)
+                if free_gb < 1 and not show_framed_message(
+                    parent_dialog,
+                    "Low Disk Space",
+                    f"Only {free_gb:.2f} GB is free at the restore destination.\n\n"
+                    "Continue with the restore anyway?",
+                    kind="warning",
+                    buttons="yes_no",
+                ):
+                    return
+        except Exception as exc:
+            self.log(f"Warning: Could not check restore disk space: {exc}")
+
         short_id = str(snapshot_id)[:8]
         self.log(
-            f"Restoring {len(paths_to_restore)} item(s) from snapshot {short_id} "
+            f"Restoring {item_label} from snapshot {short_id} "
             f"({'to original via ' + target_dir if to_original else 'to ' + target_dir})"
         )
-
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "restore", snapshot_id, "--target", target_dir]
-        for path in paths_to_restore:
-            include = str(path).strip().lstrip("/")
-            if include:
-                args.extend(["--include", include])
 
         progress, progress_label, _ = make_framed_progress_dialog(
             parent_dialog,
             "Restoring Files",
-            f"Restoring {len(paths_to_restore)} item(s)…\nPlease wait.",
+            f"Restoring {item_label}…\nPlease wait.",
             modal=True,
             min_width=420,
         )
         progress.show()
         QApplication.processEvents()
 
-        worker = ResticWorker(self.restic_cmd, args, env, timeout=3600, use_progress=True)
-
         def _on_progress(msg: str, lbl=progress_label) -> None:
             text = (msg or "").strip()
             if text:
-                lbl.setText(f"Restoring {len(paths_to_restore)} item(s)…\n{text[:160]}")
+                lbl.setText(f"Restoring {item_label}…\n{text[:160]}")
 
         def _on_done(success, stdout, stderr, dlg=progress, temp=target_dir, original=to_original):
+            if getattr(self, "_browse_restore_worker", None) is worker:
+                self._browse_restore_worker = None
             try:
                 dlg.close()
                 dlg.deleteLater()
@@ -6402,19 +6436,25 @@ class ResticManagerWindow(QMainWindow):
             QMessageBox.information(
                 parent_dialog,
                 "Restore Complete",
-                f"Successfully restored {len(paths_to_restore)} item(s) to:\n{dest_label}",
+                f"Successfully restored {item_label} to:\n{dest_label}",
             )
-            self.log(f"Restore completed: {len(paths_to_restore)} item(s) → {dest_label}")
+            self.log(f"Restore completed: {item_label} → {dest_label}")
             show_notification(
                 title="Restore Complete",
-                message=f"Restored {len(paths_to_restore)} item(s).",
+                message=f"Restored {item_label}.",
                 icon_type="success",
                 duration="short",
             )
 
-        worker.progress.connect(_on_progress)
-        worker.finished.connect(_on_done)
-        worker.start()
+        worker = self._launch_restore_worker(
+            repo=repo,
+            password=password,
+            snapshot_id=snapshot_id,
+            target=target_dir,
+            paths=paths_to_restore,
+            on_progress=_on_progress,
+            on_finished=_on_done,
+        )
         parent_dialog._restore_worker = worker
         self._browse_restore_worker = worker  # prevent GC if parent drops ref
 
@@ -8339,20 +8379,90 @@ class ResticManagerWindow(QMainWindow):
             self.restore_snapshot_combo.addItem("Select a repository first")
             return
         
+        request_id = getattr(self, "_restore_page_catalog_request", 0) + 1
+        self._restore_page_catalog_request = request_id
+        self.load_restore_snapshots(
+            repo_name,
+            lambda success, snapshots, error: self._apply_restore_snapshots_to_page(
+                success, snapshots, error, repo_name, request_id
+            ),
+        )
+
+    def load_restore_snapshots(self, repo_name: str, callback) -> None:
+        """Load a repository's snapshot catalog for either restore UI."""
         repo, password = self.get_repository_by_name(repo_name)
         if not repo:
-            self.restore_snapshot_combo.clear()
-            self.restore_snapshot_combo.addItem("Repository not found")
+            callback(False, [], "Repository not found")
             return
-        
-        # Load snapshots
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "snapshots", "--json"]
-        
-        # Store worker reference to prevent garbage collection
-        self._restore_snapshot_worker = ResticWorker(self.restic_cmd, args, env)
-        self._restore_snapshot_worker.finished.connect(lambda success, stdout, stderr: self._on_restore_snapshots_loaded(success, stdout, stderr))
-        self._restore_snapshot_worker.start()
+
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["snapshots", "--json"]
+        worker = ResticWorker(self.restic_cmd, args, env)
+        if not hasattr(self, "_restore_catalog_workers"):
+            self._restore_catalog_workers = []
+        self._restore_catalog_workers.append(worker)
+
+        def _done(success, stdout, stderr, catalog_worker=worker):
+            snapshots = []
+            error = stderr or ""
+            if success:
+                try:
+                    parsed = json.loads(stdout)
+                    snapshots = parsed if isinstance(parsed, list) else []
+                    if not snapshots:
+                        error = "No snapshots available"
+                except Exception as exc:
+                    success = False
+                    error = f"Error parsing snapshots: {exc}"
+            callback(bool(success and snapshots), snapshots, error)
+            catalog_worker.deleteLater()
+            if catalog_worker in self._restore_catalog_workers:
+                self._restore_catalog_workers.remove(catalog_worker)
+
+        worker.finished.connect(_done)
+        worker.start()
+
+    def _apply_restore_snapshots_to_page(
+        self,
+        success: bool,
+        snapshots: list[dict],
+        error: str,
+        expected_repo: str,
+        request_id: int,
+    ) -> None:
+        """Populate the full Restore page from the shared catalog loader."""
+        if (
+            self.restore_repo_combo.currentText() != expected_repo
+            or request_id != getattr(self, "_restore_page_catalog_request", 0)
+        ):
+            return
+        self.restore_snapshot_combo.clear()
+        if not success:
+            self.restore_snapshot_combo.addItem(error or "Failed to load snapshots")
+            self.log(f"Error loading snapshots: {error}")
+            return
+
+        self._restore_snapshots_cache = snapshots
+        for snapshot in reversed(snapshots):
+            snap_id = snapshot.get("short_id", snapshot.get("id", "unknown")[:8])
+            snap_time = snapshot.get("time", "unknown")
+            snap_host = snapshot.get("hostname", "unknown")
+            snap_paths = snapshot.get("paths", [])
+            try:
+                dt = datetime.fromisoformat(snap_time.replace("Z", "+00:00"))
+                time_str = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                time_str = snap_time
+            paths_str = ", ".join(snap_paths[:2])
+            if len(snap_paths) > 2:
+                paths_str += f" (+{len(snap_paths)-2} more)"
+            display = f"{snap_id} - {time_str} - {snap_host} - {paths_str}"
+            self.restore_snapshot_combo.addItem(display, snapshot.get("id", snap_id))
+        if self.restore_snapshot_combo.count() > 0:
+            self.restore_snapshot_combo.setCurrentIndex(0)
+            self.log(
+                f"Auto-selected latest snapshot: {self.restore_snapshot_combo.currentText()}"
+            )
     
     def _on_restore_snapshots_loaded(self, success, stdout, stderr):
         """Callback when snapshots are loaded for restore"""
@@ -8638,7 +8748,15 @@ class ResticManagerWindow(QMainWindow):
         # Show dialog with file tree (same chrome as Browse Files / Snapshot Content)
         self._show_snapshot_browser_for_restore(snapshot_id, snapshot_data, repo, password, repo_name)
     
-    def _show_snapshot_browser_for_restore(self, snapshot_id, snapshot_data, repo, password, repo_name):
+    def _show_snapshot_browser_for_restore(
+        self,
+        snapshot_id,
+        snapshot_data,
+        repo,
+        password,
+        repo_name,
+        on_paths_selected=None,
+    ):
         """Show framed snapshot browser for picking a restore path."""
         short_id = str(snapshot_data.get("short_id") or str(snapshot_id)[:8])
         snapshot_time = snapshot_data.get("time", "Unknown")
@@ -8661,6 +8779,7 @@ class ResticManagerWindow(QMainWindow):
         dialog._full_id = snapshot_id
         dialog._all_files = []
         dialog._file_tree_items = {}
+        dialog._paths_selected_callback = on_paths_selected
 
         # Meta strip
         meta = QFrame()
@@ -8933,6 +9052,12 @@ class ResticManagerWindow(QMainWindow):
             return
 
         parent = dialog or self
+        callback = getattr(dialog, "_paths_selected_callback", None) if dialog else None
+        if callback is not None:
+            callback(paths)
+            if dialog is not None:
+                dialog.accept()
+            return
         if len(paths) == 1:
             self.restore_path_input.setText(paths[0])
             self.log(f"Path set in restore input: {paths[0]}")
@@ -8977,9 +9102,97 @@ class ResticManagerWindow(QMainWindow):
         )
         if directory:
             self.restore_target_input.setText(directory)
+
+    def _restore_operation_running(self) -> bool:
+        """Return whether either restore UI already owns an active worker."""
+        for attr in ("_restore_worker", "_browse_restore_worker"):
+            worker = getattr(self, attr, None)
+            try:
+                if isinstance(worker, QThread) and worker.isRunning():
+                    return True
+            except RuntimeError:
+                continue
+        return False
+
+    def open_restore_wizard(self):
+        """Collect and launch a restore through the guided workflow."""
+        from ui.restore_wizard import RestoreWizard
+
+        dialog = RestoreWizard(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        request = dialog.restore_request()
+        repo, password = self.get_repository_by_name(request["repo_name"])
+        if not repo:
+            show_framed_message(
+                self,
+                "Repository Missing",
+                "The selected repository is no longer configured.",
+                kind="error",
+            )
+            return
+        self._restore_paths_from_snapshot(
+            request["paths"],
+            snapshot_id=request["snapshot_id"],
+            repo=repo,
+            password=password,
+            parent_dialog=self,
+            to_original=request["to_original"],
+            target_dir=request["target"],
+        )
+
+    def _launch_restore_worker(
+        self,
+        *,
+        repo: dict,
+        password: str,
+        snapshot_id: str,
+        target: str,
+        paths: list[str] | None = None,
+        on_progress=None,
+        on_progress_data=None,
+        on_finished=None,
+    ) -> ResticWorker:
+        """Build and launch the shared restore command used by every restore UI."""
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + [
+            "restore",
+            snapshot_id,
+            "--target",
+            target,
+        ]
+        for path in paths or []:
+            include = str(path).strip().lstrip("/")
+            if include:
+                args.extend(["--include", include])
+        self.log(f"Full restore command: restic {' '.join(args)}")
+
+        worker = ResticWorker(
+            self.restic_cmd,
+            args,
+            env,
+            timeout=3600,
+            use_progress=True,
+        )
+        if on_progress is not None:
+            worker.progress.connect(on_progress)
+        if on_progress_data is not None:
+            worker.progress_data.connect(on_progress_data)
+        if on_finished is not None:
+            worker.finished.connect(on_finished)
+        worker.start()
+        return worker
     
     def start_restore(self):
         """Start file restore operation"""
+        if self._restore_operation_running():
+            show_framed_message(
+                self,
+                "Restore In Progress",
+                "Another restore is already running. Wait for it to finish first.",
+                kind="info",
+            )
+            return
         if self._repository_status_blocks_foreground_operation("the restore"):
             return
         repo_name = self.restore_repo_combo.currentText()
@@ -9100,22 +9313,6 @@ class ResticManagerWindow(QMainWindow):
         self.restore_progress.setRange(0, 0)  # Indeterminate
         self.restore_log.clear()
         
-        # Build restore command
-        env = self._repo_env(repo, password)
-        args = repo_restic_prefix(repo) + ["restore", snapshot_id, "--target", target]
-        
-        # Use --include filter when a specific path is selected
-        if restore_path:
-            # Clean up the path - remove leading/trailing slashes and whitespace
-            restore_path_clean = restore_path.strip().lstrip('/')
-            
-            # Use the exact path as stored in the snapshot
-            args.extend(["--include", restore_path_clean])
-            
-            self.log(f"Restore path filter (include): {restore_path_clean}")
-        
-        self.log(f"Full restore command: restic {' '.join(args)}")
-        
         # Log restore information
         if restore_to_original:
             self.log(f"Starting restore from {repo_name}/{snapshot_id} to temp location (will move to original)")
@@ -9134,12 +9331,16 @@ class ResticManagerWindow(QMainWindow):
             "temp_target": target
         }
         
-        # Start restore worker with progress monitoring
-        self._restore_worker = ResticWorker(self.restic_cmd, args, env, timeout=3600, use_progress=True)
-        self._restore_worker.progress.connect(lambda text: self.restore_log.appendPlainText(text))
-        self._restore_worker.progress_data.connect(self._on_restore_progress)
-        self._restore_worker.finished.connect(self._on_restore_complete)
-        self._restore_worker.start()
+        self._restore_worker = self._launch_restore_worker(
+            repo=repo,
+            password=password,
+            snapshot_id=snapshot_id,
+            target=target,
+            paths=[restore_path] if restore_path else [],
+            on_progress=lambda text: self.restore_log.appendPlainText(text),
+            on_progress_data=self._on_restore_progress,
+            on_finished=self._on_restore_complete,
+        )
     
     def _on_restore_progress(self, progress_info):
         """Update restore progress bar"""
@@ -9149,6 +9350,7 @@ class ResticManagerWindow(QMainWindow):
     
     def _on_restore_complete(self, success, stdout, stderr):
         """Callback when restore is complete"""
+        self._restore_worker = None
         self.restore_progress.setVisible(False)
         
         if success:
@@ -9599,94 +9801,133 @@ class ResticManagerWindow(QMainWindow):
     
     # Backup Job Management Methods
     def add_backup_job(self):
-        """Add a new backup job"""
-        dialog = BackupJobDialog(self, self.settings_manager)
+        """Open the guided flow for a new backup job."""
+        self.open_backup_wizard()
+
+    def open_backup_wizard(self):
+        """Create, persist, and optionally run a backup from the guided wizard."""
+        from ui.backup_wizard import BackupWizard
+
+        dialog = BackupWizard(self, self.settings_manager)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             job_data = dialog.get_job_data()
-            
-            # Validate job data
-            if not job_data["name"]:
-                QMessageBox.warning(self, "Invalid Job", "Please enter a job name.")
-                return
-            
-            if not job_data["paths"]:
-                QMessageBox.warning(self, "Invalid Job", "Please add at least one path to backup.")
-                return
-            
-            # Check for duplicate names
-            jobs = self.settings_manager.get("backup_jobs")
-            if any(j["name"] == job_data["name"] for j in jobs):
-                QMessageBox.warning(self, "Duplicate Job", f"A job named '{job_data['name']}' already exists.")
-                return
-            
-            # Add job
+            if self._persist_backup_job(job_data):
+                if dialog.run_now():
+                    self.run_backup_job(job_data)
+
+    def _persist_backup_job(self, job_data: dict, *, old_name: str = "") -> bool:
+        """Validate and persist create/edit data, including OS scheduling."""
+        name = str(job_data.get("name") or "").strip()
+        if not name:
+            QMessageBox.warning(self, "Invalid Job", "Please enter a job name.")
+            return False
+        if (
+            any(char in name for char in '<>:"/\\|?*`$')
+            or any(ord(char) < 32 for char in name)
+        ):
+            QMessageBox.warning(
+                self,
+                "Invalid Job",
+                "The job name contains characters Windows cannot use.",
+            )
+            return False
+        if not job_data.get("repositories"):
+            QMessageBox.warning(
+                self, "Invalid Job", "Please select at least one repository."
+            )
+            return False
+        if (
+            job_data.get("schedule", {}).get("enabled")
+            and len(job_data.get("repositories") or []) > 1
+        ):
+            QMessageBox.warning(
+                self,
+                "Scheduling Limitation",
+                "Scheduled backup jobs currently support one repository.",
+            )
+            return False
+        if not job_data.get("paths"):
+            QMessageBox.warning(
+                self, "Invalid Job", "Please add at least one path to backup."
+            )
+            return False
+
+        jobs = list(self.settings_manager.get("backup_jobs") or [])
+        if any(
+            str(job.get("name") or "") == name
+            and str(job.get("name") or "") != old_name
+            for job in jobs
+        ):
+            QMessageBox.warning(
+                self, "Duplicate Job", f"A job named '{name}' already exists."
+            )
+            return False
+
+        editing = bool(old_name)
+        if editing:
+            replaced = False
+            for index, existing in enumerate(jobs):
+                if existing.get("name") == old_name:
+                    jobs[index] = job_data
+                    replaced = True
+                    break
+            if not replaced:
+                QMessageBox.warning(self, "Job Missing", "The backup job no longer exists.")
+                return False
+        else:
             jobs.append(job_data)
-            self.settings_manager.set("backup_jobs", jobs)
-            self.settings_manager.save_settings()
-            
-            # Create scheduled task if scheduling is enabled
-            if job_data.get("schedule", {}).get("enabled"):
-                success, message = self.scheduler_manager.create_scheduled_task(job_data["name"], job_data)
-                if success:
-                    self.log(f"Created scheduled task for job: {job_data['name']}")
-                else:
-                    QMessageBox.warning(self, "Scheduling Error", 
-                                      f"Job created, but failed to create scheduled task:\n{message}")
-                    self.log(f"Failed to create scheduled task: {message}")
-            
-            self.refresh_backup_jobs_list()
-            self.log(f"Added backup job: {job_data['name']}")
-            QMessageBox.information(self, "Job Created", f"Backup job '{job_data['name']}' created successfully!")
+
+        self.settings_manager.set("backup_jobs", jobs)
+        self.settings_manager.save_settings()
+
+        if editing and old_name != name:
+            self.scheduler_manager.delete_scheduled_task(old_name)
+        schedule_enabled = bool(job_data.get("schedule", {}).get("enabled"))
+        if schedule_enabled:
+            if editing:
+                success, message = self.scheduler_manager.update_scheduled_task(
+                    name, job_data
+                )
+            else:
+                success, message = self.scheduler_manager.create_scheduled_task(
+                    name, job_data
+                )
+            if success:
+                self.log(
+                    f"{'Updated' if editing else 'Created'} scheduled task for job: {name}"
+                )
+            else:
+                job_data["schedule"]["enabled"] = False
+                self.settings_manager.set("backup_jobs", jobs)
+                self.settings_manager.save_settings()
+                QMessageBox.warning(
+                    self,
+                    "Scheduling Error",
+                    "The job was saved with scheduling disabled because the "
+                    f"scheduled task could not be created:\n{message}",
+                )
+                self.log(f"Failed to save scheduled task: {message}")
+        elif editing:
+            self.scheduler_manager.delete_scheduled_task(name)
+
+        self.refresh_backup_jobs_list()
+        if hasattr(self, "refresh_dashboard_jobs_table"):
+            self.refresh_dashboard_jobs_table()
+        self.log(f"{'Updated' if editing else 'Added'} backup job: {name}")
+        QMessageBox.information(
+            self,
+            "Job Updated" if editing else "Job Created",
+            f"Backup job '{name}' {'updated' if editing else 'created'} successfully!",
+        )
+        return True
     
     def edit_backup_job(self, job):
         """Edit an existing backup job"""
         dialog = BackupJobDialog(self, self.settings_manager, job)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             job_data = dialog.get_job_data()
-            
-            # Validate job data
-            if not job_data["name"]:
-                QMessageBox.warning(self, "Invalid Job", "Please enter a job name.")
-                return
-            
-            if not job_data["paths"]:
-                QMessageBox.warning(self, "Invalid Job", "Please add at least one path to backup.")
-                return
-            
-            # Update job
-            jobs = self.settings_manager.get("backup_jobs")
             old_job_name = job["name"]
-            for i, j in enumerate(jobs):
-                if j["name"] == old_job_name:
-                    jobs[i] = job_data
-                    break
-            
-            self.settings_manager.set("backup_jobs", jobs)
-            self.settings_manager.save_settings()
-            
-            # Update scheduled task
-            # First delete the old task (in case job name changed)
-            if old_job_name != job_data["name"]:
-                self.scheduler_manager.delete_scheduled_task(old_job_name)
-            
-            # Create/update scheduled task if scheduling is enabled
-            if job_data.get("schedule", {}).get("enabled"):
-                success, message = self.scheduler_manager.update_scheduled_task(job_data["name"], job_data)
-                if success:
-                    self.log(f"Updated scheduled task for job: {job_data['name']}")
-                else:
-                    QMessageBox.warning(self, "Scheduling Error", 
-                                      f"Job updated, but failed to update scheduled task:\n{message}")
-                    self.log(f"Failed to update scheduled task: {message}")
-            else:
-                # Delete scheduled task if scheduling was disabled
-                self.scheduler_manager.delete_scheduled_task(job_data["name"])
-            
-            self.refresh_backup_jobs_list()
-            if hasattr(self, "refresh_dashboard_jobs_table"):
-                self.refresh_dashboard_jobs_table()
-            self.log(f"Updated backup job: {job_data['name']}")
-            QMessageBox.information(self, "Job Updated", f"Backup job '{job_data['name']}' updated successfully!")
+            self._persist_backup_job(job_data, old_name=old_job_name)
     
     def delete_backup_job(self, job):
         """Delete a backup job"""
@@ -12538,6 +12779,12 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         # Check for running copy
         if hasattr(self, '_copy_worker') and self._copy_worker.isRunning():
             running_operations.append("Copy operation")
+        if (
+            hasattr(self, "_browse_restore_worker")
+            and self._browse_restore_worker is not None
+            and self._browse_restore_worker.isRunning()
+        ):
+            running_operations.append("Restore operation")
         
         # Warn about running operations
         if running_operations:
@@ -12585,7 +12832,7 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             '_unlock_worker', '_stats_worker', '_verify_worker', '_restore_worker',
             '_backup_worker', '_init_worker', '_test_worker', '_lock_check_worker',
             '_auto_unlock_worker', '_cancel_unlock_worker', '_repo_check_worker',
-            '_repo_status_worker'
+            '_repo_status_worker', '_browse_restore_worker'
         ]
         
         threads_to_wait = []
@@ -12599,6 +12846,10 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         # Also wait for content workers
         if hasattr(self, '_content_workers'):
             for worker in self._content_workers:
+                if isinstance(worker, QThread) and worker.isRunning():
+                    threads_to_wait.append(worker)
+        if hasattr(self, "_restore_catalog_workers"):
+            for worker in self._restore_catalog_workers:
                 if isinstance(worker, QThread) and worker.isRunning():
                     threads_to_wait.append(worker)
         
