@@ -109,7 +109,7 @@ except ImportError:
     wintypes = None
 
 # Version and debug settings
-VERSION = "v2.1.o"
+VERSION = "v2.1.1"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 _STARTUP_WINDOW_PROBE = None  # installed when --debug; traces flash windows

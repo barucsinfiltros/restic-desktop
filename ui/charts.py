@@ -50,12 +50,106 @@ def _darken(color: QColor, amount: float = 0.22) -> QColor:
     )
 
 
+def _fmt_bytes_short(n: float) -> str:
+    """Compact byte label for aggregated chart slices."""
+    n = max(0.0, float(n))
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if n < 1024.0 or unit == "PB":
+            if unit == "B":
+                return f"{int(n)} B"
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} PB"
+
+
+# Muted slate for the aggregated "Other" slice — readable on light and dark cards.
+_OTHER_SLICE_COLOR = "#64748b"
+
+
+def _group_small_slices(
+    names: Sequence[str],
+    sizes: Sequence[float],
+    colors: Sequence[str],
+    size_labels: Sequence[str],
+    *,
+    min_pct: float = 0.04,
+    max_named: int = 6,
+) -> tuple[list[str], list[float], list[str], list[str], list[str]]:
+    """Keep dominant slices; merge tiny ones into a single Other segment.
+
+    Slices under ``min_pct`` of the total (default 4%) are folded into Other.
+    At most ``max_named`` named slices remain before Other (so the ring stays
+    readable instead of a speckled pie).
+
+    Returns names, sizes, colors, size_labels, and per-row tooltips (full detail
+    for Other rows listing folded repository names).
+    """
+    items = [
+        (str(n), max(0.0, float(s)), str(c), str(lbl))
+        for n, s, c, lbl in zip(names, sizes, colors, size_labels)
+    ]
+    total = sum(s for _, s, _, _ in items)
+
+    def _pack(
+        rows: list[tuple[str, float, str, str]],
+        tips: list[str] | None = None,
+    ) -> tuple[list[str], list[float], list[str], list[str], list[str]]:
+        names_o = [n for n, _, _, _ in rows]
+        sizes_o = [s for _, s, _, _ in rows]
+        colors_o = [c for _, _, c, _ in rows]
+        labels_o = [lbl for _, _, _, lbl in rows]
+        tips_o = tips if tips is not None else [
+            f"{n} — {lbl}" if lbl else n for n, lbl in zip(names_o, labels_o)
+        ]
+        return names_o, sizes_o, colors_o, labels_o, tips_o
+
+    if total <= 0 or len(items) <= 1:
+        return _pack(items)
+
+    items.sort(key=lambda x: -x[1])
+    main: list[tuple[str, float, str, str]] = []
+    other_size = 0.0
+    other_names: list[str] = []
+
+    for name, size, color, label in items:
+        if size / total < min_pct:
+            other_size += size
+            other_names.append(name)
+        else:
+            main.append((name, size, color, label))
+
+    # Cap named slices so the legend/ring stay tidy.
+    if len(main) > max_named:
+        for name, size, _color, _label in main[max_named:]:
+            other_size += size
+            other_names.append(name)
+        main = main[:max_named]
+
+    if other_size <= 0:
+        return _pack(main)
+
+    if not main and len(other_names) <= 2:
+        # All slices were tiny and few — keep them visible instead of one Other.
+        return _pack(items)
+
+    other_label = _fmt_bytes_short(other_size)
+    other_title = f"Other ({len(other_names)})" if len(other_names) > 1 else "Other"
+    main.append((other_title, other_size, _OTHER_SLICE_COLOR, other_label))
+
+    tips = [
+        f"{n} — {lbl}" if lbl else n for n, _, _, lbl in main[:-1]
+    ]
+    folded = ", ".join(other_names)
+    tips.append(f"{other_title}: {folded} — {other_label}")
+    return _pack(main, tips)
+
+
 class _DonutRing(QWidget):
     """Painted doughnut ring with centre total label."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setMinimumSize(160, 160)
+        self.setMinimumSize(168, 168)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._sizes: list[float] = []
         self._colors: list[QColor] = []
@@ -101,7 +195,8 @@ class _DonutRing(QWidget):
         cx = self.width() / 2.0
         cy = self.height() / 2.0
         outer = QRectF(cx - side / 2, cy - side / 2, side, side)
-        ring_width = side * 0.22
+        # Thicker ring reads more finished; hole still fits the centre total.
+        ring_width = side * 0.26
         inner = QRectF(outer).adjusted(ring_width, ring_width, -ring_width, -ring_width)
 
         if total <= 0:
@@ -131,18 +226,19 @@ class _DonutRing(QWidget):
             painter.fillPath(path, color)
 
             pct = size / total * 100.0
-            if pct >= 5.5 and span > 14.0:
+            # Only label substantial wedges so tiny % text doesn't clutter the ring.
+            if pct >= 8.0 and span > 18.0:
                 mid = start_deg - span / 2.0
                 rad = math.radians(mid)
                 r = (side / 2.0) - ring_width / 2.0
                 lx = cx + math.cos(rad) * r
                 ly = cy - math.sin(rad) * r
-                painter.setPen(QColor(255, 255, 255, 230))
+                painter.setPen(QColor(255, 255, 255, 235))
                 font = painter.font()
-                font.setPointSize(8)
+                font.setPointSize(9)
                 font.setBold(True)
                 painter.setFont(font)
-                label = f"{pct:.1f}%"
+                label = f"{pct:.0f}%"
                 br = painter.fontMetrics().boundingRect(label)
                 painter.drawText(
                     int(lx - br.width() / 2),
@@ -153,27 +249,27 @@ class _DonutRing(QWidget):
 
             start_deg -= span
 
-        # Centre labels
+        # Centre labels — size number slightly larger for the main readout.
         painter.setPen(self._text)
         title_font = QFont(painter.font())
-        title_font.setPointSize(14)
+        title_font.setPointSize(17)
         title_font.setBold(True)
         painter.setFont(title_font)
         title_br = painter.fontMetrics().boundingRect(self._total_label)
         painter.drawText(
             int(cx - title_br.width() / 2),
-            int(cy - 2),
+            int(cy - 1),
             self._total_label,
         )
         painter.setPen(self._muted)
         cap_font = QFont(painter.font())
-        cap_font.setPointSize(9)
+        cap_font.setPointSize(10)
         cap_font.setBold(False)
         painter.setFont(cap_font)
         cap_br = painter.fontMetrics().boundingRect(self._total_caption)
         painter.drawText(
             int(cx - cap_br.width() / 2),
-            int(cy + title_br.height() - 2),
+            int(cy + title_br.height() - 1),
             self._total_caption,
         )
         painter.end()
@@ -215,7 +311,13 @@ class _DonutLegend(QWidget):
                     f"color: {self._muted}; background: transparent; border: none; font-size: 11px;"
                 )
 
-    def set_items(self, names: Sequence[str], sizes: Sequence[str], colors: Sequence[str]) -> None:
+    def set_items(
+        self,
+        names: Sequence[str],
+        sizes: Sequence[str],
+        colors: Sequence[str],
+        tooltips: Sequence[str] | None = None,
+    ) -> None:
         while self._root.count():
             item = self._root.takeAt(0)
             w = item.widget()
@@ -223,10 +325,15 @@ class _DonutLegend(QWidget):
                 w.deleteLater()
 
         self._items = list(zip(names, sizes, colors))
-        for name, size_text, color in self._items:
+        for i, (name, size_text, color) in enumerate(self._items):
             row = QWidget(self)
             row.setObjectName("donutLegendRow")
-            row.setToolTip(f"{name} — {size_text}")
+            tip = (
+                tooltips[i]
+                if tooltips is not None and i < len(tooltips) and tooltips[i]
+                else (f"{name} — {size_text}" if size_text else name)
+            )
+            row.setToolTip(tip)
             hl = QHBoxLayout(row)
             hl.setContentsMargins(0, 0, 0, 0)
             hl.setSpacing(8)
@@ -377,15 +484,21 @@ class DonutChart(QFrame):
             self._legend.set_items([], [], [])
             return
 
+        labels = list(size_labels) if size_labels is not None else [""] * len(names)
+        while len(labels) < len(names):
+            labels.append("")
+        names_g, sizes_g, colors_g, labels_g, tips_g = _group_small_slices(
+            names, sizes, colors, labels
+        )
+
         self._stack.setCurrentIndex(1)
         self._ring.set_data(
-            sizes,
-            colors,
+            sizes_g,
+            colors_g,
             total_label=total_label,
             empty_message=empty_message,
         )
-        labels = list(size_labels) if size_labels is not None else [""] * len(names)
-        self._legend.set_items(names, labels, colors)
+        self._legend.set_items(names_g, labels_g, colors_g, tips_g)
         self.update()
 
     def clear(self, message: str = 'Click "Refresh Dashboard" to load data') -> None:
@@ -393,7 +506,7 @@ class DonutChart(QFrame):
 
 
 class RoundedBarChart(QWidget):
-    """Vertical bars with rounded tops; names via bottom legend + hover tooltip."""
+    """Horizontal repository bars with inline names and hover tooltips."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -447,8 +560,8 @@ class RoundedBarChart(QWidget):
         pos = event.position()
         hit = -1
         for i, rect in enumerate(self._bar_rects):
-            # Generous hit area above/below bar for easier hover
-            hit_rect = QRectF(rect.left() - 2, 0, rect.width() + 4, self.height())
+            # Treat the full category row as a target, including very short bars.
+            hit_rect = QRectF(0, rect.top() - 4, self.width(), rect.height() + 8)
             if hit_rect.contains(pos):
                 hit = i
                 break
@@ -474,25 +587,6 @@ class RoundedBarChart(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.fillRect(self.rect(), self._bg)
 
-        left = 44
-        right = 12
-        top = 18
-        # Reserve room for wrapping colour legend (grow with repo count / name length)
-        plot_w = max(1.0, self.width() - left - right)
-        legend_h = self._legend_height(plot_w) if self._names else 8
-        bottom = legend_h + 8
-        # Keep a usable plot area even with many legend rows
-        min_plot_h = 80.0
-        if self.height() - top - bottom < min_plot_h and self._names:
-            legend_h = max(24.0, self.height() - top - min_plot_h - 8)
-            bottom = legend_h + 8
-        plot = QRectF(
-            left,
-            top,
-            plot_w,
-            max(1.0, self.height() - top - bottom),
-        )
-
         self._bar_rects = []
 
         if not self._values or sum(self._values) <= 0:
@@ -504,79 +598,98 @@ class RoundedBarChart(QWidget):
             painter.end()
             return
 
-        max_v = max(self._values) or 1.0
-        if max_v <= 5:
-            y_max = max(1.0, math.ceil(max_v))
-        else:
-            # Nice round upper bound (avoid ticks like 0,2,4,7,9 from plain ceil*1.15)
-            raw = max_v * 1.15
-            if raw <= 10:
-                y_max = float(math.ceil(raw))
-            else:
-                step = 5 if raw <= 50 else 10
-                y_max = float(math.ceil(raw / step) * step)
-
-        tick_font = painter.font()
+        tick_font = QFont(self.font())
         tick_font.setPointSize(8)
         painter.setFont(tick_font)
+        fm = painter.fontMetrics()
+
+        # Repository names sit beside their bars, replacing the detached legend.
+        longest_name = max((fm.horizontalAdvance(name) for name in self._names), default=0)
+        label_w = min(132.0, max(82.0, float(longest_name + 12)))
+        left = 12.0 + label_w
+        right = 38.0
+        top = 12.0
+        bottom = 34.0
+        plot = QRectF(
+            left,
+            top,
+            max(1.0, self.width() - left - right),
+            max(1.0, self.height() - top - bottom),
+        )
+
+        max_v = max(self._values) or 1.0
+        if max_v <= 5:
+            x_max = max(1.0, math.ceil(max_v))
+        else:
+            # A little headroom leaves space for values at the end of each bar.
+            raw = max_v * 1.15
+            if raw <= 10:
+                x_max = float(math.ceil(raw))
+            else:
+                step = 5 if raw <= 50 else 10
+                x_max = float(math.ceil(raw / step) * step)
+
         ticks = 4
         for i in range(ticks + 1):
             t = i / ticks
-            y = plot.bottom() - t * plot.height()
+            x = plot.left() + t * plot.width()
             painter.setPen(QPen(self._grid, 1, Qt.PenStyle.DashLine))
-            painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
-            # Prefer clean integers; snap mid-ticks to avoid awkward rounding gaps
-            val = int(round(y_max * t))
+            painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+            val = int(round(x_max * t))
             painter.setPen(self._muted)
             label = str(val)
             br = painter.fontMetrics().boundingRect(label)
             painter.drawText(
-                int(plot.left() - br.width() - 8),
-                int(y + br.height() / 3),
+                int(x - br.width() / 2),
+                int(plot.bottom() + br.height() + 3),
                 label,
             )
 
-        painter.save()
-        painter.setPen(self._muted)
-        yf = painter.font()
-        yf.setPointSize(9)
-        painter.setFont(yf)
-        painter.translate(14, plot.center().y())
-        painter.rotate(-90)
-        br = painter.fontMetrics().boundingRect(self._y_label)
-        painter.drawText(int(-br.width() / 2), 0, self._y_label)
-        painter.restore()
-
         n = len(self._values)
-        gap = plot.width() * 0.04
-        bar_w = (plot.width() - gap * (n + 1)) / max(1, n)
-        bar_w = max(10.0, min(bar_w, 48.0))
-        total_bars = n * bar_w + (n + 1) * gap
-        x0 = plot.left() + max(0.0, (plot.width() - total_bars) / 2) + gap
-        radius = min(10.0, bar_w * 0.35)
+        row_h = plot.height() / max(1, n)
+        bar_h = max(10.0, min(24.0, row_h * 0.56))
+        radius = bar_h / 2.0
+        label_rect = QRectF(8, 0, label_w - 4, bar_h + 4)
 
         for i, (name, value, color) in enumerate(
             zip(self._names, self._values, self._colors)
         ):
-            h = (value / y_max) * plot.height() if y_max else 0.0
-            x = x0 + i * (bar_w + gap)
-            y = plot.bottom() - h
-            rect = QRectF(x, y, bar_w, max(h, 0.0))
+            cy = plot.top() + row_h * (i + 0.5)
+            width = (value / x_max) * plot.width() if x_max else 0.0
+            rect = QRectF(plot.left(), cy - bar_h / 2.0, max(width, 0.0), bar_h)
             self._bar_rects.append(rect)
 
+            painter.setFont(tick_font)
+            painter.setPen(self._text if i == self._hover_index else self._muted)
+            label_rect.moveTop(cy - label_rect.height() / 2.0)
+            elided = fm.elidedText(
+                name,
+                Qt.TextElideMode.ElideRight,
+                int(label_rect.width()),
+            )
+            painter.drawText(
+                label_rect,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                elided,
+            )
+
             path = QPainterPath()
-            path.moveTo(rect.left(), rect.bottom())
-            path.lineTo(rect.left(), rect.top() + radius)
-            path.quadTo(rect.left(), rect.top(), rect.left() + radius, rect.top())
-            path.lineTo(rect.right() - radius, rect.top())
-            path.quadTo(rect.right(), rect.top(), rect.right(), rect.top() + radius)
-            path.lineTo(rect.right(), rect.bottom())
+            path.moveTo(rect.left(), rect.top())
+            path.lineTo(max(rect.left(), rect.right() - radius), rect.top())
+            path.quadTo(rect.right(), rect.top(), rect.right(), rect.center().y())
+            path.quadTo(
+                rect.right(),
+                rect.bottom(),
+                max(rect.left(), rect.right() - radius),
+                rect.bottom(),
+            )
+            path.lineTo(rect.left(), rect.bottom())
             path.closeSubpath()
 
             fill = color
             if i == self._hover_index:
                 fill = _lighten(color, 0.12)
-            grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+            grad = QLinearGradient(rect.topLeft(), rect.topRight())
             grad.setColorAt(0.0, _lighten(fill, 0.35))
             grad.setColorAt(1.0, _darken(fill, 0.18))
             painter.setPen(Qt.PenStyle.NoPen)
@@ -590,68 +703,21 @@ class RoundedBarChart(QWidget):
                 painter.setFont(vf)
                 label = str(int(value))
                 br = painter.fontMetrics().boundingRect(label)
+                label_x = min(rect.right() + 7, self.width() - br.width() - 4)
                 painter.drawText(
-                    int(rect.center().x() - br.width() / 2),
-                    int(rect.top() - 4),
+                    int(label_x),
+                    int(rect.center().y() + br.height() / 3),
                     label,
                 )
 
-        # Bottom colour legend — full names, wrap across rows; no ellipsis axis text
-        self._paint_legend(painter, QRectF(left, plot.bottom() + 10, plot.width(), legend_h - 4))
+        axis_font = QFont(self.font())
+        axis_font.setPointSize(9)
+        painter.setFont(axis_font)
+        painter.setPen(self._muted)
+        axis_br = painter.fontMetrics().boundingRect(self._y_label)
+        painter.drawText(
+            int(plot.center().x() - axis_br.width() / 2),
+            int(self.height() - 3),
+            self._y_label,
+        )
         painter.end()
-
-    def _legend_font(self) -> QFont:
-        font = QFont(self.font())
-        font.setPointSize(9)
-        font.setBold(False)
-        return font
-
-    def _legend_height(self, width: float) -> float:
-        """Pixels needed to paint every legend entry without clipping."""
-        fm = QFontMetrics(self._legend_font())
-        row_h = fm.height() + 6
-        x = 0.0
-        rows = 1
-        for name in self._names:
-            need = 12 + 6 + fm.horizontalAdvance(name) + 14
-            if x + need > width and x > 0:
-                rows += 1
-                x = 0.0
-            x += need
-        return float(rows * row_h + 4)
-
-    def _paint_legend(self, painter: QPainter, area: QRectF) -> None:
-        if not self._names:
-            return
-        font = self._legend_font()
-        painter.setFont(font)
-        fm = QFontMetrics(font)
-        x = area.left()
-        y = area.top()
-        row_h = fm.height() + 6
-        hidden = 0
-        for name, color in zip(self._names, self._colors):
-            text_w = fm.horizontalAdvance(name)
-            need = 12 + 6 + text_w + 14
-            if x + need > area.right() and x > area.left():
-                x = area.left()
-                y += row_h
-            if y + row_h > area.bottom() + 4:
-                hidden += 1
-                continue
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(color)
-            painter.drawEllipse(QPointF(x + 5, y + row_h / 2 - 1), 4, 4)
-            painter.setPen(self._muted)
-            painter.drawText(int(x + 14), int(y + fm.ascent() + 2), name)
-            x += need
-        if hidden:
-            # Extremely tight height: point at hover tooltips for the rest
-            painter.setPen(self._muted)
-            more = f"+{hidden} more (hover bars)"
-            br = fm.boundingRect(more)
-            painter.drawText(
-                int(area.right() - br.width()),
-                int(min(y + fm.ascent() + 2, area.bottom())),
-                more,
-            )
