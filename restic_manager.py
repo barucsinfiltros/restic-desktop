@@ -7311,9 +7311,10 @@ class ResticManagerWindow(QMainWindow):
 
         # Optional level picker when launched without an explicit type
         if check_type is None:
+            picker_parent = getattr(self, "_health_dialog", None) or self
             dlg = FramedDialog(
                 "Verify Repository",
-                self,
+                picker_parent,
                 show_maximize=False,
                 show_minimize=False,
                 modal=True,
@@ -7374,29 +7375,55 @@ class ResticManagerWindow(QMainWindow):
         self._verify_check_type = ctype
         self._verify_on_complete = on_complete
 
+        # Parent to the open Health dialog when present so progress isn't buried
+        # under that modal window.
+        progress_parent = getattr(self, "_health_dialog", None) or self
         progress = FramedDialog(
             f"Verifying — {check_label}",
-            self,
+            progress_parent,
             show_maximize=False,
             show_minimize=False,
-            modal=False,
+            modal=True,
         )
-        progress.setMinimumWidth(420)
+        progress.setMinimumWidth(460)
+        progress.setMinimumHeight(220)
         progress.body_layout.setContentsMargins(20, 16, 20, 20)
-        progress.body_layout.setSpacing(12)
-        progress.body_layout.addWidget(
-            QLabel(
-                f"Running {check_label} on {name}…\n\n"
-                "This may take several minutes.\n"
-                "You can close this window; the check continues in the background."
-            )
+        progress.body_layout.setSpacing(14)
+
+        status = QLabel(
+            f"Running <b>{check_label}</b> on <b>{name}</b>…\n\n"
+            "This may take several minutes depending on repository size."
         )
-        close_btn = QPushButton("Close (continues in background)")
-        close_btn.setObjectName("dialogSecondary")
-        close_btn.clicked.connect(progress.accept)
-        progress.body_layout.addWidget(close_btn)
+        status.setWordWrap(True)
+        status.setObjectName("pageSubtitle")
+        progress.body_layout.addWidget(status)
+
+        bar = QProgressBar()
+        bar.setRange(0, 0)  # indeterminate
+        bar.setFixedHeight(18)
+        bar.setTextVisible(False)
+        progress.body_layout.addWidget(bar)
+
+        detail = QLabel("Working…")
+        detail.setObjectName("settingsHint")
+        detail.setWordWrap(True)
+        progress.body_layout.addWidget(detail)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        hide_btn = QPushButton("Hide (continues in background)")
+        hide_btn.setObjectName("dialogSecondary")
+        hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        hide_btn.clicked.connect(progress.hide)
+        footer.addWidget(hide_btn)
+        progress.body_layout.addLayout(footer)
+
         self._verify_progress = progress
+        self._verify_progress_detail = detail
         progress.show()
+        progress.raise_()
+        progress.activateWindow()
+        QApplication.processEvents()
 
         env = build_repo_env(
             repo, password or "", password_manager=self.settings_manager.password_manager
@@ -7411,6 +7438,12 @@ class ResticManagerWindow(QMainWindow):
             self.restic_cmd, args, env, timeout=timeouts.get(ctype, 1800)
         )
         self._verify_worker.finished.connect(self._on_verify_complete)
+        if hasattr(self._verify_worker, "progress"):
+            self._verify_worker.progress.connect(
+                lambda msg: self._verify_progress_detail.setText(msg or "Working…")
+                if getattr(self, "_verify_progress_detail", None) is not None
+                else None
+            )
         self._verify_worker.start()
 
     def verify_repository(self):
@@ -7624,12 +7657,16 @@ class ResticManagerWindow(QMainWindow):
         on_complete = getattr(self, "_verify_on_complete", None)
         
         # Close progress dialog if still open
-        if hasattr(self, '_verify_progress'):
+        if hasattr(self, '_verify_progress') and self._verify_progress is not None:
             try:
                 self._verify_progress.close()
                 self._verify_progress.deleteLater()
             except Exception:
                 pass
+            self._verify_progress = None
+            self._verify_progress_detail = None
+
+        msg_parent = getattr(self, "_health_dialog", None) or self
         
         # Check if output suggests rebuilding index
         output_combined = (stdout or "") + (stderr or "")
@@ -7654,7 +7691,7 @@ class ResticManagerWindow(QMainWindow):
             if should_rebuild_index:
                 message += "\n\n⚠ Index rebuild recommended."
             
-            show_framed_message(self, "Verification Complete", message, kind="info")
+            show_framed_message(msg_parent, "Verification Complete", message, kind="info")
             self.log(f"Repository {repo_name} verified successfully ({check_type})")
             
             if should_rebuild_index:
@@ -7664,7 +7701,7 @@ class ResticManagerWindow(QMainWindow):
             
             if should_rebuild_index:
                 reply = show_framed_message(
-                    self,
+                    msg_parent,
                     "Verification Failed — Index Issues",
                     f"Repository verification failed with index issues:\n\n{error_msg[:400]}\n\n"
                     "The index may need to be rebuilt. Rebuild now?",
@@ -7676,7 +7713,7 @@ class ResticManagerWindow(QMainWindow):
                     self.rebuild_index()
             else:
                 show_framed_message(
-                    self,
+                    msg_parent,
                     "Verification Failed",
                     f"Repository verification failed:\n\n{error_msg[:500]}",
                     kind="error",
@@ -7700,6 +7737,9 @@ class ResticManagerWindow(QMainWindow):
         """Rebuild repository index"""
         repo_name = self.dashboard_repo_combo.currentText()
         if not repo_name:
+            # Prefer the repo that was just verified
+            repo_name = getattr(self, "_verify_repo_name", "") or ""
+        if not repo_name:
             show_framed_message(
                 self, "No Repository", "Please select a repository first.", kind="warning"
             )
@@ -7713,7 +7753,7 @@ class ResticManagerWindow(QMainWindow):
             return
         
         reply = show_framed_message(
-            self,
+            getattr(self, "_health_dialog", None) or self,
             "Rebuild Index",
             f"Rebuild index for repository '{repo_name}'?\n\n"
             "This recreates the repository index from scratch.\n"
@@ -10567,9 +10607,112 @@ try {{
             self.temp_restore_path_input.setText(directory)
 
     def clear_temp_restore_path(self):
-        """Clear the configured temporary restore path field."""
+        """Delete all files/folders inside the configured temp restore directory."""
+        path = ""
         if hasattr(self, "temp_restore_path_input"):
-            self.temp_restore_path_input.clear()
+            path = (self.temp_restore_path_input.text() or "").strip()
+        if not path:
+            path = (self.settings_manager.get("temp_restore_path") or "").strip()
+        if not path:
+            show_framed_message(
+                self,
+                "No Temp Path",
+                "Set a temp restore path first.",
+                kind="warning",
+            )
+            return
+
+        path = os.path.abspath(path)
+        # Refuse obviously dangerous roots
+        drive, tail = os.path.splitdrive(path)
+        normalized = os.path.normpath(path)
+        if not tail or tail in (os.sep, "/") or normalized in (
+            drive + os.sep,
+            drive + "/",
+            "/",
+        ):
+            show_framed_message(
+                self,
+                "Refused",
+                f"Refusing to clear system root path:\n{path}",
+                kind="error",
+            )
+            return
+
+        if not os.path.isdir(path):
+            show_framed_message(
+                self,
+                "Folder Missing",
+                f"Temp restore folder does not exist:\n{path}",
+                kind="warning",
+            )
+            return
+
+        try:
+            entries = list(os.scandir(path))
+        except OSError as exc:
+            show_framed_message(
+                self,
+                "Cannot Read Folder",
+                f"Could not list contents of:\n{path}\n\n{exc}",
+                kind="error",
+            )
+            return
+
+        if not entries:
+            show_framed_message(
+                self,
+                "Already Empty",
+                f"Temp restore folder is already empty:\n{path}",
+                kind="info",
+            )
+            return
+
+        if not show_framed_message(
+            self,
+            "Clear Temp Restore Folder",
+            f"Delete all contents inside:\n\n{path}\n\n"
+            f"{len(entries)} item(s) will be removed. The folder itself is kept.\n\n"
+            "Continue?",
+            kind="warning",
+            buttons="yes_no",
+        ):
+            return
+
+        deleted = 0
+        errors: list[str] = []
+        for entry in entries:
+            target = entry.path
+            try:
+                if entry.is_symlink() or entry.is_file():
+                    os.unlink(target)
+                    deleted += 1
+                elif entry.is_dir(follow_symlinks=False):
+                    shutil.rmtree(target)
+                    deleted += 1
+                else:
+                    os.unlink(target)
+                    deleted += 1
+            except OSError as exc:
+                errors.append(f"{os.path.basename(target)}: {exc}")
+
+        if errors:
+            show_framed_message(
+                self,
+                "Partially Cleared",
+                f"Removed {deleted} item(s) from:\n{path}\n\n"
+                f"Some items could not be deleted:\n"
+                + "\n".join(errors[:8]),
+                kind="warning",
+            )
+        else:
+            show_framed_message(
+                self,
+                "Temp Folder Cleared",
+                f"Removed {deleted} item(s) from:\n{path}",
+                kind="info",
+            )
+        self.log(f"Cleared temp restore folder ({deleted} item(s)): {path}")
     
     def change_theme(self, theme):
         """Change application theme"""

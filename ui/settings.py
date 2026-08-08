@@ -335,7 +335,7 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
             host.clear_temp_restore_path,
             parent=temp_field,
             min_width=72,
-            tooltip="Clear the configured temp restore path",
+            tooltip="Delete all files and folders inside the temp restore path",
         ),
         0,
     )
