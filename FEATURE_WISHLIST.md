@@ -12,14 +12,14 @@ Audience: people who want a proper restic app, not an enterprise Veeam/Acronis r
    - Email / toast / tray alert when the last backup failed and the app isn’t open
    - Simple health badge: “all jobs OK in the last 24h”
 
-2. **Verify / restore drills**
+2. **Verify / restore drills** ✅ Done
    - Guided “restore one file” flow
    - Periodic `restic check` reminder so users trust their backups
 
 3. **Exclude presets**
    - One-click excludes for common junk (Windows Temp / caches, `node_modules`, browser caches, etc.)
 
-4. **First-run wizard**
+4. **First-run wizard** ✅ Done
    - Create local repo → pick folders → schedule → test connection
    - Especially important for non-restic users
 
