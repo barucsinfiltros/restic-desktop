@@ -1437,20 +1437,43 @@ def build_stylesheet(theme: AppTheme) -> str:
             color: {t.text};
         }}
 
-        /* Logs find bar */
+        /* Logs toolbar */
+        #logsToolbarStrip {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
         #logsFindBar {{
             background: transparent;
             border: none;
         }}
         QLineEdit#logsFindEdit {{
-            min-height: 28px;
-            max-height: 32px;
+            min-height: 32px;
+            max-height: 36px;
         }}
-        #logsFindCount {{
+        #logsFindCount, #logsFindHint {{
             color: {t.muted};
             font-size: 11px;
+            font-weight: 600;
             background: transparent;
             border: none;
+        }}
+        QPushButton#logsFilterBtn {{
+            background-color: transparent;
+            border: none;
+            border-radius: 7px;
+            color: {t.muted};
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 12px;
+        }}
+        QPushButton#logsFilterBtn:hover {{
+            color: {t.text};
+            background-color: {soft_hex_rgba(t.text, 0.06)};
+        }}
+        QPushButton#logsFilterBtn:checked {{
+            color: {t.text};
+            background-color: {t.accent_soft};
         }}
         #FindBar {{
             background-color: {t.surface};
@@ -3239,6 +3262,21 @@ def build_stylesheet(theme: AppTheme) -> str:
         }}
         QTreeWidget#browseFileTree::item:hover {{
             background-color: {hover};
+        }}
+        QTreeWidget#browseFileTree::indicator {{
+            width: 14px;
+            height: 14px;
+            margin-right: 4px;
+        }}
+        QTreeWidget#browseFileTree::indicator:unchecked {{
+            border: 1px solid {t.border};
+            border-radius: 3px;
+            background-color: {t.surface};
+        }}
+        QTreeWidget#browseFileTree::indicator:checked {{
+            border: 1px solid {t.accent};
+            border-radius: 3px;
+            background-color: {t.accent};
         }}
         QTreeWidget#browseFileTree QHeaderView {{
             background-color: transparent;

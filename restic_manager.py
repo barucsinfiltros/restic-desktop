@@ -110,7 +110,7 @@ except ImportError:
     wintypes = None
 
 # Version and debug settings
-VERSION = "v2.2.0"
+VERSION = "v2.2.4"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 _STARTUP_WINDOW_PROBE = None  # installed when --debug; traces flash windows
@@ -6001,7 +6001,7 @@ class ResticManagerWindow(QMainWindow):
                             item_type = "File" if (is_last and not is_dir) else "Folder"
                             
                             # Create tree item
-                            item = QTreeWidgetItem()
+                            item = self._make_checkable_browse_item()
                             item.setText(0, part)  # Name
                             item.setText(1, item_type)  # Type
                             
@@ -6194,8 +6194,10 @@ class ResticManagerWindow(QMainWindow):
             file_tree.clearSelection()
             item.setSelected(True)
             file_tree.setCurrentItem(item)
+        if item is not None:
+            self._ensure_browse_item_checked(file_tree, item)
 
-        selected = file_tree.selectedItems()
+        selected = self._checked_tree_items(file_tree) or list(file_tree.selectedItems() or [])
         has_selection = bool(selected)
         can_expand = any(it.childCount() > 0 for it in selected) if selected else False
 
@@ -6229,11 +6231,48 @@ class ResticManagerWindow(QMainWindow):
             for it in selected:
                 it.setExpanded(False)
 
+    def _make_checkable_browse_item(self) -> QTreeWidgetItem:
+        """Tree item with a checkbox for multi-select without Ctrl/Shift."""
+        item = QTreeWidgetItem()
+        item.setFlags(
+            item.flags()
+            | Qt.ItemFlag.ItemIsUserCheckable
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsEnabled
+        )
+        item.setCheckState(0, Qt.CheckState.Unchecked)
+        return item
+
+    def _iter_browse_tree_items(self, file_tree):
+        """Depth-first yield of all items in a browse tree."""
+
+        def walk(item):
+            yield item
+            for i in range(item.childCount()):
+                yield from walk(item.child(i))
+
+        for i in range(file_tree.topLevelItemCount()):
+            yield from walk(file_tree.topLevelItem(i))
+
+    def _checked_tree_items(self, file_tree) -> list:
+        """Items with a checked checkbox (ignores placeholders without check state)."""
+        checked = []
+        for item in self._iter_browse_tree_items(file_tree):
+            try:
+                if item.checkState(0) == Qt.CheckState.Checked:
+                    checked.append(item)
+            except Exception:
+                continue
+        return checked
+
     def _paths_from_tree_selection(self, file_tree) -> list[str]:
-        """Unique snapshot paths from selected tree items."""
+        """Unique snapshot paths from checked items, else selected tree items."""
+        items = self._checked_tree_items(file_tree)
+        if not items:
+            items = list(file_tree.selectedItems() or [])
         paths: list[str] = []
         seen = set()
-        for item in file_tree.selectedItems():
+        for item in items:
             path = item.data(0, Qt.ItemDataRole.UserRole)
             if not path:
                 continue
@@ -6244,6 +6283,17 @@ class ResticManagerWindow(QMainWindow):
             paths.append(path)
         return paths
 
+    def _ensure_browse_item_checked(self, file_tree, item) -> None:
+        """Check an item when used as the target of a context action."""
+        if item is None:
+            return
+        try:
+            if item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                item.setCheckState(0, Qt.CheckState.Checked)
+        except Exception:
+            pass
+        file_tree.setCurrentItem(item)
+
     def _restore_selected_from_snapshot_browser(self, file_tree, dialog, *, to_original: bool = False):
         """Restore selected paths from the Snapshot Content browse dialog."""
         paths = self._paths_from_tree_selection(file_tree)
@@ -6251,7 +6301,7 @@ class ResticManagerWindow(QMainWindow):
             QMessageBox.warning(
                 dialog,
                 "No Selection",
-                "Please select files or folders to restore.",
+                "Tick files or folders to restore (checkboxes on the left).",
             )
             return
 
@@ -6527,24 +6577,16 @@ class ResticManagerWindow(QMainWindow):
         self._browse_restore_worker = worker  # prevent GC if parent drops ref
 
     def _copy_selected_tree_paths(self, file_tree, quiet: bool = False):
-        """Copy selected file paths from tree to clipboard"""
-        selected_items = file_tree.selectedItems()
-        if not selected_items:
+        """Copy checked (or selected) file paths from tree to clipboard"""
+        paths = self._paths_from_tree_selection(file_tree)
+        if not paths:
             return
         
-        # Get paths from selected items
-        paths = []
-        for item in selected_items:
-            path = item.data(0, Qt.ItemDataRole.UserRole)
-            if path:
-                paths.append(path)
-        
-        if paths:
-            clipboard_text = "\n".join(paths)
-            QApplication.clipboard().setText(clipboard_text)
-            self.log(f"Copied {len(paths)} path(s) to clipboard")
-            if not quiet:
-                QMessageBox.information(None, "Copied", f"Copied {len(paths)} path(s) to clipboard")
+        clipboard_text = "\n".join(paths)
+        QApplication.clipboard().setText(clipboard_text)
+        self.log(f"Copied {len(paths)} path(s) to clipboard")
+        if not quiet:
+            QMessageBox.information(None, "Copied", f"Copied {len(paths)} path(s) to clipboard")
     
     def _copy_selected_paths(self, file_list):
         """Copy selected file paths to clipboard (legacy list version)"""
@@ -8940,6 +8982,13 @@ class ResticManagerWindow(QMainWindow):
         search_input.setClearButtonEnabled(True)
         browser_layout.addWidget(search_input)
 
+        select_hint = QLabel(
+            "Tick the checkboxes to select files or folders — no Ctrl/Shift needed."
+        )
+        select_hint.setObjectName("pageSubtitle")
+        select_hint.setWordWrap(True)
+        browser_layout.addWidget(select_hint)
+
         file_tree = QTreeWidget()
         file_tree.setObjectName("browseFileTree")
         file_tree.setHeaderLabels(["Name", "Type", "Size", "Modified", "Permissions"])
@@ -8989,7 +9038,9 @@ class ResticManagerWindow(QMainWindow):
         use_path_btn = QPushButton("Use Selected Path")
         use_path_btn.setObjectName("dialogSecondary")
         use_path_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        use_path_btn.setToolTip("Set the selected path in the restore form")
+        use_path_btn.setToolTip(
+            "Use the checked path in the restore form (tick a single item)"
+        )
         use_path_btn.clicked.connect(
             lambda: self._copy_paths_to_restore_input(file_tree, dialog=dialog)
         )
@@ -9077,8 +9128,10 @@ class ResticManagerWindow(QMainWindow):
             file_tree.clearSelection()
             item.setSelected(True)
             file_tree.setCurrentItem(item)
+        if item is not None:
+            self._ensure_browse_item_checked(file_tree, item)
 
-        selected = file_tree.selectedItems()
+        selected = self._checked_tree_items(file_tree) or list(file_tree.selectedItems() or [])
         has_selection = bool(selected)
         can_expand = any(it.childCount() > 0 for it in selected) if selected else False
 
@@ -9117,25 +9170,15 @@ class ResticManagerWindow(QMainWindow):
                 it.setExpanded(False)
     
     def _copy_paths_to_restore_input(self, file_tree, dialog=None):
-        """Copy selected file paths from tree to restore path input"""
-        selected_items = file_tree.selectedItems()
-        if not selected_items:
+        """Copy checked (or selected) file paths from tree to restore path input"""
+        paths = self._paths_from_tree_selection(file_tree)
+        if not paths:
             show_framed_message(
                 dialog or self,
                 "No Selection",
-                "Please select a file or folder first.",
+                "Tick one or more files/folders (or select a row), then try again.",
                 kind="warning",
             )
-            return
-        
-        # Get paths from selected items
-        paths = []
-        for item in selected_items:
-            path = item.data(0, Qt.ItemDataRole.UserRole)
-            if path:
-                paths.append(path)
-        
-        if not paths:
             return
 
         parent = dialog or self
@@ -9163,7 +9206,7 @@ class ResticManagerWindow(QMainWindow):
                 parent,
                 "Copied",
                 f"Copied {len(paths)} paths to the clipboard.\n\n"
-                "Select a single item to set it as the restore path.",
+                "Tick a single item to set it as the restore path.",
                 kind="info",
             )
     
@@ -11389,6 +11432,12 @@ $arguments = @(
         
         mode_text = "Preview" if dry_run else "Applying"
         self.log(f"{mode_text} retention policy for {repo_name}")
+
+        # Show Policy mode so output is visible
+        if hasattr(self, "retention_policy_mode_btn"):
+            self.retention_policy_mode_btn.setChecked(True)
+        if hasattr(self, "_switch_retention_mode"):
+            self._switch_retention_mode(0)
         
         # Show initial message
         self.retention_output.setPlainText(
@@ -12770,18 +12819,47 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
     
     def log(self, message: str):
         """Add message to log viewer and persist to history DB."""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_entry = f"[{timestamp}] {message}\n"
+        from ui.logs import append_formatted_log_line, normalize_log_level, render_log_entries
 
-        if hasattr(self, "log_viewer") and self.log_viewer is not None:
-            self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
-            self.log_viewer.insertPlainText(log_entry)
-            self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        level = normalize_log_level("info", message)
+
+        if not hasattr(self, "_log_entries") or self._log_entries is None:
+            self._log_entries = []
+        self._log_entries.append(
+            {"ts": timestamp, "level": level, "message": message}
+        )
+
+        viewer = getattr(self, "log_viewer", None)
+        if viewer is not None:
+            filt = getattr(self, "_logs_filter", "all") or "all"
+            from ui.logs import _entry_passes_filter
+
+            if _entry_passes_filter(level, filt):
+                empty = getattr(self, "_logs_empty_label", None)
+                if empty is not None:
+                    empty.setVisible(False)
+                viewer.setVisible(True)
+                append_formatted_log_line(
+                    viewer,
+                    ts=timestamp,
+                    level=level,
+                    message=message,
+                    host=self,
+                )
+            elif not any(
+                _entry_passes_filter(
+                    normalize_log_level(e.get("level"), e.get("message") or ""),
+                    filt,
+                )
+                for e in self._log_entries
+            ):
+                render_log_entries(self)
 
         try:
             history_db.insert_log(
                 message,
-                level="info",
+                level=level,
                 ts=timestamp,
                 db_path=self._history_db_path(),
             )
@@ -12832,6 +12910,8 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 
     def reload_logs_from_db(self) -> None:
         """Replace log viewer contents from the history database."""
+        from ui.logs import normalize_log_level, render_log_entries
+
         viewer = getattr(self, "log_viewer", None)
         if viewer is None:
             return
@@ -12845,19 +12925,15 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             if DEBUG_MODE:
                 print(f"[LOGS] Failed to load logs: {exc}")
             return
-        viewer.blockSignals(True)
-        viewer.clear()
-        if rows:
-            text = "\n".join(
-                f"[{row.get('ts') or ''}] {row.get('message') or ''}" for row in rows
-            )
-            viewer.setPlainText(text + "\n")
-            viewer.moveCursor(QTextCursor.MoveOperation.End)
-        viewer.blockSignals(False)
-        finder = getattr(self, "_logs_find", None)
-        if finder is not None and getattr(finder, "find_edit", None) is not None:
-            if finder.find_edit.text().strip():
-                finder.refresh()
+        self._log_entries = [
+            {
+                "ts": row.get("ts") or "",
+                "level": normalize_log_level(row.get("level"), row.get("message") or ""),
+                "message": row.get("message") or "",
+            }
+            for row in (rows or [])
+        ]
+        render_log_entries(self)
 
     def format_bytes(self, bytes_value):
         """Format bytes into human-readable string"""
@@ -12914,6 +12990,7 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         viewer = getattr(self, "log_viewer", None)
         if viewer is not None:
             viewer.clear()
+        self._log_entries = []
         try:
             history_db.clear_logs(db_path=self._history_db_path())
         except Exception as exc:
@@ -12924,6 +13001,9 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
                 kind="error",
             )
             return
+        from ui.logs import render_log_entries
+
+        render_log_entries(self)
         self.log("Activity logs cleared")
     
     def closeEvent(self, event):

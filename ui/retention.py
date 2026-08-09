@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from PyQt6.QtCore import Qt, QTime
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QFrame,
     QGridLayout,
@@ -12,9 +13,9 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QTimeEdit,
     QVBoxLayout,
     QWidget,
@@ -26,6 +27,13 @@ _LABEL_W = 110
 _FIELD_COMPACT_W = 160
 _TIME_W = 128
 _KEEP_SPIN_W = 88
+
+_POLICY_SUBTITLE = (
+    "Choose how many snapshots to keep, then dry-run or apply from the title bar."
+)
+_SCHEDULE_SUBTITLE = (
+    "Run forget+prune automatically with a system task — independent of this app."
+)
 
 
 def _secondary_btn(
@@ -81,7 +89,7 @@ def _setup_keep_spin(spin: QSpinBox, tip: str) -> None:
     spin.setObjectName("retentionKeepSpin")
     spin.setToolTip(tip)
     spin.setCursor(Qt.CursorShape.PointingHandCursor)
-    spin.setFixedHeight(26)
+    spin.setFixedHeight(34)
     spin.setFixedWidth(_KEEP_SPIN_W)
     spin.setMinimum(0)
     spin.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -89,7 +97,9 @@ def _setup_keep_spin(spin: QSpinBox, tip: str) -> None:
     spin.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
 
 
-def _keep_field(title: str, spin: QSpinBox, tip: str, *, parent: Optional[QWidget] = None) -> QWidget:
+def _keep_field(
+    title: str, spin: QSpinBox, tip: str, *, parent: Optional[QWidget] = None
+) -> QWidget:
     """Label + compact spin — same label column as Repository / schedule rows."""
     wrap = QWidget(parent)
     wrap.setObjectName("retentionKeepField")
@@ -112,60 +122,93 @@ def _keep_field(title: str, spin: QSpinBox, tip: str, *, parent: Optional[QWidge
     return wrap
 
 
+def _mode_button(text: str) -> QPushButton:
+    btn = QPushButton(text)
+    btn.setObjectName("restoreModeBtn")
+    btn.setCheckable(True)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setMinimumHeight(32)
+    btn.setMinimumWidth(110)
+    return btn
+
+
 def create_retention_page(host: Any) -> QWidget:
     """Build the retention policy page and attach widgets onto ``host``."""
     page = QWidget()
     page.setVisible(False)
     page.setObjectName("retentionPage")
-    page_layout = QVBoxLayout(page)
-    page_layout.setContentsMargins(0, 0, 0, 0)
-    page_layout.setSpacing(0)
-
-    scroll = QScrollArea(page)
-    scroll.setObjectName("retentionScroll")
-    scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QFrame.Shape.NoFrame)
-    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    page_layout.addWidget(scroll)
-
-    content = QWidget()
-    content.setObjectName("retentionScrollContent")
-    layout = QVBoxLayout(content)
+    layout = QVBoxLayout(page)
     layout.setContentsMargins(24, 20, 24, 20)
-    layout.setSpacing(16)
+    layout.setSpacing(14)
 
     # Header (Dry Run / Apply live on the window title bar)
     header = QHBoxLayout()
     header.setSpacing(12)
     title_col = QVBoxLayout()
     title_col.setSpacing(2)
-    title = QLabel("Retention Policy", content)
+    title = QLabel("Retention Policy", page)
     title.setObjectName("pageTitle")
     title_col.addWidget(title)
-    subtitle = QLabel(
-        "Decide how many snapshots to keep, schedule forget+prune, or preview changes first.",
-        content,
-    )
-    subtitle.setObjectName("pageSubtitle")
-    title_col.addWidget(subtitle)
+    host.retention_page_subtitle = QLabel(_POLICY_SUBTITLE, page)
+    host.retention_page_subtitle.setObjectName("pageSubtitle")
+    host.retention_page_subtitle.setWordWrap(True)
+    title_col.addWidget(host.retention_page_subtitle)
     header.addLayout(title_col, stretch=1)
     layout.addLayout(header)
 
-    # ── Configuration card ──────────────────────────────────────────
-    config_card = SectionCard("Retention Configuration", parent=content)
-    config_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-    config_card.body.setContentsMargins(16, 14, 16, 16)
-    config_card.body.setSpacing(12)
+    # Mode switcher
+    mode_bar = QFrame(page)
+    mode_bar.setObjectName("restoreModeBar")
+    mode_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    mode_row = QHBoxLayout(mode_bar)
+    mode_row.setContentsMargins(4, 4, 4, 4)
+    mode_row.setSpacing(4)
 
-    host.retention_repo_combo = QComboBox(config_card)
-    host.retention_repo_combo.setFixedHeight(26)
+    host.retention_policy_mode_btn = _mode_button("Policy")
+    host.retention_schedule_mode_btn = _mode_button("Schedule")
+    host.retention_policy_mode_btn.setChecked(True)
+    host.retention_mode_group = QButtonGroup(page)
+    host.retention_mode_group.setExclusive(True)
+    host.retention_mode_group.addButton(host.retention_policy_mode_btn, 0)
+    host.retention_mode_group.addButton(host.retention_schedule_mode_btn, 1)
+    mode_row.addWidget(host.retention_policy_mode_btn)
+    mode_row.addWidget(host.retention_schedule_mode_btn)
+    mode_row.addStretch(1)
+    layout.addWidget(mode_bar, 0, Qt.AlignmentFlag.AlignLeft)
+
+    # Shared repository
+    repo_strip = QFrame(page)
+    repo_strip.setObjectName("restoreRepoStrip")
+    repo_strip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    repo_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    repo_strip_layout = QVBoxLayout(repo_strip)
+    repo_strip_layout.setContentsMargins(14, 12, 14, 12)
+    repo_strip_layout.setSpacing(0)
+
+    host.retention_repo_combo = QComboBox(repo_strip)
+    host.retention_repo_combo.setMinimumHeight(34)
     host.retention_repo_combo.setSizePolicy(
         QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
     )
-    config_card.body.addWidget(
-        _form_row("Repository", host.retention_repo_combo, parent=config_card)
+    repo_strip_layout.addWidget(
+        _form_row("Repository", host.retention_repo_combo, parent=repo_strip)
     )
+    layout.addWidget(repo_strip, 0)
+
+    host.retention_mode_stack = QStackedWidget(page)
+    host.retention_mode_stack.setObjectName("restoreModeStack")
+    layout.addWidget(host.retention_mode_stack, stretch=1)
+
+    # ── Policy mode ─────────────────────────────────────────────────
+    policy_pane = QWidget()
+    policy_layout = QVBoxLayout(policy_pane)
+    policy_layout.setContentsMargins(0, 0, 0, 0)
+    policy_layout.setSpacing(14)
+
+    config_card = SectionCard("Keep rules", parent=policy_pane)
+    config_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+    config_card.body.setContentsMargins(16, 14, 16, 16)
+    config_card.body.setSpacing(12)
 
     host.keep_last_spin = QSpinBox()
     host.keep_last_spin.setMaximum(1000)
@@ -201,15 +244,71 @@ def create_retention_page(host: Any) -> QWidget:
         keep_grid.addWidget(_keep_field(label, spin, tip, parent=keep_wrap), r, c)
         keep_grid.setColumnStretch(c, 1)
     config_card.body.addWidget(keep_wrap)
-    layout.addWidget(config_card, stretch=0)
 
-    # ── Schedule card ───────────────────────────────────────────────
-    schedule_card = SectionCard("Schedule Retention", parent=content)
-    schedule_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+    policy_hint = QLabel(
+        "Use Dry Run in the title bar to preview what would be forgotten, then Apply.",
+        config_card,
+    )
+    policy_hint.setObjectName("pageSubtitle")
+    policy_hint.setWordWrap(True)
+    config_card.body.addWidget(policy_hint)
+    policy_layout.addWidget(config_card, stretch=0)
+
+    output_card = SectionCard("Policy Output", parent=policy_pane)
+    output_card.setObjectName("sectionCard")
+    output_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    output_card.setVisible(False)
+    host._retention_output_card = output_card
+
+    host.retention_output = QPlainTextEdit(output_card)
+    host.retention_output.setObjectName("retentionLog")
+    host.retention_output.setReadOnly(True)
+    host.retention_output.setPlaceholderText("Retention output will appear here…")
+    host.retention_output.setMinimumHeight(160)
+    host.retention_output.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+    )
+    output_card.body.addWidget(host.retention_output, stretch=1)
+    policy_layout.addWidget(output_card, stretch=1)
+
+    host._retention_output_empty = QLabel(
+        "Dry-run or apply a policy to see forget/prune output here.",
+        policy_pane,
+    )
+    host._retention_output_empty.setObjectName("pageSubtitle")
+    host._retention_output_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    host._retention_output_empty.setMinimumHeight(80)
+    policy_layout.addWidget(host._retention_output_empty, stretch=1)
+
+    _orig_set_plain = host.retention_output.setPlainText
+
+    def _set_retention_output(text: str, _orig=_orig_set_plain) -> None:
+        _orig(text)
+        has_text = bool((text or "").strip())
+        output_card.setVisible(has_text)
+        host._retention_output_empty.setVisible(not has_text)
+
+    host.retention_output.setPlainText = _set_retention_output  # type: ignore[method-assign]
+    host.show_retention_output = lambda: (
+        output_card.setVisible(True),
+        host._retention_output_empty.setVisible(False),
+    )
+
+    host.retention_mode_stack.addWidget(policy_pane)
+
+    # ── Schedule mode ───────────────────────────────────────────────
+    schedule_pane = QWidget()
+    schedule_layout = QVBoxLayout(schedule_pane)
+    schedule_layout.setContentsMargins(0, 0, 0, 0)
+    schedule_layout.setSpacing(14)
+
+    schedule_card = SectionCard("Schedule Retention", parent=schedule_pane)
+    schedule_card.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+    )
     schedule_card.body.setContentsMargins(16, 14, 16, 16)
     schedule_card.body.setSpacing(12)
 
-    # Active-task status strip
     status_strip = QFrame(schedule_card)
     status_strip.setObjectName("retentionStatusStrip")
     status_strip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -241,7 +340,7 @@ def create_retention_page(host: Any) -> QWidget:
     host.retention_time_edit.setObjectName("retentionTimeEdit")
     host.retention_time_edit.setCursor(Qt.CursorShape.PointingHandCursor)
     host.retention_time_edit.setToolTip("Time of day to run the retention policy")
-    host.retention_time_edit.setFixedHeight(26)
+    host.retention_time_edit.setFixedHeight(34)
     host.retention_time_edit.setFixedWidth(_TIME_W)
     host.retention_time_edit.setTime(QTime(2, 0))
     host.retention_time_edit.setDisplayFormat("HH:mm")
@@ -258,7 +357,7 @@ def create_retention_page(host: Any) -> QWidget:
     host.retention_frequency_combo.setToolTip(
         "Frequency for running the retention policy automatically"
     )
-    host.retention_frequency_combo.setFixedHeight(26)
+    host.retention_frequency_combo.setFixedHeight(34)
     host.retention_frequency_combo.setFixedWidth(_FIELD_COMPACT_W)
     host.retention_frequency_combo.setCursor(Qt.CursorShape.PointingHandCursor)
     host.retention_frequency_combo.currentTextChanged.connect(
@@ -276,7 +375,7 @@ def create_retention_page(host: Any) -> QWidget:
     host.retention_day_combo = QComboBox(schedule_card)
     host.retention_day_combo.setCursor(Qt.CursorShape.PointingHandCursor)
     host.retention_day_combo.setToolTip("Day of the week to run the retention policy")
-    host.retention_day_combo.setFixedHeight(26)
+    host.retention_day_combo.setFixedHeight(34)
     host.retention_day_combo.setFixedWidth(_FIELD_COMPACT_W)
     host.retention_day_combo.addItems(
         ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -289,8 +388,10 @@ def create_retention_page(host: Any) -> QWidget:
 
     host.retention_dom_spin = QSpinBox(schedule_card)
     host.retention_dom_spin.setCursor(Qt.CursorShape.PointingHandCursor)
-    host.retention_dom_spin.setToolTip("Day of the month to run the retention policy (1–28)")
-    host.retention_dom_spin.setFixedHeight(26)
+    host.retention_dom_spin.setToolTip(
+        "Day of the month to run the retention policy (1–28)"
+    )
+    host.retention_dom_spin.setFixedHeight(34)
     host.retention_dom_spin.setFixedWidth(_FIELD_COMPACT_W)
     host.retention_dom_spin.setMinimum(1)
     host.retention_dom_spin.setMaximum(28)
@@ -348,26 +449,26 @@ def create_retention_page(host: Any) -> QWidget:
     info.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
     schedule_card.body.addSpacing(8)
     schedule_card.body.addWidget(info)
+    schedule_card.body.addStretch(1)
 
-    layout.addWidget(schedule_card, stretch=0)
+    schedule_layout.addWidget(schedule_card, stretch=1)
+    host.retention_mode_stack.addWidget(schedule_pane)
 
     # Refresh schedule status when repository changes
     host.retention_repo_combo.currentIndexChanged.connect(
         lambda _i: host.refresh_retention_schedule_status()
     )
 
-    # ── Output card ─────────────────────────────────────────────────
-    output_card = SectionCard("Policy Output", parent=content)
-    output_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-    host.retention_output = QPlainTextEdit(output_card)
-    host.retention_output.setObjectName("retentionLog")
-    host.retention_output.setReadOnly(True)
-    host.retention_output.setPlaceholderText("Retention output will appear here…")
-    host.retention_output.setMinimumHeight(160)
-    output_card.body.addWidget(host.retention_output, stretch=1)
-    layout.addWidget(output_card, stretch=1)
+    def _switch_retention_mode(index: int) -> None:
+        host.retention_mode_stack.setCurrentIndex(index)
+        if index == 1:
+            host.retention_page_subtitle.setText(_SCHEDULE_SUBTITLE)
+            host.refresh_retention_schedule_status()
+        else:
+            host.retention_page_subtitle.setText(_POLICY_SUBTITLE)
 
-    scroll.setWidget(content)
+    host.retention_mode_group.idClicked.connect(_switch_retention_mode)
+    host._switch_retention_mode = _switch_retention_mode
 
     # Compat: old code looked up QFormLayout labels via this attribute.
     host._retention_schedule_form = None
