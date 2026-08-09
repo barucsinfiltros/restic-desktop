@@ -7,6 +7,8 @@ A free, open-source [PySide6](https://doc.qt.io/qtforpython/) desktop applicatio
 
 If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/dallustallus).
 
+**User guide:** [Getting started](docs/GETTING_STARTED.md) — install, first repository, backup job, and a test restore.
+
 ---
 
 ## Features
@@ -51,7 +53,19 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 
 ---
 
-## Requirements
+## Download and run (binary release)
+
+1. Get the latest build from [GitHub Releases](https://github.com/Dallustallus/restic_manager/releases).
+2. Run the executable (Windows: `restic_manager.exe`).
+3. Install [restic](https://restic.net/) if needed, or use **Settings → Dependencies** in the app.
+
+You do **not** need Python or PySide6 to use a release build. Then follow [Getting started](docs/GETTING_STARTED.md).
+
+---
+
+## Develop from source
+
+For contributors and anyone running or packaging from the repo:
 
 | Dependency | Notes |
 |------------|--------|
@@ -63,24 +77,14 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 
 Python packages are listed in `requirements.txt`.
 
----
-
-## Quick start
-
 ```powershell
-# Create / activate a virtual environment (example)
 python -m venv env
 .\env\Scripts\Activate.ps1
-
 pip install -r requirements.txt
 python restic_manager.py
 ```
 
-Configure the restic executable under **Settings → Dependencies** if it is not on `PATH`.
-
----
-
-## Building a standalone executable
+### Building a standalone executable
 
 Use the project PyInstaller spec so icons and the `icons/` folder are bundled:
 
@@ -147,6 +151,7 @@ Copying a snapshot between **two HTTPS repositories that use different HTTP Basi
 restic_manager.py       Main application
 core/                   History DB and non-UI helpers
 ui/                     Pages, themes, dialogs, charts
+docs/                   End-user guides (getting started)
 icons/                  Application and toolbar assets
 scheduled_tasks/        Generated Windows schedule scripts (created at runtime)
 requirements.txt
