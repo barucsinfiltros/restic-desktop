@@ -34,7 +34,7 @@ _NAV_ICON = 18
 
 # (label, subtitle, icon_file)
 _SECTIONS = (
-    ("Application", "Paths, theme, refresh, and settings backup.", "settings.svg"),
+    ("Application", "Paths, theme, refresh, and encrypted settings/history backup.", "settings.svg"),
     ("Health", "Backup freshness, integrity checks, and restore tests.", "health.svg"),
     ("Security", "Optional password required when the app starts.", "lock.svg"),
     ("Dependencies", "Check and install required system tools.", "drive.svg"),
@@ -378,15 +378,31 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
 
     app_btns = QWidget(card)
     app_btns.setObjectName("settingsCardBtns")
-    app_btns_row = QHBoxLayout(app_btns)
-    app_btns_row.setContentsMargins(0, 8, 0, 0)
+    app_btns_col = QVBoxLayout(app_btns)
+    app_btns_col.setContentsMargins(0, 8, 0, 0)
+    app_btns_col.setSpacing(8)
+
+    host.backup_include_history_check = QCheckBox(
+        "Include history database (job runs, logs, dashboard cache)",
+        app_btns,
+    )
+    host.backup_include_history_check.setChecked(True)
+    host.backup_include_history_check.setCursor(Qt.CursorShape.PointingHandCursor)
+    host.backup_include_history_check.setToolTip(
+        "Also back up restic_history.db beside your settings file. "
+        "Recommended when moving to another PC."
+    )
+    app_btns_col.addWidget(host.backup_include_history_check)
+
+    app_btns_row = QHBoxLayout()
+    app_btns_row.setContentsMargins(0, 0, 0, 0)
     app_btns_row.setSpacing(8)
     app_btns_row.addWidget(
         _secondary_btn(
             "Backup Settings",
             host.backup_settings,
             parent=app_btns,
-            tooltip="Export settings to a backup file",
+            tooltip="Export settings (and optional history DB) to an encrypted backup",
             min_width=130,
         ),
         0,
@@ -396,12 +412,13 @@ def _build_application_panel(host: Any, parent: QWidget) -> QWidget:
             "Restore Settings",
             host.restore_settings,
             parent=app_btns,
-            tooltip="Import settings from a backup file",
+            tooltip="Import settings (and history DB if present) from a backup file",
             min_width=130,
         ),
         0,
     )
     app_btns_row.addStretch(1)
+    app_btns_col.addLayout(app_btns_row)
     card.body.addWidget(app_btns)
     return card
 

@@ -1,6 +1,6 @@
 ﻿"""
 Restic Desktop - GUI Application for managing Restic backups
-Version: 2.0.2
+Version: 2.2.4
 
 Build with PyInstaller (preferred — uses restic_manager.spec):
   pyinstaller restic_manager.spec
@@ -11974,34 +11974,40 @@ $arguments = @(
         self.log(f"Application password removed from {storage_type}")
     
     def backup_settings(self):
-        """Backup settings to an encrypted file"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Backup Settings", 
-            f"restic_settings_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.encrypted",
-            "Encrypted Files (*.encrypted);;All Files (*.*)"
+        """Backup settings (and optional history DB) to an encrypted archive."""
+        import base64
+        import hashlib
+        import io
+        import zipfile
+
+        from cryptography.fernet import Fernet
+
+        include_history = True
+        if hasattr(self, "backup_include_history_check"):
+            include_history = bool(self.backup_include_history_check.isChecked())
+
+        default_name = (
+            f"restic_desktop_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.encrypted"
         )
-        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Backup Settings",
+            default_name,
+            "Encrypted Files (*.encrypted);;All Files (*.*)",
+        )
         if not file_path:
             return
-        
+
         try:
-            # Get current settings as JSON
-            settings_json = json.dumps(self.settings_manager.settings, indent=4)
-            
-            # Encrypt the settings using Fernet
-            from cryptography.fernet import Fernet
-            import base64
-            import hashlib
-            
             password, ok = show_framed_password_prompt(
                 self,
                 "Encryption Password",
-                "Enter a password to encrypt the settings backup.\n"
+                "Enter a password to encrypt the backup.\n"
                 "You will need this password to restore the file later.",
             )
             if not ok or not password:
                 return
-            
+
             password_confirm, ok = show_framed_password_prompt(
                 self,
                 "Confirm Password",
@@ -12017,26 +12023,69 @@ $arguments = @(
                     kind="warning",
                 )
                 return
-            
-            # Derive key from password
+
+            settings_json = json.dumps(self.settings_manager.settings, indent=4)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("restic_settings.json", settings_json.encode("utf-8"))
+                manifest = {
+                    "version": 2,
+                    "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "includes_history": False,
+                    "app": "Restic Desktop",
+                }
+                history_path = history_db.history_db_path(self.settings_manager.filename)
+                if include_history and os.path.isfile(history_path):
+                    # Consistent snapshot even if the DB is open
+                    import sqlite3
+
+                    tmp_db = history_path + ".backup_tmp"
+                    try:
+                        src = sqlite3.connect(history_path)
+                        dst = sqlite3.connect(tmp_db)
+                        try:
+                            src.backup(dst)
+                        finally:
+                            dst.close()
+                            src.close()
+                        with open(tmp_db, "rb") as db_f:
+                            zf.writestr(history_db.DEFAULT_DB_NAME, db_f.read())
+                        manifest["includes_history"] = True
+                    finally:
+                        try:
+                            if os.path.isfile(tmp_db):
+                                os.remove(tmp_db)
+                        except OSError:
+                            pass
+                elif include_history:
+                    manifest["includes_history"] = False
+                    manifest["history_note"] = "No history database found to include."
+
+                zf.writestr(
+                    "manifest.json",
+                    json.dumps(manifest, indent=2).encode("utf-8"),
+                )
+
             key = base64.urlsafe_b64encode(hashlib.sha256(password.encode()).digest())
             cipher = Fernet(key)
-            
-            # Encrypt the settings
-            encrypted_data = cipher.encrypt(settings_json.encode())
-            
-            # Save to file
-            with open(file_path, 'wb') as f:
+            encrypted_data = cipher.encrypt(buf.getvalue())
+
+            with open(file_path, "wb") as f:
                 f.write(encrypted_data)
-            
+
+            parts = ["settings"]
+            if manifest.get("includes_history"):
+                parts.append("history database")
             show_framed_message(
                 self,
                 "Backup Complete",
-                f"Settings backed up successfully to:\n\n{file_path}",
+                "Backed up "
+                + " and ".join(parts)
+                + f" to:\n\n{file_path}",
                 kind="info",
             )
-            self.log(f"Settings backed up to {file_path}")
-            
+            self.log(f"Settings backup written to {file_path} ({', '.join(parts)})")
+
         except Exception as e:
             show_framed_message(
                 self,
@@ -12045,43 +12094,42 @@ $arguments = @(
                 kind="error",
             )
             self.log(f"Settings backup failed: {e}")
-    
+
     def restore_settings(self):
-        """Restore settings from an encrypted backup file"""
+        """Restore settings (and history DB when present) from an encrypted backup."""
+        import base64
+        import hashlib
+        import io
+        import zipfile
+
+        from cryptography.fernet import Fernet
+
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Restore Settings",
+            self,
+            "Restore Settings",
             "",
-            "Encrypted Files (*.encrypted);;All Files (*.*)"
+            "Encrypted Files (*.encrypted);;All Files (*.*)",
         )
-        
         if not file_path:
             return
-        
+
         try:
-            # Read encrypted file
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 encrypted_data = f.read()
-            
+
             password, ok = show_framed_password_prompt(
                 self,
                 "Decryption Password",
-                "Enter the password used when this settings backup was created:",
+                "Enter the password used when this backup was created:",
             )
             if not ok or not password:
                 return
-            
-            # Decrypt the settings
-            from cryptography.fernet import Fernet
-            import base64
-            import hashlib
-            
+
             key = base64.urlsafe_b64encode(hashlib.sha256(password.encode()).digest())
             cipher = Fernet(key)
-            
+
             try:
                 decrypted_data = cipher.decrypt(encrypted_data)
-                settings_json = decrypted_data.decode()
-                restored_settings = json.loads(settings_json)
             except Exception:
                 show_framed_message(
                     self,
@@ -12091,34 +12139,112 @@ $arguments = @(
                     kind="error",
                 )
                 return
-            
+
+            restored_settings = None
+            history_bytes = None
+            includes_history = False
+
+            # v2+ zip archive
+            try:
+                with zipfile.ZipFile(io.BytesIO(decrypted_data), "r") as zf:
+                    names = set(zf.namelist())
+                    if "restic_settings.json" not in names:
+                        raise ValueError("Backup archive is missing restic_settings.json")
+                    restored_settings = json.loads(
+                        zf.read("restic_settings.json").decode("utf-8")
+                    )
+                    if history_db.DEFAULT_DB_NAME in names:
+                        history_bytes = zf.read(history_db.DEFAULT_DB_NAME)
+                        includes_history = True
+                    if "manifest.json" in names:
+                        try:
+                            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+                            includes_history = bool(
+                                manifest.get("includes_history") and history_bytes
+                            )
+                        except Exception:
+                            pass
+            except zipfile.BadZipFile:
+                # Legacy: encrypted plain JSON settings
+                try:
+                    restored_settings = json.loads(decrypted_data.decode("utf-8"))
+                except Exception:
+                    show_framed_message(
+                        self,
+                        "Invalid Backup",
+                        "The decrypted file is not a recognised settings backup.",
+                        kind="error",
+                    )
+                    return
+
+            if not isinstance(restored_settings, dict):
+                show_framed_message(
+                    self,
+                    "Invalid Backup",
+                    "Settings data in the backup is not valid.",
+                    kind="error",
+                )
+                return
+
+            body = (
+                "This overwrites repositories, jobs, and preferences from the backup file."
+            )
+            if includes_history:
+                body += (
+                    "\n\nThis backup also includes the history database "
+                    "(job runs, logs, dashboard cache), which will replace the current one."
+                )
+
             if not self._framed_confirm(
                 title="Confirm Restore",
-                heading="Replace all current settings with this backup?",
-                body="This overwrites repositories, jobs, and preferences from the backup file.",
+                heading="Replace current settings with this backup?",
+                body=body,
                 note="The application will restart after a successful restore.",
                 confirm_label="Restore",
                 danger=True,
             ):
                 return
-            
-            # Restore the settings
+
             self.settings_manager.settings = restored_settings
             self.settings_manager.save_settings()
-            
+
+            if includes_history and history_bytes:
+                db_path = history_db.history_db_path(self.settings_manager.filename)
+                tmp_path = db_path + ".restore_tmp"
+                with open(tmp_path, "wb") as out:
+                    out.write(history_bytes)
+                # Replace existing DB (best-effort if locked)
+                try:
+                    if os.path.isfile(db_path):
+                        os.replace(tmp_path, db_path)
+                    else:
+                        os.rename(tmp_path, db_path)
+                except OSError:
+                    # Fallback copy
+                    import shutil
+
+                    shutil.copy2(tmp_path, db_path)
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+
+            parts = ["settings"]
+            if includes_history:
+                parts.append("history database")
             show_framed_message(
                 self,
                 "Restore Complete",
-                "Settings restored successfully.\n\nThe application will now restart.",
+                "Restored "
+                + " and ".join(parts)
+                + ".\n\nThe application will now restart.",
                 kind="info",
             )
-            self.log(f"Settings restored from {file_path}")
-            
-            # Restart application
-            import sys
+            self.log(f"Settings restored from {file_path} ({', '.join(parts)})")
+
             QApplication.quit()
             os.execl(sys.executable, sys.executable, *sys.argv)
-            
+
         except Exception as e:
             show_framed_message(
                 self,
