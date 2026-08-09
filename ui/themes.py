@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 
 def icons_dir() -> Path:
@@ -34,7 +34,7 @@ def icon_path(name: str) -> str:
 
 def app_window_icon():
     """Best available app icon for window / taskbar / .exe branding."""
-    from PyQt6.QtGui import QIcon
+    from PySide6.QtGui import QIcon
 
     icons = icons_dir()
     # Multi-size .ico is ideal on Windows; PNG works well on Linux.
@@ -761,9 +761,9 @@ def combo_selection_colors(theme: AppTheme) -> tuple[str, str]:
 
 def _make_combo_popup_delegate(theme: AppTheme, parent=None):
     """Owner-draw combo rows so Windows cannot paint a light system highlight."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QColor
-    from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
     sel_bg, sel_fg = combo_selection_colors(theme)
 
@@ -815,8 +815,8 @@ def _make_combo_popup_delegate(theme: AppTheme, parent=None):
 
 def apply_combo_popup_palette(combo, theme: AppTheme) -> None:
     """Force readable popup selection via owner-drawn delegate (+ palette backup)."""
-    from PyQt6.QtGui import QColor, QPalette
-    from PyQt6.QtWidgets import QComboBox, QListView
+    from PySide6.QtGui import QColor, QPalette
+    from PySide6.QtWidgets import QComboBox, QListView
 
     if not isinstance(combo, QComboBox):
         return
@@ -873,7 +873,7 @@ def apply_combo_popup_palette(combo, theme: AppTheme) -> None:
 
 def polish_combo_popups(root, theme: AppTheme | None = None) -> None:
     """Apply readable combo popup colors under ``root`` (window or dialog)."""
-    from PyQt6.QtWidgets import QApplication, QComboBox
+    from PySide6.QtWidgets import QApplication, QComboBox
 
     t = theme
     if t is None:
@@ -3443,7 +3443,7 @@ def build_stylesheet(theme: AppTheme) -> str:
 
 def prefer_ui_font():
     """Return a modern UI font family available on this system."""
-    from PyQt6.QtGui import QFontDatabase
+    from PySide6.QtGui import QFontDatabase
 
     families = set(QFontDatabase.families())
     for name in (
@@ -3530,7 +3530,7 @@ def theme_name_groups() -> tuple[list[str], list[str]]:
 
 def populate_theme_combo(combo) -> None:
     """Fill a QComboBox with dark themes, a separator, then light themes."""
-    from PyQt6.QtWidgets import QComboBox
+    from PySide6.QtWidgets import QComboBox
 
     if not isinstance(combo, QComboBox):
         return

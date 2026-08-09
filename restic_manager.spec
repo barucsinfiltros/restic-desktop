@@ -47,7 +47,7 @@ a = Analysis(
         'ui.table_helpers',
         'ui.hover_tip',
         'core.health',
-        'PyQt6.QtSvg',
+        'PySide6.QtSvg',
     ],
     hookspath=[],
     hooksconfig={},

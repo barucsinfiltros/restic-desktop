@@ -1,8 +1,8 @@
 """Popup menus with rounded corners (native Fusion chrome ignores QSS radius)."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QMenu, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMenu, QWidget
 
 
 class RoundedMenu(QMenu):

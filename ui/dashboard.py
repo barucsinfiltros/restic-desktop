@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QGuiApplication
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QHeaderView,

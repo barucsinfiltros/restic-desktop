@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt, QRectF
-from PyQt6.QtGui import QPainterPath, QRegion
-from PyQt6.QtWidgets import QDialog, QFrame, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, Qt, QRectF
+from PySide6.QtGui import QPainterPath, QRegion
+from PySide6.QtWidgets import QDialog, QFrame, QVBoxLayout, QWidget
 
 from .themes import app_window_icon, polish_combo_popups
 from .title_bar import TitleBar

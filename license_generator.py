@@ -1,8 +1,11 @@
 """
+DEPRECATED — obsolete after open-source / free release.
+
 License Key Generator for Restic Desktop
 Version: 1.0.0
 
-This script generates license keys tied to specific machine IDs.
+This script generated license keys tied to specific machine IDs.
+The app no longer requires activation; keep only for historical reference.
 """
 
 import hashlib

@@ -1,8 +1,8 @@
 """Modern icon navigation sidebar."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -34,7 +34,7 @@ SECONDARY_NAV = [
 class NavSidebar(QFrame):
     """Left navigation rail with SVG icons and grouped Settings/Exit."""
 
-    page_requested = pyqtSignal(int)
+    page_requested = Signal(int)
 
     def __init__(
         self,

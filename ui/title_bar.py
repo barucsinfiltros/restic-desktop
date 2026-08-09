@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QPoint, QSize, pyqtSignal
-from PyQt6.QtGui import QMouseEvent, QIcon
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QPoint, QSize, Signal
+from PySide6.QtGui import QMouseEvent, QIcon
+from PySide6.QtWidgets import (
     QWidget,
     QHBoxLayout,
     QLabel,
@@ -21,15 +21,15 @@ _RESTORE_DRAG_THRESHOLD = 8
 class TitleBar(QWidget):
     """Drag to move, double-click to maximize, min / max / close controls."""
 
-    refresh_clicked = pyqtSignal()
-    add_repository_clicked = pyqtSignal()
-    add_backup_job_clicked = pyqtSignal()
-    browse_files_clicked = pyqtSignal()
-    start_restore_clicked = pyqtSignal()
-    dry_run_retention_clicked = pyqtSignal()
-    apply_retention_clicked = pyqtSignal()
-    clear_logs_clicked = pyqtSignal()
-    save_settings_clicked = pyqtSignal()
+    refresh_clicked = Signal()
+    add_repository_clicked = Signal()
+    add_backup_job_clicked = Signal()
+    browse_files_clicked = Signal()
+    start_restore_clicked = Signal()
+    dry_run_retention_clicked = Signal()
+    apply_retention_clicked = Signal()
+    clear_logs_clicked = Signal()
+    save_settings_clicked = Signal()
 
     def __init__(
         self,

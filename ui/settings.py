@@ -4,8 +4,8 @@ from __future__ import annotations
 import sys
 from typing import Any, Optional
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFrame,
@@ -38,7 +38,6 @@ _SECTIONS = (
     ("Health", "Backup freshness, integrity checks, and restore tests.", "health.svg"),
     ("Security", "Optional password required when the app starts.", "lock.svg"),
     ("Dependencies", "Check and install required system tools.", "drive.svg"),
-    ("License", "Activation status and machine identity.", "key.svg"),
     ("About", "Version and application information.", "about.svg"),
 )
 
@@ -687,59 +686,6 @@ def _build_dependencies_panel(host: Any, parent: QWidget) -> QWidget:
     return card
 
 
-def _build_license_panel(host: Any, parent: QWidget) -> QWidget:
-    card = _section_card(parent)
-
-    host.license_status_label = QLabel(card)
-    host.license_status_label.setObjectName("settingsStatusMuted")
-    host.license_status_label.setWordWrap(True)
-    card.body.addWidget(host.license_status_label)
-
-    host.machine_id_display = QLineEdit(card)
-    host.machine_id_display.setReadOnly(True)
-    host.machine_id_display.setMinimumHeight(30)
-    host.machine_id_display.setObjectName("settingsMachineId")
-    host.machine_id_display.setSizePolicy(
-        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-    )
-    mid_field = QWidget(card)
-    mid_row = QHBoxLayout(mid_field)
-    mid_row.setContentsMargins(0, 0, 0, 0)
-    mid_row.setSpacing(8)
-    mid_row.addWidget(host.machine_id_display, stretch=1)
-    mid_row.addWidget(
-        _secondary_btn("Copy", host.copy_machine_id, parent=mid_field, min_width=72),
-        0,
-    )
-    card.body.addWidget(_form_row("Machine ID", mid_field, parent=card))
-
-    lic_btns = QWidget(card)
-    lic_btns_row = QHBoxLayout(lic_btns)
-    lic_btns_row.setContentsMargins(0, 8, 0, 0)
-    lic_btns_row.setSpacing(8)
-    lic_btns_row.addWidget(
-        _secondary_btn(
-            "Update License Key",
-            host.update_license_key,
-            parent=lic_btns,
-            min_width=150,
-        ),
-        0,
-    )
-    lic_btns_row.addWidget(
-        _secondary_btn(
-            "Refresh Status",
-            host.refresh_license_status,
-            parent=lic_btns,
-            min_width=130,
-        ),
-        0,
-    )
-    lic_btns_row.addStretch(1)
-    card.body.addWidget(lic_btns)
-    return card
-
-
 def _build_about_panel(host: Any, parent: QWidget) -> QWidget:
     from restic_manager import VERSION, YEAR
 
@@ -747,7 +693,9 @@ def _build_about_panel(host: Any, parent: QWidget) -> QWidget:
     about = QLabel(
         f"Restic Desktop {VERSION}\n"
         f"© {YEAR}\n\n"
-        "A PyQt6 GUI for managing Restic backups",
+        "A free, open-source PySide6 GUI for managing Restic backups.\n"
+        "Licensed under the MIT License — use it, share it, improve it.\n\n"
+        "Support: buymeacoffee.com/dallustallus",
         card,
     )
     about.setObjectName("settingsAbout")
@@ -832,7 +780,6 @@ def create_settings_page(host: Any) -> QWidget:
         _build_health_panel(host, content),
         _build_security_panel(host, content),
         _build_dependencies_panel(host, content),
-        _build_license_panel(host, content),
         _build_about_panel(host, content),
     ]
     for panel in panels:
@@ -856,5 +803,4 @@ def create_settings_page(host: Any) -> QWidget:
     nav.setCurrentRow(0)
     refresh_settings_nav_icons(host)
 
-    host.refresh_license_status()
     return page

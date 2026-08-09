@@ -1,8 +1,11 @@
 # Restic Desktop
 
-A PyQt6 desktop application for managing [restic](https://restic.net/) backups: repositories, scheduled jobs, restores, retention, and repository health — without living in the CLI.
+A free, open-source [PySide6](https://doc.qt.io/qtforpython/) desktop application for managing [restic](https://restic.net/) backups: repositories, scheduled jobs, restores, retention, and repository health — without living in the CLI.
 
-**Version:** 2.2.4
+**Version:** 2.2.4  
+**License:** [MIT](LICENSE) (your contributions welcome)
+
+If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/dallustallus).
 
 ---
 
@@ -41,7 +44,7 @@ A PyQt6 desktop application for managing [restic](https://restic.net/) backups: 
 - Settings stay in JSON; history stays in SQLite
 
 ### Application
-- Themes, optional startup password, license activation
+- Themes and optional startup password
 - Encrypted backup/restore of settings **and** optional history database
 - Activity log with level colouring and filters
 - Windows toast notifications for completed backups (optional `winotify` for GUI runs)
@@ -53,8 +56,8 @@ A PyQt6 desktop application for managing [restic](https://restic.net/) backups: 
 | Dependency | Notes |
 |------------|--------|
 | **Python 3.10+** | Developed and tested with recent 3.x |
-| **PyQt6** | UI |
-| **cryptography** | Password encryption and license signing |
+| **PySide6** | UI (official Qt for Python; LGPL) |
+| **cryptography** | Encrypting repository passwords in settings |
 | **restic** | [Install from restic.net](https://restic.net/) or via Settings → Dependencies |
 | **winotify** (optional) | Windows toast notifications for GUI-initiated backups |
 
@@ -72,8 +75,6 @@ python -m venv env
 pip install -r requirements.txt
 python restic_manager.py
 ```
-
-On first launch you may be asked for a license key. Machine ID is shown in the activation dialog and under **Settings → License**.
 
 Configure the restic executable under **Settings → Dependencies** if it is not on `PATH`.
 
@@ -101,7 +102,6 @@ Files are created in the application working directory (the folder you run from,
 |---------------|---------|
 | `restic_settings.json` | Repositories, jobs, preferences |
 | `restic_history.db` | Job runs, logs, dashboard cache |
-| `license.key` | Activated license |
 | `scheduled_tasks/` | Generated Windows backup scripts and DPAPI password files |
 
 Repository **data** lives at the restic repository path (local, SFTP, or REST URL), not inside this app.
@@ -149,12 +149,10 @@ core/                   History DB and non-UI helpers
 ui/                     Pages, themes, dialogs, charts
 icons/                  Application and toolbar assets
 scheduled_tasks/        Generated Windows schedule scripts (created at runtime)
-tools/                  Optional utilities (e.g. machine ID)
 requirements.txt
 restic_manager.spec     PyInstaller build spec
+LICENSE                 MIT license for this project
 ```
-
-Administrator-only license generators (`license_generator.py`, `license_generator_gui.py`) are not for end-user distribution. See `DOCS/` for license system details if present in your tree.
 
 ---
 
@@ -173,15 +171,16 @@ Administrator-only license generators (`license_generator.py`, `license_generato
 | Restic not found | Settings → Dependencies, or install from https://restic.net/ |
 | Backup fails with “locked” | Unlock from the repository actions; interrupted runs can leave locks |
 | Wrong or missing history | Confirm `restic_history.db` is writable next to settings; scheduled scripts must reach `python` / the app path |
-| License errors | Machine ID mismatch, expired key, or corrupted `license.key` — use Settings → License |
 | Empty “no change” snapshots | Ensure jobs use **Skip snapshot if unchanged** (default for new jobs); re-save Windows schedules so scripts pick up the flag |
 
 Application messages appear on the **Logs** page (filterable by Errors / Warnings).
 
 ---
 
-## License
+## License and third-party notices
 
-This application uses a machine-bound license key for activation. Contact the distributor for keys or renewals and provide your Machine ID from **Settings → License**.
+- **Restic Desktop** source code is released under the [MIT License](LICENSE).
+- **PySide6 / Qt** are used under their LGPL terms (see the Qt Company / PySide6 documentation).
+- **restic** is separate software under its own license — see [restic.net](https://restic.net/).
 
-Restic itself is separate software under its own license — see [restic.net](https://restic.net/).
+This project is free to use. No activation key is required.

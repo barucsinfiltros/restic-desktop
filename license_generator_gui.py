@@ -1,8 +1,10 @@
 """
+DEPRECATED — obsolete after open-source / free release.
+
 GUI License Key Generator for Restic Backup Manager
 
 Matches the main app chrome (frameless title bar + Chalk theme).
-Admin/developer tool only — keep secure; do not ship to end users.
+The app no longer requires activation; keep only for historical reference.
 """
 
 from __future__ import annotations
@@ -14,9 +16,9 @@ import sys
 from datetime import datetime, timedelta
 
 try:
-    from PyQt6.QtCore import QRectF, Qt
-    from PyQt6.QtGui import QFont, QPainterPath, QRegion
-    from PyQt6.QtWidgets import (
+    from PySide6.QtCore import QRectF, Qt
+    from PySide6.QtGui import QFont, QPainterPath, QRegion
+    from PySide6.QtWidgets import (
         QApplication,
         QFrame,
         QHBoxLayout,
@@ -32,8 +34,8 @@ try:
         QFileDialog,
     )
 except ImportError:
-    print("Error: PyQt6 is not installed.")
-    print("Please install it with: pip install PyQt6")
+    print("Error: PySide6 is not installed.")
+    print("Please install it with: pip install PySide6")
     sys.exit(1)
 
 import ui.themes as themes
@@ -358,7 +360,7 @@ class LicenseGeneratorGUI(QMainWindow):
         self._set_status("Output cleared")
 
     def changeEvent(self, event) -> None:  # noqa: N802
-        from PyQt6.QtCore import QEvent
+        from PySide6.QtCore import QEvent
 
         if event.type() == QEvent.Type.WindowStateChange:
             self.title_bar.sync_max_button()

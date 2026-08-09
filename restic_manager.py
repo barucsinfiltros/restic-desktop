@@ -80,7 +80,7 @@ try:
 except ImportError:
     NOTIFICATIONS_AVAILABLE = False
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QPushButton, QLabel, QLineEdit, QComboBox, QCheckBox,
     QStackedWidget, QFrame, QMessageBox, QSpinBox, QTextEdit, QPlainTextEdit,
@@ -89,8 +89,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QTabWidget, QDialog, QDialogButtonBox, QSplashScreen, QSpacerItem, QTimeEdit,
     QProgressDialog, QTreeWidget, QTreeWidgetItem, QInputDialog, QRadioButton, QDateEdit
 )
-from PyQt6.QtGui import QColor, QCursor, QFont, QMouseEvent, QTextCursor, QPixmap, QPainter, QPainterPath, QPen
-from PyQt6.QtCore import Qt, QEvent, QObject, QPoint, QTimer, QThread, pyqtSignal, QTime, QDate, QRectF
+from PySide6.QtGui import QColor, QCursor, QFont, QMouseEvent, QTextCursor, QPixmap, QPainter, QPainterPath, QPen
+from PySide6.QtCore import Qt, QEvent, QObject, QPoint, QTimer, QThread, Signal, QTime, QDate, QRectF
 
 # Win32 WM_NCHITTEST result codes for frameless edge resize.
 _WINDOW_EDGE = 8
@@ -1373,9 +1373,9 @@ class ResticCommand:
 # Worker thread for long-running Restic operations
 class ResticWorker(QThread):
     """Worker thread for Restic operations without blocking the UI"""
-    finished = pyqtSignal(bool, str, str)  # success, stdout, stderr
-    progress = pyqtSignal(str)  # progress message
-    progress_data = pyqtSignal(dict)  # structured progress data
+    finished = Signal(bool, str, str)  # success, stdout, stderr
+    progress = Signal(str)  # progress message
+    progress_data = Signal(dict)  # structured progress data
     
     def __init__(self, restic_cmd: ResticCommand, args: List[str], env: Optional[Dict] = None, 
                  timeout: int = 300, use_progress: bool = False):
@@ -1514,7 +1514,7 @@ class ResticWorker(QThread):
 
 # class MountMonitorThread(QThread):
 #     """Monitor file explorer process and request unmount when closed"""
-#     unmount_requested = pyqtSignal()
+#     unmount_requested = Signal()
     
 #     def __init__(self, mount_info, parent=None):
 #         super().__init__(parent)
@@ -3780,7 +3780,7 @@ if ($exitCode -eq 0) {{
 # Main Application Window
 class ResticManagerWindow(QMainWindow):
     # Signal for thread-safe dashboard updates (using str for size to avoid int32 overflow)
-    dashboard_update_signal = pyqtSignal(int, str, str, list)
+    dashboard_update_signal = Signal(int, str, str, list)
     
     def __init__(self, app, splash=None):
         super().__init__()
@@ -12733,8 +12733,8 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         if maximized:
             root.clearMask()
         else:
-            from PyQt6.QtCore import QRectF
-            from PyQt6.QtGui import QPainterPath, QRegion
+            from PySide6.QtCore import QRectF
+            from PySide6.QtGui import QPainterPath, QRegion
 
             radius = 10.0
             path = QPainterPath()
@@ -13720,7 +13720,7 @@ def main():
     settings_manager.set("theme", current_theme)
     
     splash_bg_color, splash_text_color = themes.theme_splash_colors_for(current_theme)
-    # Apply chrome stylesheet early so license/password dialogs match.
+    # Apply chrome stylesheet early so password dialogs match.
     early_css = themes.build_stylesheet(themes.get_app_theme(current_theme))
     app.setStyleSheet(early_css)
     
@@ -13733,47 +13733,6 @@ def main():
     splash.show()
     app.processEvents()
     startup_probe_phase("splash shown")
-
-    # Check license before proceeding
-    license_manager = LicenseManager()
-    is_valid, license_message = license_manager.validate_license()
-    
-    if not is_valid:
-        # Close splash and show license dialog
-        splash.close()
-        splash.deleteLater()
-        app.processEvents()  # Process the deletion
-        
-        machine_id = license_manager.get_machine_id_for_licensing()
-        license_dialog = LicenseDialog(machine_id=machine_id)
-        license_dialog.setStyleSheet(early_css)
-        
-        result = license_dialog.exec()
-        
-        if result != QDialog.DialogCode.Accepted:
-            # User cancelled - exit application
-            stop_startup_window_probe()
-            return 0
-        
-        # Re-validate after activation
-        is_valid, license_message = license_manager.validate_license()
-        if not is_valid:
-            QMessageBox.critical(
-                None,
-                "License Activation Failed",
-                f"Could not activate license:\n{license_message}\n\nApplication will now exit."
-            )
-            stop_startup_window_probe()
-            return 1
-        
-        # Recreate splash screen after successful license activation
-        splash = make_rounded_splash(
-            f"Restic Desktop {VERSION}\n\nLicense activated! Loading application...\n",
-            bg_color=splash_bg_color,
-            text_color=splash_text_color,
-        )
-        splash.show()
-        app.processEvents()
 
     # Check application password - if hash exists, ALWAYS require authentication
     # Retrieve password from storage

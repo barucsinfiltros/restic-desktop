@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from PyQt6.QtCore import Qt, QTime
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTime
+from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFrame,

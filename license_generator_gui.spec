@@ -23,7 +23,7 @@ a = Analysis(
         'ui.framed_dialog',
         'ui.cards',
         'ui.icons',
-        'PyQt6.QtSvg',
+        'PySide6.QtSvg',
     ],
     hookspath=[],
     hooksconfig={},

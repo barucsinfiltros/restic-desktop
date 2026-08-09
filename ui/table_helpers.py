@@ -1,9 +1,9 @@
 """Shared helpers for modern data tables."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtGui import QBrush, QColor
-from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QBrush, QColor
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
 
 
 class SortableTableItem(QTableWidgetItem):
@@ -58,7 +58,7 @@ class TableRowHover(QObject):
 
     def _on_selection_changed(self) -> None:
         # Re-apply after Qt paints selection-color (which would otherwise force bright text).
-        from PyQt6.QtCore import QTimer
+        from PySide6.QtCore import QTimer
 
         QTimer.singleShot(0, lambda: self._apply(self._row))
 
@@ -161,7 +161,7 @@ def make_repo_swatch_cell(
     parent=None,
 ):
     """Name cell with a coloured square swatch (repositories table)."""
-    from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
+    from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
     cell = QWidget(parent)
     cell.setObjectName("repoNameCell")
@@ -196,7 +196,7 @@ def make_repo_icon_cell(
     parent=None,
 ):
     """Jobs-table repository cell: tinted icon chip + plain name (no ellipsis menu)."""
-    from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
+    from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
     from ui.icons import tinted_icon
 
@@ -263,7 +263,7 @@ def make_snapshot_id_cell(
     parent=None,
 ):
     """Snapshots-table ID cell: tinted icon chip + short id (repo accent colour)."""
-    from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
+    from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
     from ui.icons import tinted_icon
 
@@ -308,7 +308,7 @@ def make_snapshot_size_cell(
     parent=None,
 ):
     """Size text + tiny relative bar (ratio vs largest snapshot in the list)."""
-    from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget
+    from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget
 
     cell = QWidget(parent)
     cell.setObjectName("snapshotSizeCell")

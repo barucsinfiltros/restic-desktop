@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QEnterEvent, QMouseEvent
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QCursor, QEnterEvent, QMouseEvent
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ui.icons import tinted_icon
 
@@ -25,7 +25,7 @@ class StatCard(QFrame):
     """Metric card: large tinted icon chip + value / label / subtitle."""
 
     _CARD_HEIGHT = 112
-    clicked = pyqtSignal()
+    clicked = Signal()
 
     def __init__(
         self,
