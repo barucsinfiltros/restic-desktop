@@ -9,6 +9,8 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 
 **User guide:** [Getting started](docs/GETTING_STARTED.md) — install, first repository, backup job, and a test restore.
 
+![Restic Desktop dashboard](images/dashboard.png)
+
 ---
 
 ## Features
@@ -55,7 +57,7 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 
 ## Download and run (binary release)
 
-1. Get the latest build from [GitHub Releases](https://github.com/Dallustallus/restic_manager/releases).
+1. Get the latest build from [GitHub Releases](https://github.com/Dallustallus/restic-desktop/releases).
 2. Run the executable (Windows: `restic_manager.exe`).
 3. Install [restic](https://restic.net/) if needed, or use **Settings → Dependencies** in the app.
 

@@ -4,7 +4,7 @@ This guide walks through a first successful backup and restore. You only need ab
 
 ## 1. Install and open the app
 
-**From a release (recommended for most users):** download the build from [GitHub Releases](https://github.com/Dallustallus/restic_manager/releases) and run it. You do not need Python.
+**From a release (recommended for most users):** download the build from [GitHub Releases](https://github.com/Dallustallus/restic-desktop/releases) and run it. You do not need Python.
 
 **From source (developers):**
 
