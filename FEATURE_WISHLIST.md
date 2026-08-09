@@ -23,8 +23,9 @@ Audience: people who want a proper restic app, not an enterprise Veeam/Acronis r
    - Create local repo → pick folders → schedule → test connection
    - Especially important for non-restic users
 
-5. **Finish SFTP / HTTPS wiring**
-   - Audit forget / prune / unlock / copy (and any other repo ops) so custom SSH key and REST HTTP auth work everywhere, not only on the main backup/snapshot/restore paths
+5. **Finish SFTP / HTTPS wiring** ✅ Done
+   - Shared `build_repo_env` / `repo_restic_prefix` (and scheduled-script helpers) now cover backup, restore, check, forget, prune, unlock, copy, stats, browse, and retention schedules
+   - Remaining **restic** limit (not app-only): copy between two HTTPS repos with different HTTP Basic Auth credentials — documented in README
 
 ---
 

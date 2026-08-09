@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 
 from ui.cards import SectionCard, StatCard
 from ui.charts import DonutChart, RoundedBarChart
-from ui.icons import icon
+from ui.icons import tinted_icon
 from ui.table_helpers import SortableTableItem, TableRowHover, make_repo_icon_cell
 
 import ui.themes as themes
@@ -67,17 +67,21 @@ def create_dashboard_page(
     header.addLayout(title_col, stretch=1)
 
     if on_new_backup is not None:
-        new_backup = QPushButton("New Backup")
-        new_backup.setObjectName("toolbarBtn")
-        new_backup.setIcon(icon("jobs.svg", 16))
+        new_backup = QPushButton("  New Backup")
+        new_backup.setObjectName("titleBarActionBtn")
+        new_backup.setFlat(True)
+        new_backup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        new_backup.setIcon(tinted_icon("jobs.svg", "#8b95a5", 16))
         new_backup.setCursor(Qt.CursorShape.PointingHandCursor)
         new_backup.setFixedHeight(28)
         new_backup.clicked.connect(on_new_backup)
         header.addWidget(new_backup, 0, Qt.AlignmentFlag.AlignVCenter)
     if on_restore_files is not None:
-        restore_files = QPushButton("Restore Files")
-        restore_files.setObjectName("toolbarBtn")
-        restore_files.setIcon(icon("restore.svg", 16))
+        restore_files = QPushButton("  Restore Files")
+        restore_files.setObjectName("titleBarActionBtn")
+        restore_files.setFlat(True)
+        restore_files.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        restore_files.setIcon(tinted_icon("restore.svg", "#8b95a5", 16))
         restore_files.setCursor(Qt.CursorShape.PointingHandCursor)
         restore_files.setFixedHeight(28)
         restore_files.clicked.connect(on_restore_files)

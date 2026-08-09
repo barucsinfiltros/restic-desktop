@@ -336,6 +336,29 @@ def extract_snapshot_short_id(stdout: str) -> Optional[str]:
     return None
 
 
+def backup_skipped_unchanged(stdout: str) -> bool:
+    """True when restic finished a backup but did not create a snapshot.
+
+    With ``--skip-if-unchanged``, the JSON summary omits ``snapshot_id``.
+    Human-readable output includes ``skipped creating snapshot``.
+    """
+    if not stdout:
+        return False
+    if "skipped creating snapshot" in stdout.lower():
+        return True
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if data.get("message_type") == "summary":
+            return not bool(data.get("snapshot_id"))
+    return False
+
+
 def insert_log(
     message: str,
     *,
@@ -353,6 +376,58 @@ def insert_log(
             (stamp, (level or "info").strip().lower() or "info", text),
         )
         return int(cur.lastrowid)
+
+
+def log_job_run_outcome(
+    *,
+    job_name: str,
+    repo_name: str = "",
+    success: bool,
+    source: str = "cli",
+    duration_sec: Optional[float] = None,
+    exit_code: Optional[int] = None,
+    error_summary: Optional[str] = None,
+    snapshot_short_id: Optional[str] = None,
+    skipped_unchanged: bool = False,
+    db_path: Optional[str] = None,
+) -> int:
+    """Write one concise Logs-page entry for a CLI/scheduled backup outcome."""
+    src = (source or "cli").strip().lower() or "cli"
+    if src == "scheduled":
+        label = "Scheduled backup"
+    elif src == "cli":
+        label = "CLI backup"
+    else:
+        label = f"{src} backup"
+
+    job = (job_name or "").strip() or "(unnamed)"
+    repo = (repo_name or "").strip()
+    where = f"'{job}'" + (f" → '{repo}'" if repo else "")
+    dur = format_duration(duration_sec)
+
+    if success:
+        level = "info"
+        if skipped_unchanged:
+            message = f"{label} {where} finished — no changes, snapshot skipped ({dur})"
+        elif snapshot_short_id:
+            message = (
+                f"{label} {where} completed successfully "
+                f"(snapshot {snapshot_short_id}, {dur})"
+            )
+        else:
+            message = f"{label} {where} completed successfully ({dur})"
+    else:
+        level = "error"
+        detail = (error_summary or "").strip().replace("\n", " ")
+        if len(detail) > 200:
+            detail = detail[:197] + "..."
+        code = f" exit {exit_code}" if exit_code is not None else ""
+        if detail:
+            message = f"{label} {where} failed{code} ({dur}): {detail}"
+        else:
+            message = f"{label} {where} failed{code} ({dur})"
+
+    return insert_log(message, level=level, db_path=db_path)
 
 
 def get_recent_job_runs(

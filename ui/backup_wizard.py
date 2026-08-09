@@ -253,6 +253,7 @@ class BackupWizard(WizardDialog):
             "compression": "auto",
             "no_cache": False,
             "ignore_inode": False,
+            "skip_if_unchanged": True,
             "schedule": schedule,
             "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }

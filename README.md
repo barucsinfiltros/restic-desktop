@@ -9,10 +9,12 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
 - 🔐 **SFTP (NAS / remote)**: Host, port, username, remote path, optional SSH private key
   - Restic requires SSH **key** login (not an interactive SSH password)
   - In-dialog tip covers `ssh-keygen`, copying the public key to the NAS, and testing `ssh`
+  - SSH key options (`sftp.args` / `-i`) are applied on backup, restore, check, forget, prune, unlock, copy, retention schedules, and related ops
 - 🌐 **HTTPS (REST server)**: URL for restic REST server (or compatible endpoint)
   - HTTP auth modes: **Anonymous**, **Username + password**, or **Password only**
   - HTTP credentials are separate from the **repository password** (backup encryption)
-  - Passed to restic via `RESTIC_REST_USERNAME` / `RESTIC_REST_PASSWORD`
+  - Passed to restic via `RESTIC_REST_USERNAME` / `RESTIC_REST_PASSWORD` on the same ops as SFTP
+- ⚠️ **Copy limitation (restic)**: Copying a snapshot between two HTTPS repositories that use *different* HTTP Basic Auth credentials is not fully supported. Restic exposes only one `RESTIC_REST_*` pair (there is no `RESTIC_REST_*2` for the destination). Copy still works when only one side needs HTTP auth, both sides share the same HTTP credentials, or either side is Local/SFTP.
 - 🎨 Theme combo: dark themes, separator, then light themes
 - Combo selection contrast fixed (selected item stays readable)
 
@@ -253,6 +255,8 @@ A PyQt6 GUI application for managing Restic backups with a familiar interface si
   - **Repo password** (encrypted at rest) with show/hide — encrypts backup data
   - **Initialize repository option** with real-time progress dialog
   - **Test connection button** — validates access with `restic snapshots --latest 1` and updates Status
+  - SFTP SSH key options and HTTPS REST auth are shared across backup, restore, check, forget, prune, unlock, copy, stats, and retention (GUI + scheduled scripts)
+  - **Known restic limit**: snapshot **copy** between two HTTPS repos with *different* HTTP Basic Auth credentials may fail — restic has only one `RESTIC_REST_*` env pair for both sides
   - Edit existing repositories; legacy cloud types still open if already saved
   - Delete repositories with confirmation
 - **Windows UTF-8 Support**: Subprocess encoding fix for non-ASCII characters in Restic output
@@ -787,6 +791,10 @@ On first run, the application requires a valid license key:
 7. Optionally click **Test**, then **OK**
 
 Config (including encrypted passwords) is saved to `restic_settings.json` in the app working directory.
+
+**SFTP / HTTPS note:** After saving, backup, restore, integrity check, forget/prune/unlock, retention schedules, and most other repository operations use the same SFTP key options and HTTPS REST credentials as Test Connection.
+
+**Copy limitation:** When copying a snapshot between repositories, Local ↔ SFTP and single-HTTPS setups are fine. Copying between *two* HTTPS repositories that each use different HTTP Basic Auth usernames/passwords is a restic limitation (only one `RESTIC_REST_USERNAME` / `RESTIC_REST_PASSWORD` pair exists). Prefer matching HTTP credentials on both REST servers, or copy via a Local/SFTP intermediate.
 
 **Repository Status:** In the Configured Repositories table, use **⋯ → Check connection** to refresh Status and Last Checked. Status values:
 - **Healthy** — last check succeeded

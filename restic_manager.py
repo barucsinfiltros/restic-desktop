@@ -20,10 +20,11 @@ License generator GUI:
 """
 
 import argparse
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Optional, List, Dict, Tuple, Any, Sequence
 from collections import deque
 import json
 import os
+import shlex
 import sys
 import subprocess
 import traceback
@@ -1328,27 +1329,37 @@ class ResticCommand:
             return stdout.strip()
         return None
     
-    def forget(self, repo_path: str, password: str, args: List[str] = None) -> Optional[str]:
+    def forget(
+        self,
+        repo_path: str = "",
+        password: str = "",
+        args: List[str] = None,
+        *,
+        repo: Optional[dict] = None,
+        env: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
         """
-        Execute restic forget command to apply retention policy
-        Args:
-            repo_path: Path to the repository
-            password: Repository password
-            args: Additional arguments (keep policies, --prune, --dry-run, etc.)
-        Returns:
-            Command output if successful, None if it failed
+        Execute restic forget command to apply retention policy.
+
+        Prefer ``repo`` + ``env`` (from ``build_repo_env`` / ``_repo_env``) so
+        SFTP SSH options and HTTPS REST auth are included. Legacy callers may
+        still pass ``repo_path`` + ``password`` alone.
         """
-        cmd_args = ["-r", repo_path, "forget"]
-        
+        if repo is not None:
+            cmd_args = repo_restic_prefix(repo) + ["forget"]
+        else:
+            cmd_args = ["-r", repo_path, "forget"]
+
         if args:
             cmd_args.extend(args)
-        
-        env = {"RESTIC_PASSWORD": password}
+
+        if env is None:
+            env = {"RESTIC_PASSWORD": password} if password else {}
         success, stdout, stderr = self.run(cmd_args, env=env, timeout=600)
-        
+
         # Return output regardless of success so user can see what happened
         output = stdout + ("\n" + stderr if stderr else "")
-        
+
         if success:
             return output
         else:
@@ -1719,6 +1730,28 @@ def build_repo_env(
             rest_repo["rest_password_plain"] = ""
     env.update(rest_auth_env(rest_repo))
     return env
+
+
+def shell_repo_command(
+    restic_path: str,
+    repo: Optional[dict],
+    repo_password: str,
+    restic_args: Sequence[str],
+    *,
+    password_manager=None,
+) -> str:
+    """Build a POSIX shell command with RESTIC_* env and SFTP-aware -r args."""
+    env = build_repo_env(
+        repo,
+        repo_password,
+        password_manager=password_manager,
+    )
+    exports = " ".join(
+        f"{key}={shlex.quote(str(value))}" for key, value in env.items() if value
+    )
+    cmd_parts = [restic_path, *repo_restic_prefix(repo), *list(restic_args)]
+    quoted = " ".join(shlex.quote(str(part)) for part in cmd_parts if part is not None)
+    return f"{exports} {quoted}".strip() if exports else quoted
 
 
 # Repository Dialog
@@ -2589,6 +2622,17 @@ class BackupJobDialog(FramedDialog):
         self.ignore_inode_check.setChecked(existing_job.get("ignore_inode", False) if existing_job else False)
         self.ignore_inode_check.setToolTip("Ignore inode number changes when checking for modified files")
         options_layout.addRow("", self.ignore_inode_check)
+
+        # Skip snapshot if nothing changed vs parent
+        self.skip_if_unchanged_check = QCheckBox("Skip snapshot if unchanged")
+        self.skip_if_unchanged_check.setChecked(
+            existing_job.get("skip_if_unchanged", True) if existing_job else True
+        )
+        self.skip_if_unchanged_check.setToolTip(
+            "Do not create a new snapshot when the backup matches the parent "
+            "(restic --skip-if-unchanged). Avoids empty 'no change' snapshots."
+        )
+        options_layout.addRow("", self.skip_if_unchanged_check)
         
         layout.addWidget(options_card)
         
@@ -2821,6 +2865,7 @@ class BackupJobDialog(FramedDialog):
             "compression": self.compression_combo.currentText(),
             "no_cache": self.no_cache_check.isChecked(),
             "ignore_inode": self.ignore_inode_check.isChecked(),
+            "skip_if_unchanged": self.skip_if_unchanged_check.isChecked(),
             "schedule": schedule_data,
             "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
@@ -3265,6 +3310,10 @@ class SchedulerManager:
             # Ignore inode
             if job_data.get("ignore_inode", False):
                 restic_args.append("--ignore-inode")
+
+            # Skip creating a snapshot when nothing changed vs parent
+            if job_data.get("skip_if_unchanged", True):
+                restic_args.append("--skip-if-unchanged")
             
             # Build PowerShell script content
             note = ""
@@ -3389,8 +3438,10 @@ try {{
     }} catch {{
         # History recording is best-effort
     }}
-    # Clear password from environment
+    # Clear sensitive environment variables
     Remove-Item Env:RESTIC_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:RESTIC_REST_USERNAME -ErrorAction SilentlyContinue
+    Remove-Item Env:RESTIC_REST_PASSWORD -ErrorAction SilentlyContinue
 }}
 
 if ($exitCode -eq 0) {{
@@ -6607,8 +6658,8 @@ class ResticManagerWindow(QMainWindow):
         QApplication.processEvents()
         
         # Execute diff command in background
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo_full["path"], "diff", prev_snapshot_id, snapshot_id]
+        env = self._repo_env(repo_full, password)
+        args = repo_restic_prefix(repo_full) + ["diff", prev_snapshot_id, snapshot_id]
         
         self.log(f"Running diff: {prev_snapshot_id} -> {snapshot_id}")
         
@@ -6763,8 +6814,8 @@ class ResticManagerWindow(QMainWindow):
         self.log(f"Forgetting snapshot {snapshot_id}...")
         
         # Execute restic forget command
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "forget", full_id]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["forget", full_id]
         
         self._forget_worker = ResticWorker(self.restic_cmd, args, env)
         self._forget_worker.finished.connect(lambda success, stdout, stderr: self._on_forget_complete(success, stdout, stderr, snapshot_id))
@@ -6982,17 +7033,27 @@ class ResticManagerWindow(QMainWindow):
             progress_dialog.show()
             QApplication.processEvents()
             
-            # Execute restic copy command with progress
-            env = {
-                "RESTIC_PASSWORD": source_password if source_password else "",
-                "RESTIC_PASSWORD2": dest_password if dest_password else ""
-            }
-            args = [
-                "-r", source_repo["path"],
+            # Execute restic copy with SFTP options / HTTPS REST auth for both sides.
+            env = self._repo_env(source_repo, source_password)
+            env["RESTIC_PASSWORD2"] = dest_password if dest_password else ""
+            # When only the destination needs HTTP Basic Auth, expose it via the
+            # standard RESTIC_REST_* vars (restic has no separate *2 pair for REST).
+            if (source_repo.get("type") or "").lower() not in ("https", "rest"):
+                env.update(
+                    build_repo_env(
+                        dest_repo,
+                        "",
+                        password_manager=self.settings_manager.password_manager,
+                    )
+                )
+            args = repo_restic_prefix(source_repo) + [
                 "copy",
-                "--repo2", dest_repo["path"],
-                full_id
+                "--repo2",
+                dest_repo["path"],
             ]
+            if (dest_repo.get("type") or "").lower() == "sftp":
+                args.extend(sftp_cli_options(dest_repo.get("ssh_key") or ""))
+            args.append(full_id)
             
             self._copy_worker = ResticWorker(self.restic_cmd, args, env, timeout=copy_timeout, use_progress=False)
             self._copy_worker.progress.connect(self._on_copy_progress)
@@ -7061,8 +7122,8 @@ class ResticManagerWindow(QMainWindow):
                 
                 if reply == QMessageBox.StandardButton.Yes:
                     self.log(f"Deleting snapshot {snapshot_id} from source repository...")
-                    env = {"RESTIC_PASSWORD": source_password if source_password else ""}
-                    args = ["-r", source_repo["path"], "forget", full_id]
+                    env = self._repo_env(source_repo, source_password)
+                    args = repo_restic_prefix(source_repo) + ["forget", full_id]
                     
                     success_delete, stdout_del, stderr_del = self.restic_cmd.run(args, env)
                     
@@ -7252,8 +7313,8 @@ class ResticManagerWindow(QMainWindow):
         self._prune_progress.show()
         
         # Execute restic prune command in background with longer timeout (30 minutes)
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "prune"]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["prune"]
         
         self._prune_repo_name = repo_name
         self._prune_worker = ResticWorker(self.restic_cmd, args, env, timeout=1800)  # 30 minutes
@@ -7343,8 +7404,8 @@ class ResticManagerWindow(QMainWindow):
         self._unlock_repo_name = repo_name
         
         # Execute unlock command
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "unlock"]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["unlock"]
         
         self._unlock_worker = ResticWorker(self.restic_cmd, args, env, timeout=60)
         self._unlock_worker.finished.connect(self._on_unlock_completed)
@@ -7402,10 +7463,10 @@ class ResticManagerWindow(QMainWindow):
         
         # Start loading stats in background
         # We'll gather: snapshots count, repository size, restore size, and check status
-        env = {"RESTIC_PASSWORD": password} if password else {}
+        env = self._repo_env(repo, password)
         
         # First, get snapshot count
-        args = ["-r", repo["path"], "snapshots", "--json"]
+        args = repo_restic_prefix(repo) + ["snapshots", "--json"]
         self._stats_worker = ResticWorker(self.restic_cmd, args, env)
         self._stats_worker.finished.connect(self._on_snapshots_counted)
         self._stats_worker.start()
@@ -7440,8 +7501,8 @@ class ResticManagerWindow(QMainWindow):
         # Now get repository size stats (raw data)
         repo = self._current_stats_repo
         password = self._current_stats_password
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "stats", "--mode", "raw-data", "--json"]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["stats", "--mode", "raw-data", "--json"]
         
         self._stats_worker = ResticWorker(self.restic_cmd, args, env)
         self._stats_worker.finished.connect(self._on_raw_stats_loaded)
@@ -7463,8 +7524,8 @@ class ResticManagerWindow(QMainWindow):
         # Now get restore size (original data size before deduplication and compression)
         repo = self._current_stats_repo
         password = self._current_stats_password
-        env = {"RESTIC_PASSWORD": password} if password else {}
-        args = ["-r", repo["path"], "stats", "--mode", "restore-size", "--json"]
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["stats", "--mode", "restore-size", "--json"]
         
         self._stats_worker = ResticWorker(self.restic_cmd, args, env)
         self._stats_worker.finished.connect(self._on_restore_stats_loaded)
@@ -8335,8 +8396,8 @@ class ResticManagerWindow(QMainWindow):
             self._rebuild_index_progress.show()
             
             # Execute restic rebuild-index command
-            env = {"RESTIC_PASSWORD": password} if password else {}
-            args = ["-r", repo["path"], "rebuild-index"]
+            env = self._repo_env(repo, password)
+            args = repo_restic_prefix(repo) + ["rebuild-index"]
             
             self._rebuild_index_worker = ResticWorker(self.restic_cmd, args, env, timeout=1800)  # 30 minutes
             self._rebuild_index_worker.finished.connect(self._on_rebuild_index_complete)
@@ -8599,8 +8660,8 @@ class ResticManagerWindow(QMainWindow):
             snap_time = snapshot.get("time", "unknown")
             
             # Use restic ls to list files in this snapshot
-            env = {"RESTIC_PASSWORD": password} if password else {}
-            args = ["-r", repo["path"], "ls", snap_id, "--long"]
+            env = self._repo_env(repo, password)
+            args = repo_restic_prefix(repo) + ["ls", snap_id, "--long"]
             
             success, stdout, stderr = self.restic_cmd.run(args, env=env, timeout=60)
             
@@ -9664,8 +9725,8 @@ class ResticManagerWindow(QMainWindow):
             file_tree.clear()
             _set_restore_enabled(False)
 
-            env = {"RESTIC_PASSWORD": password} if password else {}
-            args = ["-r", repo["path"], "snapshots", "--json"]
+            env = self._repo_env(repo, password)
+            args = repo_restic_prefix(repo) + ["snapshots", "--json"]
             worker = ResticWorker(self.restic_cmd, args, env)
 
             def _on_snapshots_loaded(success, stdout, stderr):
@@ -10069,6 +10130,10 @@ class ResticManagerWindow(QMainWindow):
         # Ignore inode
         if job.get("ignore_inode", False):
             args.append("--ignore-inode")
+
+        # Skip creating a snapshot when nothing changed vs parent
+        if job.get("skip_if_unchanged", True):
+            args.append("--skip-if-unchanged")
         
         # Show progress dialog (create once for first repo, reuse for others)
         if not hasattr(self, '_backup_progress_dialog') or not self._backup_progress_dialog.isVisible():
@@ -10424,8 +10489,8 @@ class ResticManagerWindow(QMainWindow):
         self.log(f"Auto-unlocking repository after cancellation...")
         
         # Execute unlock command in background
-        env = {"RESTIC_PASSWORD": self._backup_repo_password} if self._backup_repo_password else {}
-        args = ["-r", self._backup_repo["path"], "unlock"]
+        env = self._repo_env(self._backup_repo, self._backup_repo_password)
+        args = repo_restic_prefix(self._backup_repo) + ["unlock"]
         
         unlock_worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
         unlock_worker.finished.connect(lambda success, stdout, stderr: self._on_auto_unlock_completed(success, stderr, "cancel"))
@@ -10551,29 +10616,70 @@ class ResticManagerWindow(QMainWindow):
             self._backup_progress_bar.setRange(0, 100)
             self._backup_progress_bar.setValue(100)
         
+        skipped = bool(success) and history_db.backup_skipped_unchanged(stdout or "")
+
         # Add completion message to output (output already displayed dynamically)
         if hasattr(self, '_backup_output_text'):
             self._backup_output_text.appendPlainText("")
             self._backup_output_text.appendPlainText("=" * 60)
             if success:
-                self._backup_output_text.appendPlainText(f"✓ Backup to '{self._backup_repo_name}' completed successfully!")
+                if skipped:
+                    self._backup_output_text.appendPlainText(
+                        f"✓ Backup to '{self._backup_repo_name}' finished — "
+                        "no changes, snapshot skipped"
+                    )
+                else:
+                    self._backup_output_text.appendPlainText(
+                        f"✓ Backup to '{self._backup_repo_name}' completed successfully!"
+                    )
             else:
-                self._backup_output_text.appendPlainText(f"✗ Backup to '{self._backup_repo_name}' failed!")
+                self._backup_output_text.appendPlainText(
+                    f"✗ Backup to '{self._backup_repo_name}' failed!"
+                )
             self._backup_output_text.appendPlainText("=" * 60)
             # Auto-scroll to bottom
             scrollbar = self._backup_output_text.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
         
         if success:
+            if skipped:
+                status_msg = (
+                    f"✓ Backup to '{self._backup_repo_name}' finished — "
+                    "no changes, snapshot skipped"
+                )
+                notify_title = "Backup Unchanged ✓"
+                notify_msg = (
+                    f"Backup job '{self._backup_job_name}' to "
+                    f"'{self._backup_repo_name}' found no changes; "
+                    "no new snapshot was created."
+                )
+                log_msg = (
+                    f"Backup job '{self._backup_job_name}' → "
+                    f"'{self._backup_repo_name}' skipped (unchanged)"
+                )
+            else:
+                status_msg = (
+                    f"✓ Backup to '{self._backup_repo_name}' completed successfully!"
+                )
+                notify_title = "Backup Completed Successfully ✓"
+                notify_msg = (
+                    f"Backup job '{self._backup_job_name}' to "
+                    f"'{self._backup_repo_name}' completed successfully."
+                )
+                log_msg = (
+                    f"Backup job '{self._backup_job_name}' → "
+                    f"'{self._backup_repo_name}' completed successfully"
+                )
+
             if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText(f"✓ Backup to '{self._backup_repo_name}' completed successfully!")
+                self._backup_status_label.setText(status_msg)
             
-            self.log(f"Backup job '{self._backup_job_name}' â†’ '{self._backup_repo_name}' completed successfully")
+            self.log(log_msg)
             
             # Show success notification
             show_notification(
-                title="Backup Completed Successfully ✓",
-                message=f"Backup job '{self._backup_job_name}' to '{self._backup_repo_name}' completed successfully.",
+                title=notify_title,
+                message=notify_msg,
                 icon_type="success",
                 duration="short"
             )
@@ -10613,8 +10719,8 @@ class ResticManagerWindow(QMainWindow):
             return
         
         # First check if there are any locks
-        env = {"RESTIC_PASSWORD": self._backup_repo_password} if self._backup_repo_password else {}
-        args = ["-r", self._backup_repo["path"], "list", "locks"]
+        env = self._repo_env(self._backup_repo, self._backup_repo_password)
+        args = repo_restic_prefix(self._backup_repo) + ["list", "locks"]
         
         check_worker = ResticWorker(self.restic_cmd, args, env, timeout=15)
         check_worker.finished.connect(self._on_lock_check_completed)
@@ -10629,8 +10735,8 @@ class ResticManagerWindow(QMainWindow):
         if success and stdout and stdout.strip():
             self.log(f"Stale locks detected, auto-unlocking repository...")
             
-            env = {"RESTIC_PASSWORD": self._backup_repo_password} if self._backup_repo_password else {}
-            args = ["-r", self._backup_repo["path"], "unlock"]
+            env = self._repo_env(self._backup_repo, self._backup_repo_password)
+            args = repo_restic_prefix(self._backup_repo) + ["unlock"]
             
             unlock_worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
             unlock_worker.finished.connect(lambda success, stdout, stderr: self._on_auto_unlock_completed(success, stderr, "completion"))
@@ -10772,7 +10878,9 @@ class ResticManagerWindow(QMainWindow):
         import subprocess
         
         # Build restic command arguments
-        restic_cmd = self.restic_cmd
+        restic_cmd = getattr(self.restic_cmd, "restic_path", None) or (
+            self.settings_manager.get("restic_path") or "restic"
+        )
         
         # Save PowerShell script to scheduled_tasks folder (same as backup jobs)
         import os
@@ -10868,14 +10976,22 @@ if (Test-Path $passwordFile) {{
 }}
 
 # Optional HTTP Basic Auth for HTTPS / REST server repositories
-{self._powershell_rest_auth_block(repo)}
+{self.scheduler_manager._powershell_rest_auth_block(repo)}
 
 # Run restic retention/forget command
 Write-Host "Starting retention policy for repository: {repo['name']}"
 Write-Host "Repository: {repo['path']}"
 
-try {{
-    & "{restic_cmd}" -r "{repo['path']}" forget {" ".join(command_args)}
+$resticPath = "{restic_cmd}"
+$arguments = @(
+"""
+        restic_args = repo_restic_prefix(repo) + ["forget"] + list(command_args)
+        for arg in restic_args:
+            escaped_arg = str(arg).replace('"', '`"')
+            ps_script += f'    "{escaped_arg}",\n'
+        ps_script = ps_script.rstrip(",\n") + "\n)\n\n"
+        ps_script += f"""try {{
+    & $resticPath $arguments
     $exitCode = $LASTEXITCODE
     
     if ($exitCode -eq 0) {{
@@ -10892,8 +11008,10 @@ try {{
     Show-ToastNotification "Retention Failed ✗" "Repository '{repo['name']}' error: $_"
     exit 1
 }} finally {{
-    # Clear password from environment
+    # Clear sensitive environment variables
     Remove-Item env:RESTIC_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item env:RESTIC_REST_USERNAME -ErrorAction SilentlyContinue
+    Remove-Item env:RESTIC_REST_PASSWORD -ErrorAction SilentlyContinue
 }}
 """
         
@@ -10984,8 +11102,17 @@ try {{
         """Create Linux cron job"""
         import subprocess
         
-        # Build restic command
-        full_command = f'RESTIC_PASSWORD="{password}" {self.restic_cmd} -r "{repo["path"]}" forget {" ".join(command_args)}'
+        # Build restic command (includes SFTP options / HTTPS REST auth)
+        restic_path = getattr(self.restic_cmd, "restic_path", None) or (
+            self.settings_manager.get("restic_path") or "restic"
+        )
+        full_command = shell_repo_command(
+            str(restic_path),
+            repo,
+            password or "",
+            ["forget", *list(command_args)],
+            password_manager=self.settings_manager.password_manager,
+        )
         
         # Build cron schedule
         hour = time.hour()
@@ -11025,7 +11152,16 @@ try {{
     def _create_macos_launchd(self, task_name, repo, password, command_args, frequency, time, day_of_week, day_of_month):
         """Create macOS launchd plist"""
         # Similar to Linux - provide instructions for manual setup
-        full_command = f'RESTIC_PASSWORD="{password}" {self.restic_cmd} -r "{repo["path"]}" forget {" ".join(command_args)}'
+        restic_path = getattr(self.restic_cmd, "restic_path", None) or (
+            self.settings_manager.get("restic_path") or "restic"
+        )
+        full_command = shell_repo_command(
+            str(restic_path),
+            repo,
+            password or "",
+            ["forget", *list(command_args)],
+            password_manager=self.settings_manager.password_manager,
+        )
         
         hour = time.hour()
         minute = time.minute()
@@ -11241,9 +11377,10 @@ try {{
         # Execute restic forget command
         try:
             result = self.restic_cmd.forget(
-                repo_path=repo["path"],
+                repo=repo,
                 password=password,
-                args=command_args
+                args=command_args,
+                env=self._repo_env(repo, password),
             )
             
             if result:
@@ -12939,6 +13076,17 @@ def run_job_cli(job_name):
         
         if not job:
             print(f"[ERROR] Job '{job_name}' not found!")
+            try:
+                history_db.log_job_run_outcome(
+                    job_name=job_name,
+                    success=False,
+                    source="cli",
+                    exit_code=1,
+                    error_summary=f"Job '{job_name}' not found",
+                    db_path=db_path,
+                )
+            except Exception:
+                pass
             return 1
         
         # Get repository (support old single + new multi format; CLI backs up first)
@@ -12951,6 +13099,18 @@ def run_job_cli(job_name):
         
         if not repo:
             print(f"[ERROR] Repository '{repo_name}' not found!")
+            try:
+                history_db.log_job_run_outcome(
+                    job_name=job_name,
+                    repo_name=repo_name or "",
+                    success=False,
+                    source="cli",
+                    exit_code=1,
+                    error_summary=f"Repository '{repo_name}' not found",
+                    db_path=db_path,
+                )
+            except Exception:
+                pass
             return 1
         
         # Decrypt password
@@ -13004,6 +13164,10 @@ def run_job_cli(job_name):
         # Ignore inode
         if job.get("ignore_inode", False):
             args.append("--ignore-inode")
+
+        # Skip creating a snapshot when nothing changed vs parent
+        if job.get("skip_if_unchanged", True):
+            args.append("--skip-if-unchanged")
         
         print(f"[Restic Desktop CLI] Running backup...")
         print(f"[Restic Desktop CLI] Repository: {repo['path']}")
@@ -13017,6 +13181,11 @@ def run_job_cli(job_name):
         success, stdout, stderr = restic_cmd.run(args, env, timeout=backup_timeout)
         duration_sec = time.time() - started_mono
 
+        snap_id = (
+            history_db.extract_snapshot_short_id(stdout or "") if success else None
+        )
+        skipped = bool(success) and history_db.backup_skipped_unchanged(stdout or "")
+        error_summary = None if success else ((stderr or "Unknown error")[:500])
         try:
             history_db.insert_job_run(
                 job_name=job_name,
@@ -13026,12 +13195,28 @@ def run_job_cli(job_name):
                 success=bool(success),
                 exit_code=0 if success else 1,
                 source="cli",
-                error_summary=None if success else ((stderr or "Unknown error")[:500]),
-                snapshot_short_id=history_db.extract_snapshot_short_id(stdout or "") if success else None,
+                error_summary=error_summary,
+                snapshot_short_id=snap_id,
                 db_path=db_path,
             )
         except Exception as exc:
             print(f"[WARN] Failed to record job run: {exc}")
+
+        try:
+            history_db.log_job_run_outcome(
+                job_name=job_name,
+                repo_name=repo_name or "",
+                success=bool(success),
+                source="cli",
+                duration_sec=duration_sec,
+                exit_code=0 if success else 1,
+                error_summary=error_summary,
+                snapshot_short_id=snap_id,
+                skipped_unchanged=skipped,
+                db_path=db_path,
+            )
+        except Exception as exc:
+            print(f"[WARN] Failed to write app log: {exc}")
         
         # Stamp last_run only on success
         if success:
@@ -13059,6 +13244,18 @@ def run_job_cli(job_name):
     except Exception as e:
         print(f"[ERROR] Exception occurred: {str(e)}")
         traceback.print_exc()
+        try:
+            settings_manager = ResticSettingsManager()
+            history_db.log_job_run_outcome(
+                job_name=job_name,
+                success=False,
+                source="cli",
+                exit_code=1,
+                error_summary=str(e)[:500],
+                db_path=history_db.history_db_path(settings_manager.filename),
+            )
+        except Exception:
+            pass
         return 1
 
 
@@ -13075,6 +13272,7 @@ def record_job_run_cli(args) -> int:
             started_at = started.strftime("%Y-%m-%dT%H:%M:%S")
         else:
             started_at = finished.strftime("%Y-%m-%dT%H:%M:%S")
+        source = args.source or "scheduled"
         history_db.insert_job_run(
             job_name=args.record_job_run,
             repo_name=args.repo_name or "",
@@ -13083,11 +13281,25 @@ def record_job_run_cli(args) -> int:
             duration_sec=duration,
             success=success,
             exit_code=args.exit_code,
-            source=args.source or "scheduled",
+            source=source,
             error_summary=args.error_summary,
             snapshot_short_id=args.snapshot_id,
             db_path=db_path,
         )
+        try:
+            history_db.log_job_run_outcome(
+                job_name=args.record_job_run,
+                repo_name=args.repo_name or "",
+                success=success,
+                source=source,
+                duration_sec=duration,
+                exit_code=args.exit_code,
+                error_summary=args.error_summary,
+                snapshot_short_id=args.snapshot_id,
+                db_path=db_path,
+            )
+        except Exception as log_exc:
+            print(f"[WARN] Failed to write app log: {log_exc}")
         if success:
             jobs = settings_manager.get("backup_jobs") or []
             stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
