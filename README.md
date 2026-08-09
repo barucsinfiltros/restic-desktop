@@ -12,13 +12,13 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 **User guide:** [Getting started](DOCS/GETTING_STARTED.md) — install, first repository, backup job, and a test restore.
 
 ![Restic Desktop dashboard](images/dashboard.png)
-![Restic Desktop dashboard](images/repository.png)
-![Restic Desktop dashboard](images/snapshots.png)
-![Restic Desktop dashboard](images/restore.png)
-![Restic Desktop dashboard](images/backup.png)
-![Restic Desktop dashboard](images/retention.png)
-![Restic Desktop dashboard](images/logs.png)
-![Restic Desktop dashboard](images/settings.png)
+![Restic Desktop repository](images/repository.png)
+![Restic Desktop snapshots](images/snapshots.png)
+![Restic Desktop restore](images/restore.png)
+![Restic Desktop backup](images/backup.png)
+![Restic Desktop retention](images/retention.png)
+![Restic Desktop logs](images/logs.png)
+![Restic Desktop settings](images/settings.png)
 ---
 
 ## Features
