@@ -5,12 +5,20 @@ A free, open-source [PySide6](https://doc.qt.io/qtforpython/) desktop applicatio
 **Version:** 2.2.4  
 **License:** [MIT](LICENSE) (your contributions welcome)
 
+**Tested** Windows 11 / Ubuntu 26.04
+
 If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/dallustallus).
 
-**User guide:** [Getting started](docs/GETTING_STARTED.md) — install, first repository, backup job, and a test restore.
+**User guide:** [Getting started](DOCS/GETTING_STARTED.md) — install, first repository, backup job, and a test restore.
 
 ![Restic Desktop dashboard](images/dashboard.png)
-
+![Restic Desktop dashboard](images/repository.png)
+![Restic Desktop dashboard](images/snapshots.png)
+![Restic Desktop dashboard](images/restore.png)
+![Restic Desktop dashboard](images/backup.png)
+![Restic Desktop dashboard](images/retention.png)
+![Restic Desktop dashboard](images/logs.png)
+![Restic Desktop dashboard](images/settings.png)
 ---
 
 ## Features
@@ -58,7 +66,7 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 ## Download and run (binary release)
 
 1. Get the latest build from [GitHub Releases](https://github.com/Dallustallus/restic-desktop/releases).
-2. Run the executable (Windows: `restic_manager.exe`).
+2. Run the executable (Windows: `ResticDesktop.exe`).
 3. Install [restic](https://restic.net/) if needed, or use **Settings → Dependencies** in the app.
 
 You do **not** need Python or PySide6 to use a release build. Then follow [Getting started](docs/GETTING_STARTED.md).
@@ -94,7 +102,7 @@ Use the project PyInstaller spec so icons and the `icons/` folder are bundled:
 pyinstaller restic_manager.spec
 ```
 
-Output: `dist/restic_manager.exe` (Windows) or `dist/restic_manager` (Linux).
+Output: `dist/ResticDesktop.exe` (Windows) or `dist/ResticDesktop` (Linux).
 
 Do not use a bare `pyinstaller --onefile restic_manager.py` for release builds — it skips the spec’s `datas` / icon settings.
 
