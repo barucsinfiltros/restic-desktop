@@ -52,7 +52,8 @@ class BackupWizard(WizardDialog):
 
         basics, basics_layout = _page(
             "Backup details",
-            "Name this backup and select one or more destination repositories.",
+            "Name this backup, then choose where to store it from your existing "
+            "repositories — or create a new one.",
         )
         form = QFormLayout()
         form.setSpacing(12)
@@ -62,14 +63,39 @@ class BackupWizard(WizardDialog):
         form.addRow("Backup name", self.name_input)
         basics_layout.addLayout(form)
 
+        repos_header = QHBoxLayout()
+        repos_header.setSpacing(8)
+        repos_label = QLabel("Existing repositories")
+        repos_label.setObjectName("sectionCardTitle")
+        repos_header.addWidget(repos_label)
+        repos_header.addStretch(1)
+        new_repo_btn = QPushButton("New Repository")
+        new_repo_btn.setObjectName("dialogSecondary")
+        new_repo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        new_repo_btn.setToolTip("Create or add a repository, then select it for this backup")
+        new_repo_btn.clicked.connect(self._create_repository)
+        repos_header.addWidget(new_repo_btn)
+        basics_layout.addLayout(repos_header)
+
+        repos_hint = QLabel(
+            "Select one or more destinations already configured in Restic Desktop."
+        )
+        repos_hint.setObjectName("pageSubtitle")
+        repos_hint.setWordWrap(True)
+        basics_layout.addWidget(repos_hint)
+
         self.repos_list = QListWidget()
         self.repos_list.setObjectName("backupJobList")
         self.repos_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        for repo in settings_manager.get("repositories") or []:
-            name = str(repo.get("name") or "").strip()
-            if name:
-                self.repos_list.addItem(name)
+        self.repos_empty_label = QLabel(
+            "No repositories yet. Click New Repository to create one."
+        )
+        self.repos_empty_label.setObjectName("pageSubtitle")
+        self.repos_empty_label.setWordWrap(True)
+        self.repos_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         basics_layout.addWidget(self.repos_list, stretch=1)
+        basics_layout.addWidget(self.repos_empty_label)
+        self._reload_repositories()
         self.add_step("Details", basics, self._validate_basics)
 
         sources, sources_layout = _page(
@@ -145,6 +171,53 @@ class BackupWizard(WizardDialog):
         review_layout.addWidget(self.run_now_check)
         self.add_step("Review", review)
 
+    def _reload_repositories(
+        self,
+        *,
+        keep_selected: set[str] | None = None,
+        prefer_select: str | None = None,
+    ) -> None:
+        """Refresh the destination list from settings."""
+        selected = keep_selected
+        if selected is None:
+            selected = {
+                item.text() for item in self.repos_list.selectedItems()
+            }
+        if prefer_select:
+            selected = set(selected) | {prefer_select}
+
+        self.repos_list.clear()
+        names: list[str] = []
+        for repo in self.settings_manager.get("repositories") or []:
+            name = str(repo.get("name") or "").strip()
+            if name:
+                names.append(name)
+                self.repos_list.addItem(name)
+
+        for i in range(self.repos_list.count()):
+            item = self.repos_list.item(i)
+            if item and item.text() in selected:
+                item.setSelected(True)
+
+        empty = not names
+        self.repos_list.setVisible(not empty)
+        self.repos_empty_label.setVisible(empty)
+
+    def _create_repository(self) -> None:
+        """Open the standard add-repository flow and select the new repo."""
+        host = self.parent()
+        if host is None or not hasattr(host, "add_repository"):
+            return
+        previously = {item.text() for item in self.repos_list.selectedItems()}
+
+        def on_added(name: str) -> None:
+            self._reload_repositories(
+                keep_selected=previously | {name},
+                prefer_select=name,
+            )
+
+        host.add_repository(on_added=on_added)
+
     def _add_path(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Folder to Back Up")
         if path and not self.paths_list.findItems(
@@ -167,7 +240,9 @@ class BackupWizard(WizardDialog):
         ):
             return "The backup name contains characters Windows cannot use."
         if not self.repos_list.selectedItems():
-            return "Select at least one repository."
+            if self.repos_list.count() == 0:
+                return "Create or add a repository, then select it."
+            return "Select at least one existing repository."
         return ""
 
     def _validate_paths(self) -> str:

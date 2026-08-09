@@ -437,7 +437,8 @@ def _build_health_panel(host: Any, parent: QWidget) -> QWidget:
         )
     )
     host.health_backup_overdue_spin.setToolTip(
-        "Mark backups overdue when the newest snapshot is older than this"
+        "Mark backups overdue when the last successful job run "
+        "(including skip-if-unchanged) is older than this — not merely the newest snapshot"
     )
 
     card.body.addWidget(

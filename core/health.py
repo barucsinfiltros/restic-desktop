@@ -328,17 +328,33 @@ def compute_repo_health(
     *,
     thresholds: HealthThresholds,
     last_backup_raw: str = "",
+    last_successful_run_raw: str = "",
     snapshot_count: int = 0,
     total_size: int = 0,
     jobs: Optional[list[dict]] = None,
     events: Optional[list[HealthEvent]] = None,
 ) -> RepoHealthReport:
-    """Score one repository from stored metadata + job schedule info."""
+    """Score one repository from stored metadata + job schedule info.
+
+    Freshness / overdue uses the newest of:
+    - latest snapshot time
+    - latest successful job run (including skip-if-unchanged)
+    - job ``last_run`` stamps
+    so unchanged skipped backups do not false-alarm.
+    """
     name = str(repo.get("name") or "Repository")
     jobs = jobs or []
-    last_backup = _parse_timestamp(last_backup_raw) or _parse_timestamp(
+    last_snapshot = _parse_timestamp(last_backup_raw) or _parse_timestamp(
         repo.get("last_backup")
     )
+    last_successful_run = _parse_timestamp(last_successful_run_raw)
+
+    activity_times: list[datetime] = []
+    if last_snapshot is not None:
+        activity_times.append(last_snapshot)
+    if last_successful_run is not None:
+        activity_times.append(last_successful_run)
+
     last_check = _parse_timestamp(repo.get("last_integrity_check"))
     check_result_raw = str(repo.get("last_integrity_result") or "").strip().lower()
     check_type = str(repo.get("last_integrity_type") or "").strip().lower()
@@ -363,15 +379,28 @@ def compute_repo_health(
         last_status = str(job.get("last_status") or job.get("status") or "").lower()
         if last_status in ("failed", "error", "fail"):
             failed_jobs += 1
-        # overdue: enabled schedule + last backup older than threshold
-        enabled = bool(job.get("schedule_enabled") or (job.get("schedule") or {}).get("enabled"))
-        if enabled and last_backup is not None:
-            age_h = hours_since(last_backup)
-            if age_h is not None and age_h > thresholds.backup_overdue_hours:
+
+        schedule = job.get("schedule") or {}
+        job_last = _parse_timestamp(job.get("last_run")) or _parse_timestamp(
+            schedule.get("last_run")
+        )
+        if job_last is not None:
+            activity_times.append(job_last)
+
+        # overdue: enabled schedule + this job's last successful run too old / missing
+        enabled = bool(job.get("schedule_enabled") or schedule.get("enabled"))
+        if enabled:
+            if job_last is None:
                 overdue_jobs += 1
+            else:
+                age_h = hours_since(job_last)
+                if age_h is not None and age_h > thresholds.backup_overdue_hours:
+                    overdue_jobs += 1
         nxt = _parse_timestamp(job.get("next_run") or "")
         if nxt is not None:
             next_candidates.append(nxt)
+
+    last_backup = max(activity_times) if activity_times else None
 
     if next_candidates:
         soonest = min(next_candidates)
@@ -503,7 +532,7 @@ def compute_repo_health(
         if backup_overdue:
             status_message = (
                 "Integrity and restore checks passed. "
-                "Last backup is older than your freshness threshold."
+                "Last successful backup run is older than your freshness threshold."
             )
         elif trust_ok:
             status_message = "Everything looks good. Checks passed and backups are up to date."
@@ -565,8 +594,9 @@ def compute_repo_health(
             Recommendation(
                 "warning",
                 "Backup is overdue",
-                f"Last backup was {format_relative(last_backup)} "
-                f"(threshold {thresholds.overdue_label()}).",
+                f"Last successful backup run was {format_relative(last_backup)} "
+                f"(threshold {thresholds.overdue_label()}). "
+                "Skipped unchanged snapshots still count as a successful run.",
                 "View Jobs",
                 "view_jobs",
             )

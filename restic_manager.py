@@ -4522,8 +4522,12 @@ class ResticManagerWindow(QMainWindow):
         self.stacked_widget.addWidget(page)
     
     # Repository Management Methods
-    def add_repository(self):
-        """Add a new repository"""
+    def add_repository(self, on_added=None):
+        """Add a new repository.
+
+        ``on_added`` is an optional ``callable(repo_name: str)`` invoked after the
+        repository is saved (immediately, or when ``init`` finishes successfully).
+        """
         dialog = RepositoryDialog(self, self.settings_manager)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             repo_data = dialog.get_repository_data()
@@ -4532,6 +4536,7 @@ class ResticManagerWindow(QMainWindow):
             should_initialize = repo_data.pop("initialize", False)
             
             if should_initialize:
+                self._on_repo_added_callback = on_added
                 # Show framed progress dialog (non-modal so UI doesn't freeze)
                 self._add_repo_progress, _, _ = make_framed_progress_dialog(
                     self,
@@ -4599,7 +4604,11 @@ class ResticManagerWindow(QMainWindow):
                 self.update_repository_combos()
                 self.log(f"Added repository: {repo_data['name']}")
                 QMessageBox.information(self, "Success", f"Repository '{repo_data['name']}' added successfully!")
-    
+                if callable(on_added):
+                    try:
+                        on_added(repo_data["name"])
+                    except Exception:
+                        pass
     def _on_init_progress(self, line):
         """Handle progress output during repository initialization"""
         if hasattr(self, '_init_output_text'):
@@ -4655,7 +4664,15 @@ class ResticManagerWindow(QMainWindow):
                 details
             )
             self.log(f"Successfully initialized and added repository: {repo_data['name']}")
+            callback = getattr(self, "_on_repo_added_callback", None)
+            self._on_repo_added_callback = None
+            if callable(callback):
+                try:
+                    callback(repo_data["name"])
+                except Exception:
+                    pass
         else:
+            self._on_repo_added_callback = None
             error_msg = stderr if stderr else "Unknown error"
             # Also include stdout in case there are warnings
             full_msg = f"Failed to initialize repository:\n\n{error_msg}"
@@ -7737,6 +7754,7 @@ class ResticManagerWindow(QMainWindow):
                 jobs.append(job)
 
         events: list[HealthEvent] = []
+        last_successful_run = ""
         try:
             runs = history_db.get_recent_job_runs(
                 repo_name=repo_name, limit=6, db_path=self._history_db_path()
@@ -7758,6 +7776,13 @@ class ResticManagerWindow(QMainWindow):
                         when,
                     )
                 )
+            latest_ok = history_db.get_latest_successful_job_run_for_repo(
+                repo_name, db_path=self._history_db_path()
+            )
+            if latest_ok:
+                last_successful_run = (
+                    latest_ok.get("finished_at") or latest_ok.get("started_at") or ""
+                )
         except Exception:
             pass
 
@@ -7765,6 +7790,7 @@ class ResticManagerWindow(QMainWindow):
             repo,
             thresholds=thresholds,
             last_backup_raw=last_backup,
+            last_successful_run_raw=last_successful_run,
             snapshot_count=snapshot_count,
             total_size=total_size,
             jobs=jobs,

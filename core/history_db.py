@@ -199,6 +199,27 @@ def get_latest_job_run(
         return dict(row) if row else None
 
 
+def get_latest_successful_job_run_for_repo(
+    repo_name: str, db_path: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Most recent successful job_runs row for a repository, or None."""
+    name = (repo_name or "").strip()
+    if not name:
+        return None
+    migrate(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM job_runs
+            WHERE repo_name = ? AND success = 1
+            ORDER BY finished_at DESC, id DESC
+            LIMIT 1
+            """,
+            (name,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def get_latest_job_runs_map(
     job_names: Optional[Iterable[str]] = None, db_path: Optional[str] = None
 ) -> Dict[str, Dict[str, Any]]:

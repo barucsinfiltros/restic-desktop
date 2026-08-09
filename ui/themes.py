@@ -2978,17 +2978,43 @@ def build_stylesheet(theme: AppTheme) -> str:
             background: transparent;
             border: none;
         }}
+        #restoreDestStrip, #restoreRepoStrip {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        #restoreModeBar {{
+            background-color: {shell_bg};
+            border: 1px solid {t.border};
+            border-radius: 10px;
+        }}
+        QPushButton#restoreModeBtn {{
+            background-color: transparent;
+            border: none;
+            border-radius: 7px;
+            color: {t.muted};
+            font-size: 12px;
+            font-weight: 600;
+            padding: 6px 14px;
+        }}
+        QPushButton#restoreModeBtn:hover {{
+            color: {t.text};
+            background-color: {soft_hex_rgba(t.text, 0.06)};
+        }}
+        QPushButton#restoreModeBtn:checked {{
+            color: {t.text};
+            background-color: {t.accent_soft};
+        }}
+        #restoreModeStack {{
+            background: transparent;
+            border: none;
+        }}
         #retentionFormLabel {{
             color: {t.muted};
             font-size: 12px;
             font-weight: 600;
             background: transparent;
             border: none;
-        }}
-        #restoreDestStrip {{
-            background-color: {shell_bg};
-            border: 1px solid {t.border};
-            border-radius: 10px;
         }}
         #retentionKeepCell {{
             background-color: {shell_bg};
