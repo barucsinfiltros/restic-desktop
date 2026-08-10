@@ -24,6 +24,7 @@ from typing import Optional, List, Dict, Tuple, Any, Sequence
 from collections import deque
 import json
 import os
+import re
 import shlex
 import sys
 import subprocess
@@ -8182,7 +8183,10 @@ class ResticManagerWindow(QMainWindow):
                 on_complete(False)
             return
 
-        file_paths = []
+        # Prefer small regular files so the test stays quick. Skip huge samples.
+        max_sample_bytes = 5 * 1024 * 1024
+        small_files: list[tuple[str, int]] = []
+        fallback_files: list[tuple[str, int]] = []
         for line in (stdout or "").splitlines():
             line = line.strip()
             if not line:
@@ -8191,12 +8195,21 @@ class ResticManagerWindow(QMainWindow):
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if obj.get("type") == "file" and obj.get("path"):
-                file_paths.append(obj["path"])
-            if len(file_paths) >= max_files:
+            if obj.get("type") != "file" or not obj.get("path"):
+                continue
+            path = str(obj["path"])
+            try:
+                size = int(obj.get("size") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            fallback_files.append((path, size))
+            if size <= max_sample_bytes:
+                small_files.append((path, size))
+            if len(small_files) >= max_files:
                 break
 
-        if not file_paths:
+        sample_files = small_files[:max_files] or fallback_files[:max_files]
+        if not sample_files:
             progress.close()
             show_framed_message(
                 self,
@@ -8218,48 +8231,69 @@ class ResticManagerWindow(QMainWindow):
             show_framed_message(
                 self,
                 "Restore Test Failed",
-                f"Could not create test folder:\n{exc}",
+                f"Could not create test folder:\n{exc}\n\n"
+                f"Check Settings → Application → Temp restore path "
+                f"(currently: {temp_root})",
                 kind="error",
             )
             if on_complete:
                 on_complete(False)
             return
 
-        status_lbl.setText(f"Restoring {len(file_paths)} sample file(s)…")
-        QApplication.processEvents()
-
-        args = prefix + ["restore", "latest", "--target", str(target)]
-        for path in file_paths:
-            args.extend(["--include", path])
-
-        ok, stdout, stderr = self.restic_cmd.run(args, env, timeout=1800)
+        # Use `restic dump` per file. This avoids Windows --include glob quirks
+        # (e.g. '[' in paths) where restore can exit 0 but write 0 files.
         verified = 0
         total_bytes = 0
-        if ok:
-            for path in file_paths:
-                # restic restore keeps absolute-ish structure under target
-                candidates = [
-                    target / path.lstrip("/\\"),
-                    target / Path(path).name,
-                ]
-                # Also search recursively for basename
-                found = None
-                for cand in candidates:
-                    if cand.is_file():
-                        found = cand
-                        break
-                if found is None:
-                    basename = Path(path).name
-                    for p in target.rglob(basename):
-                        if p.is_file():
-                            found = p
-                            break
-                if found is not None and found.is_file():
-                    verified += 1
-                    try:
-                        total_bytes += found.stat().st_size
-                    except OSError:
-                        pass
+        errors: list[str] = []
+        full_env = {**os.environ, **(env or {})}
+        for index, (snap_path, expected_size) in enumerate(sample_files, start=1):
+            safe_name = re.sub(r"[^\w.\-]+", "_", Path(snap_path).name) or f"file_{index}"
+            dest = target / f"{index:02d}_{safe_name}"
+            status_lbl.setText(
+                f"Dumping sample {index}/{len(sample_files)}:\n{snap_path}"
+            )
+            QApplication.processEvents()
+            cmd = [self.restic_cmd.restic_path] + prefix + [
+                "dump",
+                "latest",
+                snap_path,
+            ]
+            try:
+                with open(dest, "wb") as out_f:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=out_f,
+                        stderr=subprocess.PIPE,
+                        env=full_env,
+                        creationflags=get_subprocess_creation_flags(),
+                    )
+                    _, err_b = proc.communicate(timeout=600)
+                err_text = (err_b or b"").decode("utf-8", errors="replace").strip()
+                if proc.returncode != 0:
+                    errors.append(
+                        f"{snap_path}: dump failed (exit {proc.returncode})"
+                        + (f" — {err_text[:200]}" if err_text else "")
+                    )
+                    continue
+                if not dest.is_file():
+                    errors.append(f"{snap_path}: dump produced no file")
+                    continue
+                got = dest.stat().st_size
+                if expected_size > 0 and got != expected_size:
+                    errors.append(
+                        f"{snap_path}: size mismatch (got {got}, expected {expected_size})"
+                    )
+                    continue
+                verified += 1
+                total_bytes += got
+            except subprocess.TimeoutExpired:
+                errors.append(f"{snap_path}: dump timed out")
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            except Exception as exc:
+                errors.append(f"{snap_path}: {exc}")
 
         # Cleanup
         try:
@@ -8269,7 +8303,7 @@ class ResticManagerWindow(QMainWindow):
 
         progress.close()
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        passed = bool(ok and verified > 0)
+        passed = verified > 0 and verified == len(sample_files)
         self._update_repo_health_fields(
             name,
             last_restore_test=stamp,
@@ -8279,8 +8313,12 @@ class ResticManagerWindow(QMainWindow):
         )
         self.log(
             f"Restore test for {name}: "
-            f"{'passed' if passed else 'failed'} ({verified}/{len(file_paths)} files)"
+            f"{'passed' if passed else 'failed'} ({verified}/{len(sample_files)} files)"
         )
+        if errors:
+            self.log(f"Restore test details for {name}: {errors[0]}")
+            for extra in errors[1:4]:
+                self.log(f"  {extra}")
         if passed:
             show_framed_message(
                 self,
@@ -8290,11 +8328,12 @@ class ResticManagerWindow(QMainWindow):
                 kind="info",
             )
         else:
-            err = (stderr or stdout or "Verification failed").strip()
+            detail = "\n".join(errors[:5]) if errors else "Verification failed"
             show_framed_message(
                 self,
                 "Restore Test Failed",
-                f"Could not verify sample restore.\n\n{err[:500]}",
+                f"Could not verify sample restore "
+                f"({verified}/{len(sample_files)} files).\n\n{detail[:500]}",
                 kind="error",
             )
         if on_complete:
