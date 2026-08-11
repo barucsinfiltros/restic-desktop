@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QFont, QIcon
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QToolButton,
     QSizePolicy,
     QTableWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -267,6 +266,9 @@ def create_snapshots_page(host: Any) -> QWidget:
         lighten_amount=0.08,
     )
     host.snapshots_table.itemSelectionChanged.connect(host.show_snapshot_details)
+    host.snapshots_table.itemDoubleClicked.connect(
+        lambda *_args: host.open_snapshot_inspector()
+    )
 
     def _filter_changed(_txt: str = "") -> None:
         host._snapshot_filter_text = host.snapshot_filter_input.text() or ""
@@ -327,34 +329,7 @@ def create_snapshots_page(host: Any) -> QWidget:
     # Stretch the table shell (index 2: header, summary, table, actions)
     table_card.body.setStretch(2, 1)
 
-    layout.addWidget(table_card, stretch=2)
-
-    # Details card
-    details_card = QFrame(page)
-    details_card.setObjectName("sectionCard")
-    details_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-    details_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-    details_layout = QVBoxLayout(details_card)
-    details_layout.setContentsMargins(16, 14, 16, 14)
-    details_layout.setSpacing(10)
-
-    details_title = QLabel("Snapshot Details", details_card)
-    details_title.setObjectName("sectionCardTitle")
-    details_layout.addWidget(details_title, 0)
-
-    host.snapshot_details = QTextEdit(details_card)
-    host.snapshot_details.setObjectName("snapshotDetails")
-    host.snapshot_details.setReadOnly(True)
-    host.snapshot_details.setFont(QFont("Consolas", 10))
-    host.snapshot_details.setPlaceholderText("Select a snapshot to view details…")
-    host.snapshot_details.setSizePolicy(
-        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-    )
-    host.snapshot_details.setMinimumHeight(0)
-    host.snapshot_details.setMaximumHeight(16777215)
-    details_layout.addWidget(host.snapshot_details, 1)
-
-    layout.addWidget(details_card, stretch=1)
+    layout.addWidget(table_card, stretch=1)
 
     host.refresh_snapshots_table = lambda: populate_snapshots_table(host)
 
@@ -464,6 +439,8 @@ def _make_snapshot_menu_cell(
     on_diff: Callable[[], None],
     on_copy: Callable[[], None],
     on_forget: Callable[[], None],
+    on_inspect: Optional[Callable[[], None]] = None,
+    on_edit_tags: Optional[Callable[[], None]] = None,
     parent=None,
 ) -> QWidget:
     """Kebab (⋯) button for per-snapshot actions."""
@@ -490,21 +467,27 @@ def _make_snapshot_menu_cell(
 
     def _open_menu(_checked: bool = False, button: QPushButton = btn) -> None:
         menu = RoundedMenu(button)
+        inspect_act = menu.addAction("Inspect") if on_inspect else None
         browse_act = menu.addAction("Browse content")
         diff_act = menu.addAction("Diff with previous")
         copy_act = menu.addAction("Copy to repository")
+        tags_act = menu.addAction("Edit tags") if on_edit_tags else None
         menu.addSeparator()
         forget_act = menu.addAction("Forget")
         chosen = menu.exec(button.mapToGlobal(button.rect().bottomRight()))
         if chosen is None:
             return
         _select_row()
-        if chosen is browse_act:
+        if inspect_act is not None and chosen is inspect_act and on_inspect:
+            on_inspect()
+        elif chosen is browse_act:
             on_browse()
         elif chosen is diff_act:
             on_diff()
         elif chosen is copy_act:
             on_copy()
+        elif tags_act is not None and chosen is tags_act and on_edit_tags:
+            on_edit_tags()
         elif chosen is forget_act:
             on_forget()
 
@@ -681,6 +664,8 @@ def populate_snapshots_table(host: Any) -> None:
                 on_diff=host.diff_snapshots,
                 on_copy=host.copy_snapshot_to_repository,
                 on_forget=host.forget_snapshot,
+                on_inspect=host.open_snapshot_inspector,
+                on_edit_tags=host.edit_snapshot_tags,
                 parent=table,
             ),
         )

@@ -172,16 +172,14 @@ def set_settings_status(label: QLabel, text: str, kind: str = "muted") -> None:
 
 def _app_password_active(host: Any) -> tuple[bool, str]:
     """Return (active, storage_suffix) for application password."""
-    if sys.platform == "win32":
-        from restic_manager import retrieve_from_registry
+    from restic_manager import load_app_password_credentials
 
-        reg_hash = retrieve_from_registry("AppPasswordHash")
-        reg_salt = retrieve_from_registry("AppPasswordSalt")
-        if reg_hash and reg_salt:
-            return True, " (Registry)"
-        return False, ""
-    if host.settings_manager.get("app_password_hash"):
-        return True, " (Settings file)"
+    stored_hash, stored_salt, storage = load_app_password_credentials(
+        host.settings_manager
+    )
+    if stored_hash and stored_salt:
+        suffix = f" ({storage})" if storage else ""
+        return True, suffix
     return False, ""
 
 
@@ -582,12 +580,16 @@ def _build_security_panel(host: Any, parent: QWidget) -> QWidget:
             "(HKCU\\Software\\ResticDesktop). "
         )
     else:
-        storage_info = "Password hash is stored in the application settings file. "
+        storage_info = (
+            "Password hash is stored in the OS keyring "
+            "(libsecret / Keychain), not in the settings file. "
+        )
 
     note = QLabel(
         f"{storage_info}"
-        "Protection uses cryptographic hashing. To disable it, authenticate and use "
-        "Remove Password.",
+        "Protection is enforced whenever a password hash is present — clearing "
+        "JSON settings cannot bypass it. To disable it, enter your current "
+        "password and use Remove Password.",
         card,
     )
     note.setObjectName("settingsNote")

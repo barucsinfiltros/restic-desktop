@@ -428,10 +428,15 @@ def compute_repo_health(
     restore_failed = restore_result_raw in ("failed", "fail", "error")
     check_passed = check_result_raw in ("passed", "ok", "success", "healthy")
     restore_passed = restore_result_raw in ("passed", "ok", "success")
+    empty_repo = int(snapshot_count or 0) <= 0
 
     if last_backup is None:
-        score -= 40
-        last_backup_status = "Never"
+        # Empty repos with no jobs are "not started yet", not unhealthy.
+        if empty_repo and job_count == 0:
+            last_backup_status = "Never"
+        else:
+            score -= 40
+            last_backup_status = "Never"
     else:
         age_h = hours_since(last_backup) or 0
         if age_h > thresholds.backup_overdue_hours:
@@ -462,7 +467,14 @@ def compute_repo_health(
         else:
             check_result_label = "Passed" if check_passed else ("Failed" if check_failed else "Completed")
 
-    if last_restore is None:
+    if empty_repo:
+        # Nothing to restore-test until the first snapshot exists.
+        restore_result_label = "N/A"
+        restore_overdue = False
+        restore_failed = False
+        restore_passed = False
+        last_restore = None
+    elif last_restore is None:
         score -= 10
         restore_result_label = "Not tested"
         restore_overdue = True
@@ -481,9 +493,12 @@ def compute_repo_health(
     score = max(0, min(100, score))
 
     check_due = last_check is None or check_overdue or check_failed
-    restore_due = last_restore is None or restore_overdue or restore_failed
+    restore_due = (not empty_repo) and (
+        last_restore is None or restore_overdue or restore_failed
+    )
     trust_ok = (
-        last_check is not None
+        not empty_repo
+        and last_check is not None
         and check_passed
         and not check_overdue
         and not check_failed
@@ -495,7 +510,9 @@ def compute_repo_health(
 
     # Overall status is driven by integrity / restore trust and job failures —
     # not by backup age alone (that is shown on the Last Backup metric).
-    if check_failed or restore_failed or (last_backup is None and job_count) or score < 40:
+    if check_failed or restore_failed or (last_backup is None and job_count) or (
+        score < 40 and not (empty_repo and job_count == 0)
+    ):
         status = "critical"
         status_label = "At Risk"
         if check_failed or restore_failed:
@@ -504,6 +521,13 @@ def compute_repo_health(
             status_message = "No successful backup found for this repository yet."
         else:
             status_message = "One or more health checks need attention."
+    elif empty_repo and not job_count:
+        # Idle / unused repo — not a health failure for the fleet.
+        status = "empty"
+        status_label = "Empty"
+        status_message = (
+            "No snapshots yet. Add a backup job or copy snapshots into this repository."
+        )
     elif check_due or restore_due or failed_jobs or overdue_jobs:
         status = "warning"
         status_label = "Needs Attention"
@@ -523,8 +547,8 @@ def compute_repo_health(
         else:
             status_message = "Backups may still work, but recommended checks are due."
     elif last_backup is None and not job_count:
-        status = "unknown"
-        status_label = "Unknown"
+        status = "empty"
+        status_label = "Empty"
         status_message = "No backup history yet for this repository."
     else:
         status = "healthy"
@@ -559,7 +583,7 @@ def compute_repo_health(
                 "run_check",
             )
         )
-    if last_restore is None or restore_overdue or restore_failed:
+    if (not empty_repo) and (last_restore is None or restore_overdue or restore_failed):
         detail = (
             "Recommended every "
             f"{thresholds.amount_label(thresholds.restore_test_interval_value, thresholds.restore_test_interval_unit)}."
@@ -577,6 +601,16 @@ def compute_repo_health(
                 detail,
                 "Verify Restore",
                 "run_restore_test",
+            )
+        )
+    if empty_repo and not job_count:
+        recs.append(
+            Recommendation(
+                "jobs",
+                "Repository has no snapshots yet",
+                "Create a backup job for this repository, or migrate/copy snapshots from another repo.",
+                "View Jobs",
+                "view_jobs",
             )
         )
     if failed_jobs:
@@ -620,6 +654,13 @@ def compute_repo_health(
             )
         )
 
+    next_restore = (
+        "—"
+        if empty_repo
+        else format_due_in(last_restore, thresholds.restore_test_interval_hours)
+    )
+    restore_label = "Never" if empty_repo else format_relative(last_restore)
+
     return RepoHealthReport(
         repo_name=name,
         status=status,
@@ -636,13 +677,11 @@ def compute_repo_health(
         next_check_label=format_due_in(last_check, thresholds.check_interval_hours),
         check_type=check_type,
         last_restore_test=last_restore,
-        last_restore_test_label=format_relative(last_restore),
+        last_restore_test_label=restore_label,
         last_restore_test_result=restore_result_label,
-        restore_files=restore_files,
-        restore_bytes=restore_bytes,
-        next_restore_label=format_due_in(
-            last_restore, thresholds.restore_test_interval_hours
-        ),
+        restore_files=0 if empty_repo else restore_files,
+        restore_bytes=0 if empty_repo else restore_bytes,
+        next_restore_label=next_restore,
         snapshot_count=snapshot_count,
         total_size=total_size,
         job_count=job_count,
@@ -681,6 +720,9 @@ def compute_overall_status(
     """
     Aggregate dashboard Status card.
 
+    Empty / unused repositories are excluded from the fleet rollup so they
+    do not drag the dashboard to "Unknown" when other repos are healthy.
+
     Returns
     -------
     status_key, value_label, subtitle,
@@ -697,17 +739,47 @@ def compute_overall_status(
             "",
         )
 
+    empty_repos = [r for r in reports if r.status == "empty"]
+    active = [r for r in reports if r.status != "empty"]
+
+    # Only empty / unused repos configured — calm, not alarming.
+    if not active:
+        if len(empty_repos) == 1:
+            name = empty_repos[0].repo_name
+            subtitle = f"{name} · empty"
+            rows = [(name, "no snapshots yet")]
+        else:
+            subtitle = f"{len(empty_repos)} empty repositories"
+            rows = [(r.repo_name, "empty") for r in empty_repos[:8]]
+        return (
+            "empty",
+            "Ready",
+            subtitle,
+            "No backups yet",
+            rows,
+            "Add a backup job or copy snapshots to start protecting data.",
+            empty_repos[0].repo_name if empty_repos else "",
+        )
+
     order = {"critical": 0, "warning": 1, "unknown": 2, "healthy": 3}
-    worst = min(reports, key=lambda r: (order.get(r.status, 9), r.score))
-    problem_repos = [r for r in reports if r.status in ("warning", "critical")]
+    worst = min(active, key=lambda r: (order.get(r.status, 9), r.score))
+    problem_repos = [r for r in active if r.status in ("warning", "critical")]
+
+    empty_note = (
+        f" · {len(empty_repos)} empty unused"
+        if empty_repos
+        else ""
+    )
 
     if worst.status == "healthy":
-        weakest = min(reports, key=lambda r: r.score)
-        subtitle = f"{weakest.repo_name} · {weakest.score}/100"
+        weakest = min(active, key=lambda r: r.score)
+        subtitle = f"{weakest.repo_name} · {weakest.score}/100{empty_note}"
         rows = [
             (r.repo_name, f"{r.score}/100")
-            for r in sorted(reports, key=lambda x: x.score)[:8]
+            for r in sorted(active, key=lambda x: x.score)[:8]
         ]
+        if empty_repos and len(rows) < 8:
+            rows.extend((r.repo_name, "empty") for r in empty_repos[: 8 - len(rows)])
         return (
             "healthy",
             "Healthy",
@@ -731,9 +803,9 @@ def compute_overall_status(
 
     issue = _short_issue(worst)
     if len(problem_repos) <= 1:
-        subtitle = f"{worst.repo_name} · {issue}"
+        subtitle = f"{worst.repo_name} · {issue}{empty_note}"
     else:
-        subtitle = f"{worst.repo_name} +{len(problem_repos) - 1} more"
+        subtitle = f"{worst.repo_name} +{len(problem_repos) - 1} more{empty_note}"
 
     tip_title = (
         f"{len(problem_repos)} repository needs attention"

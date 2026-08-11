@@ -8,5 +8,6 @@ pyinstaller==6.19.0
 pyinstaller-hooks-contrib==2026.3
 PySide6==6.10.2
 pywin32-ctypes==0.2.3
+keyring==25.6.0
 setuptools==82.0.1
 winotify==1.1.0

@@ -495,6 +495,143 @@ def delete_from_registry(key_name: str) -> bool:
         return False
 
 
+# Application password storage (Windows: Registry; Linux/macOS: OS keyring)
+_APP_PASSWORD_SERVICE = "ResticDesktop"
+_APP_PASSWORD_HASH_KEY = "AppPasswordHash"
+_APP_PASSWORD_SALT_KEY = "AppPasswordSalt"
+
+
+def _keyring_store(key_name: str, value: str) -> bool:
+    try:
+        import keyring
+
+        keyring.set_password(_APP_PASSWORD_SERVICE, key_name, value)
+        return True
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to store in keyring: {e}")
+        return False
+
+
+def _keyring_retrieve(key_name: str) -> Optional[str]:
+    try:
+        import keyring
+
+        value = keyring.get_password(_APP_PASSWORD_SERVICE, key_name)
+        return value if value else None
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to retrieve from keyring: {e}")
+        return None
+
+
+def _keyring_delete(key_name: str) -> bool:
+    try:
+        import keyring
+
+        try:
+            keyring.delete_password(_APP_PASSWORD_SERVICE, key_name)
+        except keyring.errors.PasswordDeleteError:
+            pass
+        return True
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"Failed to delete from keyring: {e}")
+        return False
+
+
+def _clear_settings_app_password(settings_manager=None) -> None:
+    """Remove legacy JSON app-password fields if a settings manager is available."""
+    if settings_manager is None:
+        return
+    try:
+        if settings_manager.get("app_password_hash") or settings_manager.get("app_password_salt"):
+            settings_manager.set("app_password_hash", "")
+            settings_manager.set("app_password_salt", "")
+            settings_manager.save_settings()
+    except Exception:
+        pass
+
+
+def store_app_password_credentials(pwd_hash: str, pwd_salt: str, settings_manager=None) -> Tuple[bool, str, str]:
+    """
+    Persist app-password hash/salt in the platform secret store.
+    Returns: (ok, storage_location_label, error_message)
+    """
+    if sys.platform == "win32":
+        ok_h = store_in_registry(_APP_PASSWORD_HASH_KEY, pwd_hash)
+        ok_s = store_in_registry(_APP_PASSWORD_SALT_KEY, pwd_salt)
+        if ok_h and ok_s:
+            _clear_settings_app_password(settings_manager)
+            return True, "Windows Registry (HKCU\\Software\\ResticDesktop)", ""
+        return False, "", "Failed to store password in the Windows Registry."
+
+    ok_h = _keyring_store(_APP_PASSWORD_HASH_KEY, pwd_hash)
+    ok_s = _keyring_store(_APP_PASSWORD_SALT_KEY, pwd_salt)
+    if ok_h and ok_s:
+        _clear_settings_app_password(settings_manager)
+        return True, "OS keyring (libsecret / Keychain)", ""
+    return (
+        False,
+        "",
+        "Failed to store password in the OS keyring. "
+        "Install/configure a Secret Service backend (e.g. gnome-keyring / libsecret) and try again.",
+    )
+
+
+def load_app_password_credentials(settings_manager=None) -> Tuple[Optional[str], Optional[str], str]:
+    """
+    Load app-password hash/salt from the platform secret store.
+    Migrates legacy JSON-stored credentials into the keyring when found.
+    Returns: (hash, salt, storage_location_label) — hash/salt are None when inactive.
+    """
+    if sys.platform == "win32":
+        stored_hash = retrieve_from_registry(_APP_PASSWORD_HASH_KEY)
+        stored_salt = retrieve_from_registry(_APP_PASSWORD_SALT_KEY)
+        if stored_hash and stored_salt:
+            return stored_hash, stored_salt, "Windows Registry"
+        return None, None, ""
+
+    stored_hash = _keyring_retrieve(_APP_PASSWORD_HASH_KEY)
+    stored_salt = _keyring_retrieve(_APP_PASSWORD_SALT_KEY)
+    if stored_hash and stored_salt:
+        return stored_hash, stored_salt, "OS keyring"
+
+    # One-time migration from legacy settings-file storage.
+    if settings_manager is not None:
+        legacy_hash = settings_manager.get("app_password_hash") or ""
+        legacy_salt = settings_manager.get("app_password_salt") or ""
+        if legacy_hash and legacy_salt:
+            ok, _label, _err = store_app_password_credentials(
+                legacy_hash, legacy_salt, settings_manager=settings_manager
+            )
+            if ok:
+                return legacy_hash, legacy_salt, "OS keyring"
+            # Keyring unavailable — keep enforcing via legacy fields until migration succeeds.
+            return legacy_hash, legacy_salt, "Settings file (migrate to keyring pending)"
+
+    return None, None, ""
+
+
+def clear_app_password_credentials(settings_manager=None) -> Tuple[bool, str]:
+    """
+    Remove app-password credentials from the platform secret store (and legacy JSON).
+    Returns: (ok, error_message)
+    """
+    if sys.platform == "win32":
+        delete_from_registry(_APP_PASSWORD_HASH_KEY)
+        delete_from_registry(_APP_PASSWORD_SALT_KEY)
+        _clear_settings_app_password(settings_manager)
+        return True, ""
+
+    ok_h = _keyring_delete(_APP_PASSWORD_HASH_KEY)
+    ok_s = _keyring_delete(_APP_PASSWORD_SALT_KEY)
+    _clear_settings_app_password(settings_manager)
+    if ok_h and ok_s:
+        return True, ""
+    return False, "Failed to remove password from the OS keyring."
+
+
 def show_notification(title: str, message: str, icon_type: str = "info", duration: str = "short"):
     """
     Show a Windows toast notification
@@ -1723,6 +1860,69 @@ def repo_restic_prefix(repo: Optional[dict]) -> List[str]:
     if (repo.get("type") or "").lower() == "sftp":
         args.extend(sftp_cli_options(repo.get("ssh_key") or ""))
     return args
+
+
+def job_backup_tags(job: Optional[dict]) -> List[str]:
+    """Return tags for a backup run: stable ``job:<name>`` plus user tags."""
+    job = job or {}
+    tags: List[str] = []
+    seen: set[str] = set()
+    name = str(job.get("name") or "").strip()
+    if name:
+        auto = f"job:{name}"
+        tags.append(auto)
+        seen.add(auto.lower())
+    for raw in job.get("tags") or []:
+        tag = str(raw or "").strip()
+        if not tag:
+            continue
+        key = tag.lower()
+        if key in seen:
+            continue
+        tags.append(tag)
+        seen.add(key)
+    return tags
+
+
+def append_job_tag_args(args: List[str], job: Optional[dict]) -> None:
+    """Append ``--tag`` flags for a job onto a restic argument list."""
+    for tag in job_backup_tags(job):
+        args.extend(["--tag", tag])
+
+
+def _normalize_backup_path(path: str) -> str:
+    text = str(path or "").strip().replace("/", os.sep).replace("\\", os.sep)
+    if not text:
+        return ""
+    try:
+        return os.path.normcase(os.path.normpath(text))
+    except Exception:
+        return text.lower()
+
+
+def snapshot_matches_backup_job(snapshot: dict, job: dict) -> bool:
+    """True if a snapshot looks like it belongs to ``job`` (tag and/or paths)."""
+    if not snapshot or not job:
+        return False
+    job_name = str(job.get("name") or "").strip()
+    wanted_tags = {t.lower() for t in job_backup_tags(job)}
+    snap_tags = {str(t).strip().lower() for t in (snapshot.get("tags") or []) if str(t).strip()}
+    if wanted_tags and snap_tags.intersection(wanted_tags):
+        return True
+    if job_name and job_name.lower() in snap_tags:
+        return True
+
+    job_paths = [_normalize_backup_path(p) for p in (job.get("paths") or [])]
+    job_paths = [p for p in job_paths if p]
+    if not job_paths:
+        return False
+    snap_paths = [_normalize_backup_path(p) for p in (snapshot.get("paths") or [])]
+    snap_paths = [p for p in snap_paths if p]
+    for jp in job_paths:
+        for sp in snap_paths:
+            if sp == jp or sp.startswith(jp + os.sep) or jp.startswith(sp + os.sep):
+                return True
+    return False
 
 
 def _runtime_rclone_config_path(
@@ -3947,7 +4147,8 @@ class ResticSettingsManager:
             "log_level": "info",
             "log_retention_days": 30,
             "temp_restore_path": "C:\\temp\\restic_restore",  # Temporary location for restore to original
-            "app_password_enabled": False,
+            # App password hash lives in Registry (Windows) or OS keyring (Linux/macOS).
+            # These JSON fields are legacy only and are cleared after migration.
             "app_password_hash": "",
             "app_password_salt": "",
             "health_backup_overdue_hours": 36,
@@ -4234,10 +4435,8 @@ if ($exitCode -eq 0) {{
             # Add paths
             restic_args.extend(job_data["paths"])
             
-            # Add tags
-            if job_data.get("tags"):
-                for tag in job_data["tags"]:
-                    restic_args.extend(["--tag", tag])
+            # Add tags (includes stable job:<name>)
+            append_job_tag_args(restic_args, job_data)
             
             # Add exclude patterns
             if job_data.get("exclude_patterns"):
@@ -4380,9 +4579,7 @@ $password | ConvertFrom-SecureString | Out-File -FilePath "{network_password_fil
             # (paths/tags/etc. already appended above onto previous restic_args — rebuild)
             restic_args = repo_restic_prefix(sched_repo) + ["backup"]
             restic_args.extend(job_data["paths"])
-            if job_data.get("tags"):
-                for tag in job_data["tags"]:
-                    restic_args.extend(["--tag", tag])
+            append_job_tag_args(restic_args, job_data)
             if job_data.get("exclude_patterns"):
                 for pattern in job_data["exclude_patterns"]:
                     restic_args.extend(["--exclude", pattern])
@@ -6777,7 +6974,6 @@ class ResticManagerWindow(QMainWindow):
         self.snapshots_table.setRowCount(0)
         self._loaded_snapshots = []
         update_snapshots_summary(self, [])
-        self.snapshot_details.clear()
         
         # Store for later use
         self._current_snapshot_repo = repo
@@ -6821,133 +7017,48 @@ class ResticManagerWindow(QMainWindow):
                 QMessageBox.warning(self, "Error", f"Failed to load snapshots:\n\n{error_msg}")
     
     def show_snapshot_details(self):
-        """Show details for selected snapshot"""
+        """Keep selection wiring; details live in Snapshot Inspector."""
+        return
+
+    def open_snapshot_inspector(self):
+        """Open the framed Snapshot Inspector for the selected row."""
         selected = self.snapshots_table.selectedItems()
         if not selected:
+            show_framed_message(
+                self,
+                "No Selection",
+                "Select a snapshot first (or double-click a row).",
+                kind="info",
+            )
             return
-        
+
         row = selected[0].row()
         snapshot_data = snapshot_data_from_row(self.snapshots_table, row)
-        snapshot_id = snapshot_short_id_from_row(self.snapshots_table, row)
-        
         if not snapshot_data:
-            self.snapshot_details.setText("No snapshot data available")
+            show_framed_message(
+                self,
+                "Snapshot",
+                "No snapshot data available for this row.",
+                kind="warning",
+            )
             return
-        
-        # Build detailed snapshot information
-        details = []
-        
-        # Basic Information
-        details.append("=== Snapshot Information ===\n")
-        
-        # Full ID
-        full_id = snapshot_data.get("id", "N/A")
-        short_id = snapshot_data.get("short_id", full_id[:8] if full_id else "N/A")
-        details.append(f"ID: {short_id}")
-        details.append(f"Full ID: {full_id}\n")
-        
-        # Time
-        time_str = snapshot_data.get("time", "N/A")
-        if time_str and time_str != "N/A":
-            # Format: 2026-03-13T05:27:50.7033785Z -> more readable format
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                details.append(f"Created: {formatted_time}")
-            except:
-                details.append(f"Created: {time_str.replace('T', ' ').split('.')[0]}")
-        else:
-            details.append(f"Created: {time_str}")
-        
-        # Host
-        hostname = snapshot_data.get("hostname", "N/A")
-        details.append(f"Hostname: {hostname}")
-        
-        # Username
-        username = snapshot_data.get("username", "N/A")
-        if username != "N/A":
-            details.append(f"Username: {username}")
-        
-        # Tags
-        tags = snapshot_data.get("tags", [])
-        if tags:
-            details.append(f"Tags: {', '.join(tags)}")
-        else:
-            details.append("Tags: None")
-        
-        # Paths
-        paths = snapshot_data.get("paths", [])
-        if paths:
-            details.append(f"\nPaths ({len(paths)}):")
-            for path in paths:
-                details.append(f"  â€¢ {path}")
-        else:
-            details.append("\nPaths: None")
-        
-        # Excludes (if available)
-        excludes = snapshot_data.get("excludes", [])
-        if excludes:
-            details.append(f"\nExcludes ({len(excludes)}):")
-            for exclude in excludes[:5]:  # Show first 5
-                details.append(f"  â€¢ {exclude}")
-            if len(excludes) > 5:
-                details.append(f"  ... and {len(excludes) - 5} more")
-        
-        # Summary Statistics
-        summary = snapshot_data.get("summary", {})
-        if summary:
-            details.append("\n=== Statistics ===\n")
-            
-            # Files
-            files_new = summary.get("files_new", 0)
-            files_changed = summary.get("files_changed", 0)
-            files_unmodified = summary.get("files_unmodified", 0)
-            total_files_processed = summary.get("total_files_processed", files_new + files_changed + files_unmodified)
-            
-            details.append(f"Files New: {files_new:,}")
-            details.append(f"Files Changed: {files_changed:,}")
-            details.append(f"Files Unmodified: {files_unmodified:,}")
-            details.append(f"Total Files: {total_files_processed:,}")
-            
-            # Directories
-            dirs_new = summary.get("dirs_new", 0)
-            dirs_changed = summary.get("dirs_changed", 0)
-            dirs_unmodified = summary.get("dirs_unmodified", 0)
-            if dirs_new or dirs_changed or dirs_unmodified:
-                details.append(f"\nDirectories New: {dirs_new:,}")
-                details.append(f"Directories Changed: {dirs_changed:,}")
-                details.append(f"Directories Unmodified: {dirs_unmodified:,}")
-            
-            # Data sizes
-            data_added = summary.get("data_added", 0)
-            data_blobs = summary.get("data_blobs", 0)
-            tree_blobs = summary.get("tree_blobs", 0)
-            
-            details.append(f"\nData Added: {self.format_bytes(data_added)}")
-            if data_blobs:
-                details.append(f"Data Blobs: {data_blobs:,}")
-            if tree_blobs:
-                details.append(f"Tree Blobs: {tree_blobs:,}")
-            
-            # Total bytes processed
-            total_bytes = summary.get("total_bytes_processed", 0)
-            if total_bytes:
-                details.append(f"Total Bytes Processed: {self.format_bytes(total_bytes)}")
-        
-        # Parent snapshot (if available)
-        parent = snapshot_data.get("parent")
-        if parent:
-            details.append(f"\nParent Snapshot: {parent[:8]}")
-        
-        # Program version (if available)
-        program_version = snapshot_data.get("program_version")
-        if program_version:
-            details.append(f"Restic Version: {program_version}")
-        
-        # Set the details text
-        self.snapshot_details.setPlainText("\n".join(details))
-    
+
+        from ui.snapshot_inspector import SnapshotInspectorDialog
+
+        repo_name = ""
+        if hasattr(self, "snapshot_repo_combo"):
+            repo_name = self.snapshot_repo_combo.currentText() or ""
+        snapshots = list(getattr(self, "_loaded_snapshots", None) or [])
+        dlg = SnapshotInspectorDialog(
+            self,
+            snapshot=snapshot_data,
+            repo_name=repo_name,
+            snapshots=snapshots,
+            parent=self,
+        )
+        self._snapshot_inspector = dlg
+        dlg.exec()
+
     def browse_snapshot_content(self):
         """Browse files in selected snapshot"""
         selected = self.snapshots_table.selectedItems()
@@ -8158,7 +8269,195 @@ class ResticManagerWindow(QMainWindow):
         else:
             output_widget.setPlainText(f"Error running diff:\n{stderr}")
             self.log(f"Diff failed: {stderr}")
-    
+
+    def edit_snapshot_tags(self):
+        """Add / set / remove tags on the selected snapshot via restic tag."""
+        selected = self.snapshots_table.selectedItems()
+        if not selected:
+            show_framed_message(
+                self, "No Selection", "Please select a snapshot first.", kind="warning"
+            )
+            return
+
+        row = selected[0].row()
+        snapshot_id = snapshot_short_id_from_row(self.snapshots_table, row)
+        snapshot_data = snapshot_data_from_row(self.snapshots_table, row)
+        full_id = snapshot_data.get("id", snapshot_id) if snapshot_data else snapshot_id
+        current_tags = [
+            str(t).strip()
+            for t in ((snapshot_data or {}).get("tags") or [])
+            if str(t).strip()
+        ]
+        repo_name = self.snapshot_repo_combo.currentText()
+        if not repo_name:
+            show_framed_message(
+                self, "No Repository", "Please select a repository first.", kind="warning"
+            )
+            return
+
+        repo, password = self.get_repository_by_name(repo_name)
+        if not repo:
+            show_framed_message(
+                self, "Error", f"Repository '{repo_name}' not found.", kind="warning"
+            )
+            return
+
+        # Suggest job:<name> tags for jobs on this repo that aren't already present.
+        job_suggestions: list[str] = []
+        for job in self.settings_manager.get("backup_jobs") or []:
+            if not isinstance(job, dict):
+                continue
+            repos = job.get("repositories") or []
+            if not repos and job.get("repository"):
+                repos = [job.get("repository")]
+            if repo_name not in repos:
+                continue
+            for tag in job_backup_tags(job):
+                if tag not in current_tags and tag not in job_suggestions:
+                    job_suggestions.append(tag)
+
+        dialog = FramedDialog(
+            "Edit Snapshot Tags",
+            self,
+            show_maximize=False,
+            show_minimize=False,
+        )
+        dialog.setMinimumWidth(560)
+        dialog.body_layout.setContentsMargins(16, 12, 16, 16)
+        dialog.body_layout.setSpacing(12)
+        layout = dialog.body_layout
+
+        title = QLabel(f"Tags for snapshot {snapshot_id}")
+        title.setObjectName("pageTitle")
+        title.setStyleSheet("font-size: 18px;")
+        layout.addWidget(title)
+
+        current_lbl = QLabel(
+            "Current: " + (", ".join(current_tags) if current_tags else "(none)")
+        )
+        current_lbl.setObjectName("pageSubtitle")
+        current_lbl.setWordWrap(True)
+        layout.addWidget(current_lbl)
+
+        mode_any = QRadioButton("Add tags (keep existing)")
+        mode_any.setChecked(True)
+        mode_set = QRadioButton("Replace all tags")
+        mode_remove = QRadioButton("Remove tags")
+        layout.addWidget(mode_any)
+        layout.addWidget(mode_set)
+        layout.addWidget(mode_remove)
+
+        tags_input = QLineEdit()
+        tags_input.setMinimumHeight(32)
+        tags_input.setPlaceholderText("tag1, tag2, job:MyJob")
+        layout.addWidget(tags_input)
+
+        if job_suggestions:
+            suggest = QLabel(
+                "Suggestions for this repository: " + ", ".join(job_suggestions[:8])
+            )
+            suggest.setObjectName("pageSubtitle")
+            suggest.setWordWrap(True)
+            layout.addWidget(suggest)
+
+            apply_job = QPushButton("Use first job suggestion")
+            apply_job.setObjectName("dialogSecondary")
+            apply_job.setCursor(Qt.CursorShape.PointingHandCursor)
+            apply_job.setFixedHeight(30)
+
+            def _fill_suggestion():
+                if not job_suggestions:
+                    return
+                existing = [
+                    t.strip()
+                    for t in tags_input.text().split(",")
+                    if t.strip()
+                ]
+                if job_suggestions[0] not in existing:
+                    existing.append(job_suggestions[0])
+                tags_input.setText(", ".join(existing))
+
+            apply_job.clicked.connect(_fill_suggestion)
+            layout.addWidget(apply_job)
+
+        note = QLabel(
+            "New backups already get an automatic job:<name> tag. "
+            "Use this to tag older snapshots so job filters and restore tests can match them."
+        )
+        note.setObjectName("pageSubtitle")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("dialogSecondary")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(dialog.reject)
+        footer.addWidget(cancel_btn)
+        ok_btn = QPushButton("Apply")
+        ok_btn.setObjectName("dialogPrimary")
+        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ok_btn.clicked.connect(dialog.accept)
+        footer.addWidget(ok_btn)
+        layout.addLayout(footer)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        tags = [t.strip() for t in tags_input.text().split(",") if t.strip()]
+        if not tags:
+            show_framed_message(
+                self, "No Tags", "Enter at least one tag.", kind="warning"
+            )
+            return
+
+        if mode_set.isChecked():
+            flag = "--set"
+        elif mode_remove.isChecked():
+            flag = "--remove"
+        else:
+            flag = "--add"
+
+        env = self._repo_env(repo, password)
+        args = repo_restic_prefix(repo) + ["tag", flag, ",".join(tags), full_id]
+        self.log(f"Updating tags on snapshot {snapshot_id}: {flag} {', '.join(tags)}")
+
+        self._tag_worker = ResticWorker(self.restic_cmd, args, env, timeout=120)
+        self._tag_worker.finished.connect(
+            lambda success, stdout, stderr: self._on_tag_complete(
+                success, stdout, stderr, snapshot_id, tags, flag
+            )
+        )
+        self._tag_worker.start()
+
+    def _on_tag_complete(
+        self, success, stdout, stderr, snapshot_id, tags, flag
+    ):
+        """Callback when restic tag completes."""
+        if success:
+            action = {
+                "--add": "added to",
+                "--set": "set on",
+                "--remove": "removed from",
+            }.get(flag, "updated on")
+            show_framed_message(
+                self,
+                "Tags Updated",
+                f"Tags {action} snapshot {snapshot_id}:\n{', '.join(tags)}",
+                kind="info",
+            )
+            self.log(f"Tags {action} snapshot {snapshot_id}: {', '.join(tags)}")
+            self.load_snapshots()
+        else:
+            show_framed_message(
+                self,
+                "Tag Failed",
+                f"Could not update tags:\n\n{(stderr or stdout or 'Unknown error')[:500]}",
+                kind="error",
+            )
+            self.log(f"Failed to tag snapshot {snapshot_id}: {stderr or stdout}")
+
     def forget_snapshot(self):
         """Forget (delete) selected snapshot"""
         selected = self.snapshots_table.selectedItems()
@@ -9475,6 +9774,7 @@ class ResticManagerWindow(QMainWindow):
             "warning": "#d97706",
             "critical": getattr(theme, "danger", "#ef4444"),
             "unknown": getattr(theme, "muted", "#8b95a5"),
+            "empty": getattr(theme, "muted", "#8b95a5"),
         }
         card.set_value(label)
         card.set_subtitle(subtitle)
@@ -9847,6 +10147,7 @@ class ResticManagerWindow(QMainWindow):
         from pathlib import Path
 
         from core.health import HealthThresholds
+        from PySide6.QtWidgets import QButtonGroup
 
         name = repo_name or (
             self.dashboard_repo_combo.currentText()
@@ -9871,16 +10172,107 @@ class ResticManagerWindow(QMainWindow):
         temp_root = (
             self.settings_manager.get("temp_restore_path") or tempfile.gettempdir()
         ).strip()
-        if not show_framed_message(
-            self,
+
+        jobs = self.settings_manager.get("backup_jobs") or []
+        repo_jobs = []
+        for job in jobs:
+            repos = job.get("repositories") or []
+            if not repos and job.get("repository"):
+                repos = [job.get("repository")]
+            if name in repos:
+                repo_jobs.append(job)
+
+        dialog = FramedDialog(
             "Run Restore Test",
-            f"Restore up to {max_files} sample file(s) from the latest snapshot of "
-            f"'{name}' into:\n\n{temp_root}\n\n"
-            "Files are verified then deleted. Continue?",
-            kind="info",
-            buttons="yes_no",
-        ):
+            self,
+            show_maximize=False,
+            show_minimize=False,
+        )
+        dialog.setMinimumWidth(560)
+        dialog.body_layout.setContentsMargins(16, 12, 16, 16)
+        dialog.body_layout.setSpacing(12)
+        layout = dialog.body_layout
+
+        intro = QLabel(
+            f"Restore up to {max_files} sample file(s) from a snapshot in "
+            f"<b>{name}</b> into:<br><br>{temp_root}<br><br>"
+            "Files are verified then deleted."
+        )
+        intro.setTextFormat(Qt.TextFormat.RichText)
+        intro.setObjectName("pageSubtitle")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        mode_any = QRadioButton("Any snapshot (latest in repository)")
+        mode_any.setChecked(True)
+        mode_job = QRadioButton("Specific backup job (latest matching snapshot)")
+        mode_group = QButtonGroup(dialog)
+        mode_group.addButton(mode_any)
+        mode_group.addButton(mode_job)
+        layout.addWidget(mode_any)
+        layout.addWidget(mode_job)
+
+        job_row = QHBoxLayout()
+        job_row.setSpacing(8)
+        job_label = QLabel("Backup job")
+        job_label.setObjectName("pageSubtitle")
+        job_combo = QComboBox()
+        job_combo.setMinimumHeight(32)
+        for job in repo_jobs:
+            job_combo.addItem(str(job.get("name") or "Unnamed job"), job)
+        if not repo_jobs:
+            mode_job.setEnabled(False)
+            job_combo.setEnabled(False)
+            job_combo.addItem("No backup jobs use this repository")
+        job_row.addWidget(job_label)
+        job_row.addWidget(job_combo, stretch=1)
+        layout.addLayout(job_row)
+
+        def _sync_job_enabled():
+            enabled = mode_job.isChecked() and bool(repo_jobs)
+            job_combo.setEnabled(enabled)
+            job_label.setEnabled(enabled)
+
+        mode_any.toggled.connect(lambda _=False: _sync_job_enabled())
+        mode_job.toggled.connect(lambda _=False: _sync_job_enabled())
+        _sync_job_enabled()
+
+        note = QLabel(
+            "Job matching uses the automatic job:<name> tag on new backups, "
+            "plus path overlap for older snapshots."
+        )
+        note.setObjectName("pageSubtitle")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("dialogSecondary")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(dialog.reject)
+        footer.addWidget(cancel_btn)
+        ok_btn = QPushButton("Run Test")
+        ok_btn.setObjectName("dialogPrimary")
+        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ok_btn.clicked.connect(dialog.accept)
+        footer.addWidget(ok_btn)
+        layout.addLayout(footer)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+
+        selected_job = None
+        if mode_job.isChecked():
+            selected_job = job_combo.currentData()
+            if not selected_job:
+                show_framed_message(
+                    self,
+                    "No Job Selected",
+                    "Select a backup job, or choose Any snapshot.",
+                    kind="warning",
+                )
+                return
 
         env = build_repo_env(
             repo,
@@ -9900,23 +10292,92 @@ class ResticManagerWindow(QMainWindow):
         )
         progress.setMinimumWidth(420)
         progress.body_layout.setContentsMargins(20, 16, 20, 20)
-        status_lbl = QLabel("Listing files in latest snapshot…")
+        status_lbl = QLabel("Finding snapshot…")
         status_lbl.setWordWrap(True)
         progress.body_layout.addWidget(status_lbl)
         progress.show()
         QApplication.processEvents()
 
+        snapshot_ref = "latest"
+        snapshot_label = "latest snapshot"
+        if selected_job is not None:
+            status_lbl.setText(
+                f"Listing snapshots for job '{selected_job.get('name')}'…"
+            )
+            QApplication.processEvents()
+            ok, stdout, stderr = self.restic_cmd.run(
+                prefix + ["snapshots", "--json"], env, timeout=300
+            )
+            if not ok:
+                progress.close()
+                show_framed_message(
+                    self,
+                    "Restore Test Failed",
+                    f"Could not list snapshots:\n\n{(stderr or stdout or '')[:500]}",
+                    kind="error",
+                )
+                if on_complete:
+                    on_complete(False)
+                return
+            try:
+                snapshots = json.loads(stdout or "[]")
+            except json.JSONDecodeError:
+                snapshots = []
+            if not isinstance(snapshots, list):
+                snapshots = []
+            matched = [
+                s for s in snapshots if isinstance(s, dict) and snapshot_matches_backup_job(s, selected_job)
+            ]
+            if not matched:
+                progress.close()
+                show_framed_message(
+                    self,
+                    "No Matching Snapshots",
+                    f"No snapshots in '{name}' match backup job "
+                    f"'{selected_job.get('name')}'.\n\n"
+                    "New backups are tagged with job:<name>. Older snapshots are "
+                    "matched by overlapping paths when possible.",
+                    kind="warning",
+                )
+                if on_complete:
+                    on_complete(False)
+                return
+
+            def _snap_time_key(s: dict) -> str:
+                return str(s.get("time") or "")
+
+            best = max(matched, key=_snap_time_key)
+            snapshot_ref = str(best.get("short_id") or best.get("id") or "latest")
+            snap_time = str(best.get("time") or "").replace("T", " ").split(".")[0]
+            snapshot_label = (
+                f"job '{selected_job.get('name')}' snapshot {snapshot_ref}"
+                + (f" ({snap_time})" if snap_time else "")
+            )
+            self.log(f"Restore test using {snapshot_label}")
+
+        status_lbl.setText(f"Listing files in {snapshot_label}…")
+        QApplication.processEvents()
+
         ok, stdout, stderr = self.restic_cmd.run(
-            prefix + ["ls", "latest", "--json"], env, timeout=300
+            prefix + ["ls", snapshot_ref, "--json"], env, timeout=300
         )
         if not ok:
             progress.close()
-            show_framed_message(
-                self,
-                "Restore Test Failed",
-                f"Could not list latest snapshot:\n\n{(stderr or stdout or '')[:500]}",
-                kind="error",
-            )
+            err = (stderr or stdout or "").lower()
+            if "no snapshot" in err or "unable to find a snapshot" in err:
+                show_framed_message(
+                    self,
+                    "No Snapshots",
+                    f"Repository '{name}' has no snapshots to restore-test yet.",
+                    kind="info",
+                )
+            else:
+                show_framed_message(
+                    self,
+                    "Restore Test Failed",
+                    f"Could not list snapshot:\n\n{(stderr or stdout or '')[:500]}",
+                    kind="error",
+                )
             if on_complete:
                 on_complete(False)
             return
@@ -9952,7 +10413,7 @@ class ResticManagerWindow(QMainWindow):
             show_framed_message(
                 self,
                 "Restore Test",
-                "No files found in the latest snapshot to test.",
+                f"No files found in {snapshot_label} to test.",
                 kind="warning",
             )
             if on_complete:
@@ -9993,7 +10454,7 @@ class ResticManagerWindow(QMainWindow):
             QApplication.processEvents()
             cmd = [self.restic_cmd.restic_path] + prefix + [
                 "dump",
-                "latest",
+                snapshot_ref,
                 snap_path,
             ]
             try:
@@ -10062,7 +10523,7 @@ class ResticManagerWindow(QMainWindow):
                 self,
                 "Restore Test Passed",
                 f"Verified {verified} file(s) "
-                f"({self.format_bytes(total_bytes)}) from the latest snapshot.",
+                f"({self.format_bytes(total_bytes)}) from {snapshot_label}.",
                 kind="info",
             )
         else:
@@ -12383,10 +12844,8 @@ class ResticManagerWindow(QMainWindow):
         # Add paths
         args.extend(job["paths"])
         
-        # Add tags
-        if job.get("tags"):
-            for tag in job["tags"]:
-                args.extend(["--tag", tag])
+        # Add tags (includes stable job:<name>)
+        append_job_tag_args(args, job)
         
         # Add exclude patterns
         if job.get("exclude_patterns"):
@@ -14061,24 +14520,11 @@ $arguments = @(
     
     def set_app_password(self):
         """Set or change application password"""
-        # Check if password already exists
-        has_password = False
-        stored_hash = None
-        stored_salt = None
-        
-        if sys.platform == "win32":
-            # Windows: Registry only
-            stored_hash = retrieve_from_registry("AppPasswordHash")
-            stored_salt = retrieve_from_registry("AppPasswordSalt")
-            if stored_hash and stored_salt:
-                has_password = True
-        else:
-            # Non-Windows: JSON storage
-            stored_hash = self.settings_manager.get("app_password_hash")
-            stored_salt = self.settings_manager.get("app_password_salt")
-            if stored_hash and stored_salt:
-                has_password = True
-        
+        stored_hash, stored_salt, _storage = load_app_password_credentials(
+            self.settings_manager
+        )
+        has_password = bool(stored_hash and stored_salt)
+
         # If password already exists, verify old password first
         if has_password:
             old_password, ok = show_framed_password_prompt(
@@ -14142,23 +14588,24 @@ $arguments = @(
         # Hash the password
         pwd_hash, pwd_salt = hash_app_password(new_password)
         
-        # Store password
-        if sys.platform == "win32":
-            # Windows: Registry only
-            store_in_registry("AppPasswordHash", pwd_hash)
-            store_in_registry("AppPasswordSalt", pwd_salt)
-            storage_location = "Windows Registry (HKCU\\Software\\ResticDesktop)"
-        else:
-            # Non-Windows: JSON storage
-            self.settings_manager.set("app_password_hash", pwd_hash)
-            self.settings_manager.set("app_password_salt", pwd_salt)
-            self.settings_manager.save_settings()
-            storage_location = "Settings file"
+        ok_store, storage_location, store_err = store_app_password_credentials(
+            pwd_hash, pwd_salt, settings_manager=self.settings_manager
+        )
+        if not ok_store:
+            show_framed_message(
+                self,
+                "Password Not Saved",
+                store_err or "Could not store the application password securely.",
+                kind="error",
+            )
+            return
         
         # Update UI
         self.set_password_btn.setText("Change Password")
         self.remove_password_btn.setEnabled(True)
-        status_suffix = " (Registry)" if sys.platform == "win32" else " (Settings file)"
+        status_suffix = (
+            " (Registry)" if sys.platform == "win32" else " (OS keyring)"
+        )
         from ui.settings import set_settings_status
 
         set_settings_status(
@@ -14179,18 +14626,9 @@ $arguments = @(
     
     def remove_app_password(self):
         """Remove application password protection (requires authentication)"""
-        # Retrieve current password from storage
-        stored_hash = None
-        stored_salt = None
-        
-        if sys.platform == "win32":
-            # Windows: Registry only
-            stored_hash = retrieve_from_registry("AppPasswordHash")
-            stored_salt = retrieve_from_registry("AppPasswordSalt")
-        else:
-            # Non-Windows: JSON storage
-            stored_hash = self.settings_manager.get("app_password_hash")
-            stored_salt = self.settings_manager.get("app_password_salt")
+        stored_hash, stored_salt, _storage = load_app_password_credentials(
+            self.settings_manager
+        )
         
         if not stored_hash or not stored_salt:
             show_framed_message(
@@ -14232,16 +14670,15 @@ $arguments = @(
         ):
             return
         
-        # Remove password from storage
-        if sys.platform == "win32":
-            # Windows: Registry only
-            delete_from_registry("AppPasswordHash")
-            delete_from_registry("AppPasswordSalt")
-        else:
-            # Non-Windows: JSON storage
-            self.settings_manager.set("app_password_hash", "")
-            self.settings_manager.set("app_password_salt", "")
-            self.settings_manager.save_settings()
+        ok_clear, clear_err = clear_app_password_credentials(self.settings_manager)
+        if not ok_clear:
+            show_framed_message(
+                self,
+                "Remove Failed",
+                clear_err or "Could not remove the application password.",
+                kind="error",
+            )
+            return
         
         # Update UI
         self.set_password_btn.setText("Set Password")
@@ -14257,7 +14694,7 @@ $arguments = @(
             "The application will no longer require a password at startup.",
             kind="info",
         )
-        storage_type = "Registry" if sys.platform == "win32" else "Settings file"
+        storage_type = "Registry" if sys.platform == "win32" else "OS keyring"
         self.log(f"Application password removed from {storage_type}")
     
     def backup_settings(self):
@@ -15513,7 +15950,7 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         """Clean up all running worker threads before application exit"""
         worker_attrs = [
             '_snapshot_worker', '_restore_snapshot_worker', '_browse_files_worker',
-            '_diff_worker', '_forget_worker', '_copy_worker', '_prune_worker',
+            '_diff_worker', '_forget_worker', '_tag_worker', '_copy_worker', '_prune_worker',
             '_unlock_worker', '_stats_worker', '_verify_worker', '_restore_worker',
             '_backup_worker', '_init_worker', '_test_worker', '_lock_check_worker',
             '_auto_unlock_worker', '_cancel_unlock_worker', '_repo_check_worker',
@@ -15706,9 +16143,7 @@ def run_job_cli(job_name):
 
                     args.extend(job["paths"])
 
-                    if job.get("tags"):
-                        for tag in job["tags"]:
-                            args.extend(["--tag", tag])
+                    append_job_tag_args(args, job)
 
                     if job.get("exclude_patterns"):
                         for pattern in job["exclude_patterns"]:
@@ -16127,23 +16562,10 @@ def main():
     startup_probe_phase("splash shown")
 
     # Check application password - if hash exists, ALWAYS require authentication
-    # Retrieve password from storage
-    stored_hash = None
-    stored_salt = None
-    storage_source = None
-    
-    if sys.platform == "win32":
-        # Windows: Registry only
-        stored_hash = retrieve_from_registry("AppPasswordHash")
-        stored_salt = retrieve_from_registry("AppPasswordSalt")
-        if stored_hash and stored_salt:
-            storage_source = "Windows Registry"
-    else:
-        # Non-Windows: JSON storage
-        stored_hash = settings_manager.get("app_password_hash")
-        stored_salt = settings_manager.get("app_password_salt")
-        if stored_hash and stored_salt:
-            storage_source = "Settings file"
+    # Windows: Registry; Linux/macOS: OS keyring (with one-time JSON migration).
+    stored_hash, stored_salt, storage_source = load_app_password_credentials(
+        settings_manager
+    )
     
     if stored_hash and stored_salt:
         # Password protection active - authenticate required

@@ -187,6 +187,7 @@ class RepositoryHealthDialog(FramedDialog):
             "warning": "#d97706",
             "critical": getattr(t, "danger", "#ef4444"),
             "unknown": getattr(t, "muted", "#8b95a5"),
+            "empty": getattr(t, "muted", "#8b95a5"),
         }.get(status, t.muted)
 
     def _build_hero(self, report: RepoHealthReport) -> QFrame:
