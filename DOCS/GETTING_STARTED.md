@@ -15,30 +15,35 @@ pip install -r requirements.txt
 python restic_manager.py
 ```
 
-## 2. Make sure restic is available
+## 2. Make sure restic (and rclone for cloud) is available
 
 Restic Desktop drives [restic](https://restic.net/); it does not replace it.
 
 1. Open **Settings → Dependencies**.
 2. Confirm restic is found, or install / set the path there.
 3. Or install restic yourself from [restic.net](https://restic.net/) and ensure it is on your `PATH`.
+4. If you will use **Cloud** repositories (OneDrive, Google Drive, etc.), also install [rclone](https://rclone.org/downloads/) and set / Test it on the same Dependencies page.
 
-Without a working restic binary, backups and restores will fail.
+Without a working restic binary, backups and restores will fail. Without rclone, Cloud repositories will not connect.
 
 ## 3. Add a repository
 
-A repository is where encrypted backup data is stored (local folder, SFTP, or HTTPS REST server).
+A repository is where encrypted backup data is stored (local folder, network share, SFTP, Cloud, or HTTPS REST server).
 
 1. Open **Repositories**.
 2. Add a repository (local is simplest for a first test).
-3. Choose or create a strong **repository password** and store it somewhere safe — without it you cannot restore.
-4. Initialize the repository when prompted, then test the connection.
+3. For Cloud: pick a provider → **Sign in** (complete login in your browser) → set **Backup location** (Refresh if needed).
+4. Choose or create a strong **repository password** and store it somewhere safe — without it you cannot restore.
+5. Initialize the repository when prompted, then test the connection.
 
 Tips:
 
 - Prefer one repository per backup destination (for example one NAS share), and use **jobs / tags** to separate workloads.
 - For SFTP, use SSH key login; interactive password prompts will not work for scheduled jobs.
+- For network shares, enable **Connect only during backup** when you want the share mounted only for the job (Windows).
 - HTTP Basic Auth (HTTPS REST) is separate from the repository password that encrypts your data.
+- Cloud OAuth tokens live in the app’s `rclone.conf` next to settings — included when you use **Backup Settings**.
+- For S3 / B2 / Azure / Wasabi, use the access-key fields (rclone not required for those).
 
 ## 4. Create a backup job
 

@@ -24,7 +24,7 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 ## Features
 
 ### Repositories
-- Local folders, **SFTP** (NAS / remote SSH), and **HTTPS** (restic REST server)
+- Local folders, **network shares** (UNC), **SFTP**, **Cloud** (OneDrive, Google Drive, Dropbox, S3, B2, and more via rclone), and **HTTPS** REST server
 - Encrypted repository passwords at rest (machine-bound Fernet key)
 - Connection status and last-checked metadata
 - Integrity checks (quick / partial / full) and index rebuild helpers
@@ -68,6 +68,7 @@ If this app saves you time, you can [Buy Me a Coffee](https://buymeacoffee.com/d
 1. Get the latest build from [GitHub Releases](https://github.com/Dallustallus/restic-desktop/releases).
 2. Run the executable (Windows: `ResticDesktop.exe`).
 3. Install [restic](https://restic.net/) if needed, or use **Settings → Dependencies** in the app.
+4. For **Cloud** repositories, also install [rclone](https://rclone.org/downloads/) and set it under **Settings → Dependencies**.
 
 You do **not** need Python or PySide6 to use a release build. Then follow [Getting started](docs/GETTING_STARTED.md).
 
@@ -83,6 +84,7 @@ For contributors and anyone running or packaging from the repo:
 | **PySide6** | UI (official Qt for Python; LGPL) |
 | **cryptography** | Encrypting repository passwords in settings |
 | **restic** | [Install from restic.net](https://restic.net/) or via Settings → Dependencies |
+| **rclone** | Required for Cloud repositories; [rclone.org](https://rclone.org/downloads/) or Settings → Dependencies |
 | **winotify** (optional) | Windows toast notifications for GUI-initiated backups |
 
 Python packages are listed in `requirements.txt`.
@@ -143,11 +145,23 @@ GUI backups, `--run-job`, and `--record-job-run` all write to the same history d
 ### Local
 Pick a folder on disk or an external drive.
 
+### Network share
+Enter server, share, optional folder, username/password, and optional drive letter.
+Enable **Connect only during backup / restore** so Windows mounts the share for the operation and disconnects afterward (helps keep backup storage offline from ransomware when idle). Works with GUI backups, health checks, and scheduled Task Scheduler scripts.
+
 ### SFTP
 Host, port, username, remote path, and optional SSH private key. Restic expects **key-based** SSH login (not an interactive password prompt). Test connectivity with `ssh` before relying on scheduled jobs.
 
+### Cloud
+Choose a provider (OneDrive, Google Drive, Dropbox, S3, B2, Azure, Wasabi, or Other).
+- **OneDrive / Google Drive / Dropbox / Other:** install **rclone** under Settings → Dependencies, use **Sign in** / **Refresh**, then set a backup location.
+- **S3 / B2 / Azure / Wasabi:** enter bucket/container and access keys (native restic; rclone not required).
+
+Consumer cloud (OneDrive / Google Drive / Dropbox) is convenient but can be slower and rate-limited compared with NAS or object storage.
+Encrypted settings backup can include `rclone.conf` (cloud sign-ins) along with settings/history.
+
 ### HTTPS (REST server)
-Repository URL plus optional HTTP Basic Auth (anonymous, username + password, or password only). HTTP credentials are separate from the **repository password** that encrypts backup data.
+Available under Cloud → **REST server (HTTPS)**. Repository URL plus optional HTTP Basic Auth (anonymous, username + password, or password only). HTTP credentials are separate from the **repository password** that encrypts backup data.
 
 ### HTTPS copy limitation
 

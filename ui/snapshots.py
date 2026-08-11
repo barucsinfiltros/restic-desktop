@@ -4,14 +4,18 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
+    QCheckBox,
+    QButtonGroup,
     QPushButton,
+    QToolButton,
     QSizePolicy,
     QTableWidget,
     QTextEdit,
@@ -119,6 +123,66 @@ def create_snapshots_page(host: Any) -> QWidget:
     header.addLayout(repo_row, 0)
     layout.addLayout(header)
 
+    # Snapshot search / filter
+    filter_row = QHBoxLayout()
+    filter_row.setSpacing(10)
+
+    filter_label = QLabel("Search")
+    filter_label.setObjectName("pageSubtitle")
+    filter_label.setMinimumWidth(60)
+    filter_row.addWidget(filter_label)
+
+    host.snapshot_filter_input = QLineEdit()
+    host.snapshot_filter_input.setMinimumHeight(32)
+    host.snapshot_filter_input.setPlaceholderText(
+        "Filter by id / host / tags / paths (e.g. job name)"
+    )
+    filter_row.addWidget(host.snapshot_filter_input, stretch=1)
+
+    # Contains vs Not contains (mutually exclusive) as icon buttons.
+    filter_toggle_style = (
+        "QToolButton{border:none; padding: 4px 8px; background: transparent; border-radius: 6px;} "
+        "QToolButton:checked{background: rgba(34, 211, 238, 0.14);}"
+    )
+    mode_group = QButtonGroup(page)
+    mode_group.setExclusive(True)
+
+    contains_btn = QToolButton()
+    contains_btn.setCheckable(True)
+    contains_btn.setChecked(True)
+    contains_btn.setAutoRaise(True)
+    contains_btn.setMinimumHeight(28)
+    contains_btn.setIcon(QIcon(themes.icon_path("expand_all.svg")))
+    contains_btn.setToolTip("Contains (substring match)")
+    contains_btn.setStyleSheet(filter_toggle_style)
+    filter_row.addWidget(contains_btn)
+    mode_group.addButton(contains_btn)
+
+    not_contains_btn = QToolButton()
+    not_contains_btn.setCheckable(True)
+    not_contains_btn.setAutoRaise(True)
+    not_contains_btn.setMinimumHeight(28)
+    not_contains_btn.setIcon(QIcon(themes.icon_path("collapse_all.svg")))
+    not_contains_btn.setToolTip("Not contains (invert match)")
+    not_contains_btn.setStyleSheet(filter_toggle_style)
+    filter_row.addWidget(not_contains_btn)
+    mode_group.addButton(not_contains_btn)
+
+    host.snapshot_filter_contains_btn = contains_btn
+    host.snapshot_filter_not_contains_btn = not_contains_btn
+
+    host.snapshot_filter_case_btn = QToolButton()
+    host.snapshot_filter_case_btn.setCheckable(True)
+    host.snapshot_filter_case_btn.setChecked(False)
+    host.snapshot_filter_case_btn.setAutoRaise(True)
+    host.snapshot_filter_case_btn.setText("Aa")
+    host.snapshot_filter_case_btn.setToolTip("Case sensitive matching (Aa).")
+    host.snapshot_filter_case_btn.setMinimumHeight(28)
+    host.snapshot_filter_case_btn.setStyleSheet(filter_toggle_style)
+    filter_row.addWidget(host.snapshot_filter_case_btn)
+
+    layout.addLayout(filter_row)
+
     # Snapshots table card
     table_card = SectionCard("Snapshots", parent=page)
     table_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -204,6 +268,15 @@ def create_snapshots_page(host: Any) -> QWidget:
     )
     host.snapshots_table.itemSelectionChanged.connect(host.show_snapshot_details)
 
+    def _filter_changed(_txt: str = "") -> None:
+        host._snapshot_filter_text = host.snapshot_filter_input.text() or ""
+        populate_snapshots_table(host)
+
+    host.snapshot_filter_input.textChanged.connect(_filter_changed)
+    host.snapshot_filter_contains_btn.toggled.connect(_filter_changed)
+    host.snapshot_filter_not_contains_btn.toggled.connect(_filter_changed)
+    host.snapshot_filter_case_btn.toggled.connect(_filter_changed)
+
     table_shell = QFrame()
     table_shell.setObjectName("snapshotsTableShell")
     table_shell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -246,6 +319,10 @@ def create_snapshots_page(host: Any) -> QWidget:
 
     _repo_action("Prune Repository", host.prune_repository)
     _repo_action("Unlock Repository", host.unlock_repository)
+    _repo_action(
+        "Migrate All Snapshots",
+        host.migrate_all_snapshots_to_repository,
+    )
     table_card.body.addLayout(repo_actions)
     # Stretch the table shell (index 2: header, summary, table, actions)
     table_card.body.setStretch(2, 1)
@@ -443,6 +520,47 @@ def populate_snapshots_table(host: Any) -> None:
         return
 
     snapshots = list(getattr(host, "_loaded_snapshots", None) or [])
+    filter_text_raw = (getattr(host, "_snapshot_filter_text", None) or "").strip()
+    if filter_text_raw:
+        filter_text = filter_text_raw
+        case_sensitive = (
+            bool(getattr(host, "snapshot_filter_case_btn", None).isChecked())
+            if getattr(host, "snapshot_filter_case_btn", None)
+            else False
+        )
+        not_contains = (
+            bool(getattr(host, "snapshot_filter_not_contains_btn", None).isChecked())
+            if getattr(host, "snapshot_filter_not_contains_btn", None)
+            else False
+        )
+
+        if not case_sensitive:
+            filter_text = filter_text.lower()
+
+        def _norm(s: str) -> str:
+            return s if case_sensitive else s.lower()
+
+        def _matches(snap: dict) -> bool:
+            short_id = str(snap.get("short_id") or snap.get("id") or "")
+            host_name = str(snap.get("hostname") or "")
+            tags = [str(t or "") for t in (snap.get("tags") or [])]
+            path_lines = [str(p or "") for p in (snap.get("paths") or [])]
+
+            candidates_contains = [
+                _norm(short_id),
+                _norm(host_name),
+                _norm(", ".join(tags)),
+                _norm("\n".join(path_lines)),
+            ]
+
+            return any(filter_text in c for c in candidates_contains)
+
+        def _include(s: dict) -> bool:
+            is_match = _matches(s)
+            return (not_contains and not is_match) or (not not_contains and is_match)
+
+        snapshots = [s for s in snapshots if isinstance(s, dict) and _include(s)]
+
     repo_name = getattr(host, "_current_snapshot_repo_name", "") or ""
 
     repositories = []

@@ -659,6 +659,48 @@ def _build_dependencies_panel(host: Any, parent: QWidget) -> QWidget:
         0,
     )
     card.body.addWidget(_form_row("Restic path", restic_field, parent=card))
+    card.body.addSpacing(12)
+
+    host.rclone_path_input = QLineEdit(card)
+    host.rclone_path_input.setText(host.settings_manager.get("rclone_path") or "rclone")
+    host.rclone_path_input.setMinimumHeight(30)
+    host.rclone_path_input.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+    )
+    rclone_field = QWidget(card)
+    rclone_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    rclone_row = QHBoxLayout(rclone_field)
+    rclone_row.setContentsMargins(0, 0, 0, 0)
+    rclone_row.setSpacing(8)
+    rclone_row.addWidget(host.rclone_path_input, stretch=1)
+    rclone_row.addWidget(
+        _secondary_btn(
+            "Browse",
+            host.browse_rclone_path,
+            parent=rclone_field,
+            min_width=88,
+        ),
+        0,
+    )
+    rclone_row.addWidget(
+        _secondary_btn(
+            "Test",
+            host.test_rclone_path,
+            parent=rclone_field,
+            tooltip="Test if rclone can be executed from this path",
+            min_width=72,
+        ),
+        0,
+    )
+    card.body.addWidget(_form_row("rclone path", rclone_field, parent=card))
+    rclone_hint = QLabel(
+        "Required for Cloud repositories (OneDrive, Google Drive, etc.). "
+        "Download from https://rclone.org/downloads/",
+        card,
+    )
+    rclone_hint.setObjectName("settingsHint")
+    rclone_hint.setWordWrap(True)
+    card.body.addWidget(rclone_hint)
     card.body.addSpacing(16)
 
     deps_row_w = QWidget(card)

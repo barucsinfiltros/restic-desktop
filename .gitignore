@@ -18,3 +18,5 @@ build/
 .license_check
 .exe
 *.db
+RELEASE_NOTES.md
+*.conf

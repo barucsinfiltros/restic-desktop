@@ -1,6 +1,6 @@
 ﻿"""
 Restic Desktop - GUI Application for managing Restic backups
-Version: 2.2.4
+Version: 2.2.5
 
 Build with PyInstaller (preferred — uses restic_manager.spec):
   pyinstaller restic_manager.spec
@@ -46,6 +46,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # Import theme + chrome modules
 import ui.themes as themes
 import core.history_db as history_db
+import core.rclone_util as rclone_util
+import core.network_share as network_share
 from ui.title_bar import TitleBar
 from ui.framed_dialog import FramedDialog
 from ui.rounded_menu import RoundedMenu
@@ -111,7 +113,7 @@ except ImportError:
     wintypes = None
 
 # Version and debug settings
-VERSION = "v2.2.4"
+VERSION = "v2.2.5"
 YEAR = datetime.now().year
 DEBUG_MODE = False
 _STARTUP_WINDOW_PROBE = None  # installed when --debug; traces flash windows
@@ -701,6 +703,23 @@ def show_framed_message(
     dlg.body_layout.addLayout(footer)
     dlg.exec()
     return bool(accepted["value"])
+
+
+def format_repository_test_failure(stderr: str, stdout: str = "") -> tuple[str, str]:
+    """Return (summary, details) for repository connection test failures."""
+    error_msg = (stderr or stdout or "Unknown error").strip()
+    lower = error_msg.lower()
+    if "repository does not exist" in lower:
+        return (
+            "No restic repository exists at this location yet.\n\n"
+            "Turn on “Initialize repository now” when saving, or initialize "
+            "first, then run Test again.",
+            error_msg,
+        )
+    return (
+        "Could not connect to the repository. Check the path and password.",
+        error_msg,
+    )
 
 
 def show_framed_password_prompt(
@@ -1706,15 +1725,68 @@ def repo_restic_prefix(repo: Optional[dict]) -> List[str]:
     return args
 
 
+def _runtime_rclone_config_path(
+    *,
+    settings_manager: "ResticSettingsManager",
+    password_manager: "PasswordManager",
+) -> str:
+    """Return a decrypted temp `rclone.conf` path when rclone is stored encrypted.
+
+    If `rclone_conf_encrypted` is empty, callers should fall back to the normal
+    config path logic.
+    """
+    enc = (settings_manager.get("rclone_conf_encrypted") or "").strip()
+    if not enc:
+        return ""
+
+    cached = getattr(settings_manager, "_runtime_rclone_conf_path", "")
+    if cached:
+        return str(cached)
+
+    decrypted = password_manager.decrypt(enc)
+    if not decrypted.strip():
+        raise ValueError("Decrypted rclone.conf is empty")
+
+    tmp_dir = tempfile.gettempdir()
+    token = "".join(random.choices(string.ascii_letters + string.digits, k=12))
+    tmp_path = os.path.join(tmp_dir, f"resticdesk_rclone_{os.getpid()}_{token}.conf")
+
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(decrypted)
+
+    setattr(settings_manager, "_runtime_rclone_conf_path", tmp_path)
+
+    # Cleanup at process exit; scheduled tasks are short-lived.
+    def _cleanup() -> None:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+    try:
+        import atexit
+
+        atexit.register(_cleanup)
+    except Exception:
+        pass
+
+    return tmp_path
+
+
 def build_repo_env(
     repo: Optional[dict],
     repo_password: str = "",
     *,
     password_manager=None,
+    settings_manager=None,
+    rclone_path: str = "",
+    rclone_config: str = "",
 ) -> Dict[str, str]:
     """
     Environment for a restic invocation against ``repo``.
     Sets RESTIC_PASSWORD and, for HTTPS/REST, optional RESTIC_REST_* auth.
+    For cloud/rclone repos, ensures rclone is on PATH and optional RCLONE_CONFIG.
     """
     repo = repo or {}
     env: Dict[str, str] = {}
@@ -1730,6 +1802,38 @@ def build_repo_env(
         except Exception:
             rest_repo["rest_password_plain"] = ""
     env.update(rest_auth_env(rest_repo))
+
+    cfg = (rclone_config or repo.get("rclone_config") or "").strip()
+    rpath = (rclone_path or "").strip()
+    if settings_manager is not None:
+        if not rpath:
+            rpath = rclone_util.resolve_rclone_path(settings_manager.get)
+        if not cfg:
+            cfg = (settings_manager.get("rclone_config") or "").strip()
+        if not cfg:
+            cfg = rclone_util.app_rclone_config_path()
+
+        # Option B: encrypted-at-rest rclone.conf
+        if password_manager is not None:
+            encrypted_cfg = _runtime_rclone_config_path(
+                settings_manager=settings_manager,
+                password_manager=password_manager,
+            )
+            if encrypted_cfg:
+                cfg = encrypted_cfg
+    if rclone_util.is_cloud_repo(repo) or (repo.get("path") or "").startswith("rclone:"):
+        if cfg and os.path.isfile(cfg):
+            env["RCLONE_CONFIG"] = cfg
+        elif cfg:
+            # Prefer app-owned config even if not created yet
+            env["RCLONE_CONFIG"] = cfg
+        if rpath:
+            bin_dir = os.path.dirname(os.path.abspath(rpath))
+            if bin_dir and os.path.isdir(bin_dir):
+                env["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+    rclone_util.apply_object_storage_env(
+        repo, env, password_manager=password_manager
+    )
     return env
 
 
@@ -1740,12 +1844,14 @@ def shell_repo_command(
     restic_args: Sequence[str],
     *,
     password_manager=None,
+    settings_manager=None,
 ) -> str:
     """Build a POSIX shell command with RESTIC_* env and SFTP-aware -r args."""
     env = build_repo_env(
         repo,
         repo_password,
         password_manager=password_manager,
+        settings_manager=settings_manager,
     )
     exports = " ".join(
         f"{key}={shlex.quote(str(value))}" for key, value in env.items() if value
@@ -1753,6 +1859,40 @@ def shell_repo_command(
     cmd_parts = [restic_path, *repo_restic_prefix(repo), *list(restic_args)]
     quoted = " ".join(shlex.quote(str(part)) for part in cmd_parts if part is not None)
     return f"{exports} {quoted}".strip() if exports else quoted
+
+
+class RcloneSignInWorker(QThread):
+    """Headless cloud OAuth via rclone authorize (no console window)."""
+
+    finished = Signal(bool, str, str)  # success, remote_name, error_message
+
+    def __init__(
+        self,
+        rclone_path: str,
+        remote_name: str,
+        backend_type: str,
+        env: Optional[Dict[str, str]],
+        provider_id: str,
+    ):
+        super().__init__()
+        self.rclone_path = rclone_path
+        self.remote_name = remote_name
+        self.backend_type = backend_type
+        self.env = env or {}
+        self.provider_id = provider_id
+
+    def run(self):
+        try:
+            ok, msg = rclone_util.create_remote_via_authorize(
+                self.rclone_path,
+                self.remote_name,
+                self.backend_type,
+                env=self.env,
+                provider_id=self.provider_id,
+            )
+            self.finished.emit(ok, self.remote_name, msg or "")
+        except Exception as exc:
+            self.finished.emit(False, self.remote_name, str(exc))
 
 
 # Repository Dialog
@@ -1795,12 +1935,23 @@ class RepositoryDialog(FramedDialog):
         self.type_combo.setMinimumWidth(180)
         self._repo_type_options = [
             ("local", "Local folder"),
+            ("network", "Network share (SMB/NFS)"),
             ("sftp", "SFTP (NAS / remote)"),
-            ("https", "HTTPS (REST server)"),
+            ("cloud", "Cloud"),
         ]
         for type_id, label in self._repo_type_options:
             self.type_combo.addItem(label, type_id)
-        current_type = (existing_repo or {}).get("type", "local") or "local"
+        raw_type = (existing_repo or {}).get("type", "local") or "local"
+        # Map legacy types into the new UI model
+        if raw_type in ("https", "rest"):
+            current_type = "cloud"
+            self._legacy_https = True
+        elif raw_type == "rclone":
+            current_type = "cloud"
+            self._legacy_https = False
+        else:
+            current_type = raw_type
+            self._legacy_https = False
         known_ids = {t for t, _ in self._repo_type_options}
         if current_type not in known_ids:
             self.type_combo.addItem(current_type, current_type)
@@ -1817,6 +1968,109 @@ class RepositoryDialog(FramedDialog):
         self.path_input.setPlaceholderText("e.g. D:\\Backups\\restic-repo")
         self._path_label = QLabel("Path:")
         form_layout.addRow(self._path_label, self.path_input)
+
+        # --- Network share (UNC) — Phase 1: reachable share; connect-only later ---
+        self.network_server_input = QLineEdit()
+        self.network_server_input.setMinimumHeight(34)
+        self.network_server_input.setPlaceholderText("nas.local or 192.168.1.10")
+        form_layout.addRow("Server:", self.network_server_input)
+        self._network_server_label = form_layout.labelForField(self.network_server_input)
+
+        self.network_share_input = QLineEdit()
+        self.network_share_input.setMinimumHeight(34)
+        self.network_share_input.setPlaceholderText("backups")
+        form_layout.addRow("Share:", self.network_share_input)
+        self._network_share_label = form_layout.labelForField(self.network_share_input)
+
+        self.network_subpath_input = QLineEdit()
+        self.network_subpath_input.setMinimumHeight(34)
+        self.network_subpath_input.setPlaceholderText("restic-repo (optional)")
+        form_layout.addRow("Folder:", self.network_subpath_input)
+        self._network_subpath_label = form_layout.labelForField(self.network_subpath_input)
+
+        self.network_user_input = QLineEdit()
+        self.network_user_input.setMinimumHeight(34)
+        self.network_user_input.setPlaceholderText(r"DOMAIN\user or user")
+        form_layout.addRow("Username:", self.network_user_input)
+        self._network_user_label = form_layout.labelForField(self.network_user_input)
+
+        self.network_pass_input = QLineEdit()
+        self.network_pass_input.setMinimumHeight(34)
+        self.network_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.network_pass_input.setPlaceholderText("Share password (optional)")
+        form_layout.addRow("Password:", self.network_pass_input)
+        self._network_pass_label = form_layout.labelForField(self.network_pass_input)
+
+        self.network_drive_combo = QComboBox()
+        self.network_drive_combo.setMinimumHeight(34)
+        self.network_drive_combo.setMinimumWidth(100)
+        self.network_drive_combo.addItem("None (UNC)", "")
+        for letter in network_share.drive_letter_choices():
+            if not letter:
+                continue
+            self.network_drive_combo.addItem(letter, letter)
+        form_layout.addRow("Drive letter:", self.network_drive_combo)
+        self._network_drive_label = form_layout.labelForField(self.network_drive_combo)
+
+        self.network_connect_only_check = QCheckBox(
+            "Connect only during backup / restore"
+        )
+        self.network_connect_only_check.setChecked(True)
+        self.network_connect_only_check.setToolTip(
+            "Mounts the share just for the operation, then disconnects.\n"
+            "Helps keep backup storage offline from ransomware when idle."
+        )
+        form_layout.addRow("", self.network_connect_only_check)
+
+        self.network_hint = QLabel(
+            "Windows SMB shares. Prefer “Connect only during backup” so the share "
+            "is not left permanently mapped. Optional drive letter maps e.g. Z:; "
+            "otherwise restic uses the UNC path after authenticating."
+        )
+        self.network_hint.setWordWrap(True)
+        self.network_hint.setObjectName("mutedLabel")
+        form_layout.addRow("", self.network_hint)
+
+        if existing_repo and current_type == "network":
+            self.network_server_input.setText(existing_repo.get("network_server") or "")
+            self.network_share_input.setText(existing_repo.get("network_share") or "")
+            self.network_subpath_input.setText(existing_repo.get("network_subpath") or "")
+            self.network_user_input.setText(existing_repo.get("network_user") or "")
+            if existing_repo.get("network_password"):
+                try:
+                    self.network_pass_input.setText(
+                        self.password_manager.decrypt(existing_repo.get("network_password"))
+                    )
+                except Exception:
+                    pass
+            drive = network_share.normalize_drive_letter(
+                existing_repo.get("network_drive") or ""
+            )
+            didx = self.network_drive_combo.findData(drive)
+            if didx >= 0:
+                self.network_drive_combo.setCurrentIndex(didx)
+            self.network_connect_only_check.setChecked(
+                bool(existing_repo.get("network_connect_only", True))
+            )
+            if not self.network_server_input.text():
+                stored = (existing_repo.get("path") or "").replace("/", "\\")
+                if stored.startswith("\\\\"):
+                    parts = [p for p in stored.lstrip("\\").split("\\") if p]
+                    if len(parts) >= 2:
+                        self.network_server_input.setText(parts[0])
+                        self.network_share_input.setText(parts[1])
+                        self.network_subpath_input.setText("\\".join(parts[2:]))
+
+        self._network_rows = [
+            (self._network_server_label, self.network_server_input),
+            (self._network_share_label, self.network_share_input),
+            (self._network_subpath_label, self.network_subpath_input),
+            (self._network_user_label, self.network_user_input),
+            (self._network_pass_label, self.network_pass_input),
+            (self._network_drive_label, self.network_drive_combo),
+            (None, self.network_connect_only_check),
+            (None, self.network_hint),
+        ]
 
         # --- SFTP connection fields ---
         self.sftp_host_input = QLineEdit()
@@ -1958,7 +2212,11 @@ class RepositoryDialog(FramedDialog):
         self.https_hint.setObjectName("mutedLabel")
         form_layout.addRow("", self.https_hint)
 
-        if existing_repo and current_type in ("https", "rest"):
+        if existing_repo and (
+            raw_type in ("https", "rest")
+            or (current_type == "cloud" and (existing_repo.get("cloud_provider") or "") == "rest")
+            or getattr(self, "_legacy_https", False)
+        ):
             self.https_url_input.setText(
                 existing_repo.get("https_url")
                 or parse_rest_location(existing_repo.get("path") or "")
@@ -1986,6 +2244,155 @@ class RepositoryDialog(FramedDialog):
             (None, self.https_hint),
         ]
         self.https_auth_combo.currentIndexChanged.connect(self._on_https_auth_changed)
+
+        # --- Cloud provider (rclone under the hood; REST uses https fields) ---
+        self.cloud_provider_combo = QComboBox()
+        self.cloud_provider_combo.setMinimumHeight(34)
+        self.cloud_provider_combo.setMinimumWidth(220)
+        for pid, label, _backend in rclone_util.CLOUD_PROVIDERS:
+            self.cloud_provider_combo.addItem(label, pid)
+        form_layout.addRow("Cloud provider:", self.cloud_provider_combo)
+        self._cloud_provider_label = form_layout.labelForField(self.cloud_provider_combo)
+
+        cloud_remote_row = QWidget()
+        cloud_remote_layout = QHBoxLayout(cloud_remote_row)
+        cloud_remote_layout.setContentsMargins(0, 0, 0, 0)
+        cloud_remote_layout.setSpacing(8)
+        self.cloud_remote_combo = QComboBox()
+        self.cloud_remote_combo.setMinimumHeight(34)
+        self.cloud_remote_combo.setMinimumWidth(180)
+        self.cloud_remote_combo.setEditable(True)
+        cloud_remote_layout.addWidget(self.cloud_remote_combo, 1)
+        self.cloud_refresh_btn = QPushButton("Refresh")
+        self.cloud_refresh_btn.setObjectName("dialogSecondary")
+        self.cloud_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cloud_refresh_btn.setFixedHeight(34)
+        self.cloud_refresh_btn.clicked.connect(self._refresh_cloud_remotes)
+        cloud_remote_layout.addWidget(self.cloud_refresh_btn)
+        self.cloud_signin_btn = QPushButton("Sign in")
+        self.cloud_signin_btn.setObjectName("dialogSecondary")
+        self.cloud_signin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cloud_signin_btn.setFixedHeight(34)
+        self.cloud_signin_btn.setToolTip(
+            "Open browser sign-in for this provider (Restic Desktop handles the rest)"
+        )
+        self.cloud_signin_btn.clicked.connect(self._cloud_sign_in)
+        cloud_remote_layout.addWidget(self.cloud_signin_btn)
+        form_layout.addRow("Connection:", cloud_remote_row)
+        self._cloud_remote_label = form_layout.labelForField(cloud_remote_row)
+
+        self.cloud_path_input = QLineEdit()
+        self.cloud_path_input.setMinimumHeight(34)
+        self.cloud_path_input.setPlaceholderText("Backups/restic-desktop")
+        form_layout.addRow("Backup location:", self.cloud_path_input)
+        self._cloud_path_label = form_layout.labelForField(self.cloud_path_input)
+
+        self.cloud_hint = QLabel(
+            "Install rclone under Settings → Dependencies for OneDrive / Google Drive / Dropbox. "
+            "S3, B2, Azure, and Wasabi can use native credentials below (no rclone). "
+            "Consumer cloud can be slower and rate-limited compared with NAS or object storage."
+        )
+        self.cloud_hint.setWordWrap(True)
+        self.cloud_hint.setObjectName("mutedLabel")
+        form_layout.addRow("", self.cloud_hint)
+
+        # Native object storage credentials (S3 / B2 / Azure / Wasabi)
+        self.object_bucket_input = QLineEdit()
+        self.object_bucket_input.setMinimumHeight(34)
+        self.object_bucket_input.setPlaceholderText("bucket-or-container-name")
+        form_layout.addRow("Bucket / container:", self.object_bucket_input)
+        self._object_bucket_label = form_layout.labelForField(self.object_bucket_input)
+
+        self.object_key_input = QLineEdit()
+        self.object_key_input.setMinimumHeight(34)
+        self.object_key_input.setPlaceholderText("Access key / Account ID / Account name")
+        form_layout.addRow("Access key:", self.object_key_input)
+        self._object_key_label = form_layout.labelForField(self.object_key_input)
+
+        self.object_secret_input = QLineEdit()
+        self.object_secret_input.setMinimumHeight(34)
+        self.object_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.object_secret_input.setPlaceholderText("Secret key / Account key")
+        form_layout.addRow("Secret key:", self.object_secret_input)
+        self._object_secret_label = form_layout.labelForField(self.object_secret_input)
+
+        self.object_endpoint_input = QLineEdit()
+        self.object_endpoint_input.setMinimumHeight(34)
+        self.object_endpoint_input.setPlaceholderText("Optional endpoint (e.g. s3.wasabisys.com)")
+        form_layout.addRow("Endpoint:", self.object_endpoint_input)
+        self._object_endpoint_label = form_layout.labelForField(self.object_endpoint_input)
+
+        self.object_region_input = QLineEdit()
+        self.object_region_input.setMinimumHeight(34)
+        self.object_region_input.setPlaceholderText("Optional region")
+        form_layout.addRow("Region:", self.object_region_input)
+        self._object_region_label = form_layout.labelForField(self.object_region_input)
+
+        self.object_hint = QLabel(
+            "Native restic backends — credentials stay encrypted in settings. "
+            "Prefix / folder goes in Backup location above."
+        )
+        self.object_hint.setWordWrap(True)
+        self.object_hint.setObjectName("mutedLabel")
+        form_layout.addRow("", self.object_hint)
+
+        self._object_rows = [
+            (self._object_bucket_label, self.object_bucket_input),
+            (self._object_key_label, self.object_key_input),
+            (self._object_secret_label, self.object_secret_input),
+            (self._object_endpoint_label, self.object_endpoint_input),
+            (self._object_region_label, self.object_region_input),
+            (None, self.object_hint),
+        ]
+
+        # Prefill cloud / legacy https
+        self._cloud_remotes_cache: List[Tuple[str, str]] = []
+        if existing_repo:
+            provider = (existing_repo.get("cloud_provider") or "").strip()
+            if self._legacy_https or raw_type in ("https", "rest"):
+                provider = "rest"
+            elif raw_type == "rclone" and not provider:
+                provider = "other"
+            elif (existing_repo.get("path") or "").startswith("rclone:") and not provider:
+                provider = "other"
+            if provider:
+                pidx = self.cloud_provider_combo.findData(provider)
+                if pidx >= 0:
+                    self.cloud_provider_combo.setCurrentIndex(pidx)
+            parsed_r = rclone_util.parse_rclone_location(
+                existing_repo.get("path") or ""
+            )
+            remote_name = existing_repo.get("rclone_remote") or parsed_r.get("remote") or ""
+            if remote_name:
+                self.cloud_remote_combo.setEditText(remote_name)
+            self.cloud_path_input.setText(
+                existing_repo.get("cloud_path")
+                or parsed_r.get("path")
+                or ""
+            )
+            if existing_repo.get("object_bucket"):
+                self.object_bucket_input.setText(existing_repo.get("object_bucket") or "")
+            if existing_repo.get("object_key_id"):
+                self.object_key_input.setText(existing_repo.get("object_key_id") or "")
+            if existing_repo.get("object_secret"):
+                try:
+                    self.object_secret_input.setText(
+                        self.password_manager.decrypt(existing_repo.get("object_secret"))
+                    )
+                except Exception:
+                    pass
+            self.object_endpoint_input.setText(existing_repo.get("object_endpoint") or "")
+            self.object_region_input.setText(existing_repo.get("object_region") or "")
+
+        self._cloud_rows = [
+            (self._cloud_provider_label, self.cloud_provider_combo),
+            (self._cloud_remote_label, cloud_remote_row),
+            (self._cloud_path_label, self.cloud_path_input),
+            (None, self.cloud_hint),
+        ]
+        self.cloud_provider_combo.currentIndexChanged.connect(
+            self._on_cloud_provider_changed
+        )
         
         # Repository encryption password
         self.password_input = QLineEdit()
@@ -2074,28 +2481,230 @@ class RepositoryDialog(FramedDialog):
         if widget is not None:
             widget.setVisible(visible)
 
+    def _cloud_provider_id(self) -> str:
+        data = self.cloud_provider_combo.currentData()
+        if data:
+            return str(data)
+        return "other"
+
+    def _rclone_runtime(self) -> Tuple[str, Dict[str, str]]:
+        rclone_path = rclone_util.resolve_rclone_path(self.settings_manager.get)
+        cfg = (self.settings_manager.get("rclone_config") or "").strip()
+        if not cfg:
+            cfg = rclone_util.app_rclone_config_path()
+
+        # Option B: encrypted-at-rest config -> decrypt to a temp file.
+        try:
+            encrypted_cfg = _runtime_rclone_config_path(
+                settings_manager=self.settings_manager,
+                password_manager=self.settings_manager.password_manager,
+            )
+            if encrypted_cfg:
+                cfg = encrypted_cfg
+        except Exception:
+            # Fall back to the plain config path (legacy behavior).
+            pass
+        env = rclone_util.rclone_process_env(
+            rclone_path=rclone_path, config_path=cfg
+        )
+        return rclone_path, env
+
+    def _refresh_cloud_remotes(self):
+        rclone_path, env = self._rclone_runtime()
+        version = rclone_util.rclone_version(rclone_path, env=env)
+        if not version:
+            show_framed_message(
+                self,
+                "rclone Required",
+                "rclone was not found. Install it and set the path under "
+                "Settings → Dependencies, then try again.",
+                kind="warning",
+            )
+            return
+        remotes = rclone_util.list_rclone_remotes(rclone_path, env=env)
+        self._cloud_remotes_cache = remotes
+        provider = self._cloud_provider_id()
+        filtered = rclone_util.filter_remotes_for_provider(remotes, provider)
+        current = self.cloud_remote_combo.currentText().strip()
+        self.cloud_remote_combo.clear()
+        for name, rtype in filtered:
+            label = f"{name} ({rtype})" if rtype else name
+            self.cloud_remote_combo.addItem(label, name)
+        if current:
+            idx = self.cloud_remote_combo.findData(current)
+            if idx >= 0:
+                self.cloud_remote_combo.setCurrentIndex(idx)
+            else:
+                self.cloud_remote_combo.setEditText(current)
+
+    def _cloud_sign_in(self):
+        provider = self._cloud_provider_id()
+        backend = rclone_util.provider_rclone_type(provider)
+        if provider == "rest":
+            show_framed_message(
+                self,
+                "REST Server",
+                "REST server repositories use the URL and HTTP auth fields — "
+                "no cloud sign-in is required.",
+                kind="info",
+            )
+            return
+        if provider in ("s3", "b2", "azure", "wasabi"):
+            show_framed_message(
+                self,
+                "Object Storage",
+                "Enter your access key and secret below — "
+                "no browser sign-in is required for this provider.",
+                kind="info",
+            )
+            return
+        if provider == "other" or not backend:
+            show_framed_message(
+                self,
+                "Existing Remote",
+                "Choose Other and pick an existing connection from the list "
+                "(Refresh remotes), or create one with rclone config.",
+                kind="info",
+            )
+            return
+        rclone_path, env = self._rclone_runtime()
+        if not rclone_util.rclone_version(rclone_path, env=env):
+            show_framed_message(
+                self,
+                "rclone Required",
+                "rclone was not found. Install it under Settings → Dependencies.",
+                kind="warning",
+            )
+            return
+        remote_name = rclone_util.new_remote_name(provider)
+        provider_label = rclone_util.provider_label(provider)
+
+        self.cloud_remote_combo.setEditText(remote_name)
+        self._signin_progress, self._signin_status, _bar = make_framed_progress_dialog(
+            self,
+            "Signing In",
+            f"Opening your browser for {provider_label} sign-in…\n\n"
+            "Complete login in the browser, then return here.\n"
+            "This may take a minute.",
+            min_width=420,
+        )
+        self._signin_progress.show()
+
+        self._signin_worker = RcloneSignInWorker(
+            rclone_path,
+            remote_name,
+            backend,
+            env,
+            provider,
+        )
+        self._signin_worker.finished.connect(self._on_cloud_sign_in_finished)
+        self._signin_worker.start()
+
+    def _on_cloud_sign_in_finished(self, success: bool, remote_name: str, message: str):
+        if getattr(self, "_signin_progress", None):
+            try:
+                self._signin_progress.close()
+                self._signin_progress.deleteLater()
+            except Exception:
+                pass
+        worker = getattr(self, "_signin_worker", None)
+        if worker is not None:
+            worker.deleteLater()
+            self._signin_worker = None
+
+        if success:
+            self._refresh_cloud_remotes()
+            # Option B: encrypt rclone.conf at rest (cloud OAuth token safety).
+            try:
+                cfg_path = rclone_util.app_rclone_config_path()
+                if os.path.exists(cfg_path):
+                    cfg_text = Path(cfg_path).read_text(encoding="utf-8")
+                    encrypted = self.password_manager.encrypt(cfg_text)
+                    self.settings_manager.set(
+                        "rclone_conf_encrypted", encrypted
+                    )
+                    # Clear legacy pointer to the plain config file.
+                    self.settings_manager.set("rclone_config", "")
+                    self.settings_manager.save_settings()
+                    # Remove cleartext token config from disk.
+                    try:
+                        os.remove(cfg_path)
+                    except Exception:
+                        pass
+            except Exception:
+                # Keep legacy cleartext file if encryption fails.
+                pass
+            idx = self.cloud_remote_combo.findData(remote_name)
+            if idx >= 0:
+                self.cloud_remote_combo.setCurrentIndex(idx)
+            else:
+                self.cloud_remote_combo.setEditText(remote_name)
+            show_framed_message(
+                self,
+                "Signed In",
+                f"Connected to {rclone_util.provider_label(self._cloud_provider_id())}.\n"
+                "Set Backup location, then Test or save.",
+                kind="info",
+            )
+            return
+
+        summary = message or "Could not complete cloud sign-in."
+        details = ""
+        if "\n\n" in summary:
+            summary, details = summary.split("\n\n", 1)
+        show_framed_message(
+            self,
+            "Sign In Failed",
+            summary,
+            kind="error",
+            details=details,
+        )
+
+    def _on_cloud_provider_changed(self, *_args):
+        self._on_repo_type_changed()
+        if self._repo_type_id() == "cloud" and self._cloud_provider_id() != "rest":
+            # Soft refresh; ignore errors until user clicks Refresh
+            try:
+                self._refresh_cloud_remotes()
+            except Exception:
+                pass
+
     def _on_repo_type_changed(self, *_args):
-        """Show local / SFTP / HTTPS fields for the selected backend."""
+        """Show local / network / SFTP / cloud / HTTPS fields for the selected backend."""
         repo_type = self._repo_type_id()
         is_local = repo_type == "local"
+        is_network = repo_type == "network"
         is_sftp = repo_type == "sftp"
-        is_https = repo_type in ("https", "rest")
+        is_cloud = repo_type == "cloud"
+        provider = self._cloud_provider_id() if is_cloud else ""
+        is_rest = is_cloud and provider == "rest"
+        is_object = is_cloud and provider in ("s3", "b2", "azure", "wasabi")
+        is_rclone_cloud = is_cloud and not is_rest and not is_object
 
-        # Path row: local, or legacy/unknown types
-        self._set_row_visible(
-            self._path_label, self.path_input, is_local or (not is_sftp and not is_https)
-        )
+        self._set_row_visible(self._path_label, self.path_input, is_local)
+        for label, widget in self._network_rows:
+            self._set_row_visible(label, widget, is_network)
         for label, widget in self._sftp_rows:
             self._set_row_visible(label, widget, is_sftp)
+        for label, widget in self._cloud_rows:
+            if widget is self.cloud_provider_combo or label is self._cloud_provider_label:
+                self._set_row_visible(label, widget, is_cloud)
+            elif widget is self.cloud_path_input or label is self._cloud_path_label:
+                # Backup location used by rclone and native object storage
+                self._set_row_visible(label, widget, is_rclone_cloud or is_object)
+            elif widget is self.cloud_hint:
+                self._set_row_visible(label, widget, is_cloud and not is_rest)
+            else:
+                self._set_row_visible(label, widget, is_rclone_cloud)
+        for label, widget in self._object_rows:
+            self._set_row_visible(label, widget, is_object)
         for label, widget in self._https_rows:
-            self._set_row_visible(label, widget, is_https)
+            self._set_row_visible(label, widget, is_rest)
 
         if is_local:
             self.path_input.setPlaceholderText("e.g. D:\\Backups\\restic-repo")
-        elif not is_sftp and not is_https:
-            self.path_input.setPlaceholderText("Restic repository URL / path")
         self._sync_browse_enabled()
-        if is_https:
+        if is_rest:
             self._on_https_auth_changed()
         # Qt grows the window when fields appear but does not shrink when they hide.
         QTimer.singleShot(0, self._fit_dialog_to_content)
@@ -2129,7 +2738,9 @@ class RepositoryDialog(FramedDialog):
 
     def _on_https_auth_changed(self, *_args):
         """Show HTTP username/password based on auth mode."""
-        if self._repo_type_id() not in ("https", "rest"):
+        if not (
+            self._repo_type_id() == "cloud" and self._cloud_provider_id() == "rest"
+        ) and self._repo_type_id() not in ("https", "rest"):
             return
         mode = self._https_auth_id()
         need_user = mode == "userpass"
@@ -2177,6 +2788,20 @@ class RepositoryDialog(FramedDialog):
         self.password_input.setEchoMode(mode)
         if hasattr(self, "https_pass_input"):
             self.https_pass_input.setEchoMode(mode)
+        if hasattr(self, "network_pass_input"):
+            self.network_pass_input.setEchoMode(mode)
+        if hasattr(self, "object_secret_input"):
+            self.object_secret_input.setEchoMode(mode)
+
+    def _selected_cloud_remote(self) -> str:
+        data = self.cloud_remote_combo.currentData()
+        if data:
+            return str(data).strip().rstrip(":")
+        text = self.cloud_remote_combo.currentText().strip()
+        # Strip "name (type)" display form
+        if " (" in text and text.endswith(")"):
+            text = text.split(" (", 1)[0].strip()
+        return text.rstrip(":")
 
     def _build_location(self) -> str:
         """Resolved restic -r location from the current form."""
@@ -2189,6 +2814,27 @@ class RepositoryDialog(FramedDialog):
                 port=self.sftp_port_spin.value(),
                 absolute=self.sftp_absolute_check.isChecked(),
             )
+        if repo_type == "network":
+            return network_share.build_unc_path(
+                self.network_server_input.text(),
+                self.network_share_input.text(),
+                self.network_subpath_input.text(),
+            )
+        if repo_type == "cloud":
+            if self._cloud_provider_id() == "rest":
+                return build_rest_repo_url(self.https_url_input.text())
+            provider = self._cloud_provider_id()
+            if provider in ("s3", "b2", "azure", "wasabi"):
+                return rclone_util.build_object_storage_url(
+                    provider,
+                    self.object_bucket_input.text(),
+                    self.cloud_path_input.text(),
+                    endpoint=self.object_endpoint_input.text(),
+                )
+            return rclone_util.build_rclone_repo_url(
+                self._selected_cloud_remote(),
+                self.cloud_path_input.text(),
+            )
         if repo_type in ("https", "rest"):
             return build_rest_repo_url(self.https_url_input.text())
         return self.path_input.text().strip()
@@ -2196,15 +2842,47 @@ class RepositoryDialog(FramedDialog):
     def _form_repo_stub(self) -> dict:
         """Temporary repo dict from the form (for test connection env/args)."""
         repo_type = self._repo_type_id()
+        provider = self._cloud_provider_id() if repo_type == "cloud" else ""
+        stored_type = repo_type
+        if repo_type == "cloud" and provider == "rest":
+            stored_type = "https"
         stub = {
-            "type": repo_type,
+            "type": stored_type if stored_type != "cloud" else "cloud",
             "path": self._build_location(),
             "ssh_key": self.sftp_key_input.text().strip() if repo_type == "sftp" else "",
+            "cloud_provider": provider,
+            "rclone_remote": self._selected_cloud_remote() if repo_type == "cloud" else "",
         }
-        if repo_type in ("https", "rest"):
+        if repo_type == "network":
+            stub["type"] = "network"
+            stub["network_server"] = self.network_server_input.text().strip()
+            stub["network_share"] = self.network_share_input.text().strip()
+            stub["network_subpath"] = self.network_subpath_input.text().strip()
+            stub["network_user"] = self.network_user_input.text().strip()
+            stub["network_password_plain"] = self.network_pass_input.text()
+            stub["network_drive"] = (
+                self.network_drive_combo.currentData()
+                if self.network_drive_combo.currentData() is not None
+                else ""
+            ) or ""
+            stub["network_connect_only"] = self.network_connect_only_check.isChecked()
+            stub["path"] = network_share.build_unc_path(
+                stub["network_server"],
+                stub["network_share"],
+                stub["network_subpath"],
+            )
+        if stored_type in ("https", "rest") or provider == "rest":
+            stub["type"] = "https"
             stub["rest_auth"] = self._https_auth_id()
             stub["rest_user"] = self.https_user_input.text().strip()
             stub["rest_password_plain"] = self.https_pass_input.text()
+        # Native object-storage fields (Phase 3)
+        if repo_type == "cloud" and provider in ("s3", "b2", "azure", "wasabi"):
+            stub["object_key_id"] = getattr(self, "object_key_input", QLineEdit()).text().strip() if hasattr(self, "object_key_input") else ""
+            stub["object_secret_plain"] = getattr(self, "object_secret_input", QLineEdit()).text() if hasattr(self, "object_secret_input") else ""
+            stub["object_endpoint"] = getattr(self, "object_endpoint_input", QLineEdit()).text().strip() if hasattr(self, "object_endpoint_input") else ""
+            stub["object_region"] = getattr(self, "object_region_input", QLineEdit()).text().strip() if hasattr(self, "object_region_input") else ""
+            stub["object_bucket"] = getattr(self, "object_bucket_input", QLineEdit()).text().strip() if hasattr(self, "object_bucket_input") else ""
         return stub
 
     def _validate_form(self) -> Optional[str]:
@@ -2218,19 +2896,38 @@ class RepositoryDialog(FramedDialog):
                 return "Please enter the SSH username."
             if not self.sftp_remote_input.text().strip():
                 return "Please enter the remote path for the repository."
-        elif repo_type in ("https", "rest"):
-            url = self.https_url_input.text().strip()
-            if not url:
-                return "Please enter the HTTPS / REST server URL."
-            mode = self._https_auth_id()
-            if mode == "userpass":
-                if not self.https_user_input.text().strip():
-                    return "Please enter the HTTP username."
-                if not self.https_pass_input.text():
-                    return "Please enter the HTTP password."
-            elif mode == "password":
-                if not self.https_pass_input.text():
-                    return "Please enter the HTTP password."
+        elif repo_type == "network":
+            if not self.network_server_input.text().strip():
+                return "Please enter the server name or IP."
+            if not self.network_share_input.text().strip():
+                return "Please enter the share name."
+        elif repo_type == "cloud":
+            provider = self._cloud_provider_id()
+            if provider == "rest":
+                url = self.https_url_input.text().strip()
+                if not url:
+                    return "Please enter the HTTPS / REST server URL."
+                mode = self._https_auth_id()
+                if mode == "userpass":
+                    if not self.https_user_input.text().strip():
+                        return "Please enter the HTTP username."
+                    if not self.https_pass_input.text():
+                        return "Please enter the HTTP password."
+                elif mode == "password":
+                    if not self.https_pass_input.text():
+                        return "Please enter the HTTP password."
+            elif provider in ("s3", "b2", "azure", "wasabi"):
+                if not self.object_bucket_input.text().strip():
+                    return "Please enter the bucket or container name."
+                if not self.object_key_input.text().strip():
+                    return "Please enter the access key / account id."
+                if not self.object_secret_input.text():
+                    return "Please enter the secret key / account key."
+            else:
+                if not self._selected_cloud_remote():
+                    return "Please sign in or select a cloud connection."
+                if not self.cloud_path_input.text().strip():
+                    return "Please enter a backup location (folder path) on the provider."
         elif not self.path_input.text().strip():
             return "Please enter a repository path."
         if not self.password_input.text():
@@ -2240,7 +2937,7 @@ class RepositoryDialog(FramedDialog):
     def accept(self):
         err = self._validate_form()
         if err:
-            QMessageBox.warning(self, "Repository", err)
+            show_framed_message(self, "Repository", err, kind="warning")
             return
         super().accept()
     
@@ -2248,11 +2945,39 @@ class RepositoryDialog(FramedDialog):
         """Test repository connection"""
         err = self._validate_form()
         if err:
-            QMessageBox.warning(self, "Test Connection", err)
+            show_framed_message(self, "Test Connection", err, kind="warning")
             return
 
-        path = self._build_location()
         password = self.password_input.text()
+        stub = self._form_repo_stub()
+        self._test_network_drive = ""
+        self._test_network_stub = None
+
+        if stub.get("type") == "network":
+            try:
+                ok, msg, drive = network_share.mount_share(
+                    stub,
+                    username=stub.get("network_user") or "",
+                    password=stub.get("network_password_plain") or "",
+                )
+                if not ok:
+                    show_framed_message(
+                        self,
+                        "Network Share",
+                        "Could not connect to the share.",
+                        kind="error",
+                        details=msg,
+                    )
+                    return
+                self._test_network_drive = drive
+                self._test_network_stub = stub
+                stub = dict(stub)
+                stub["path"] = network_share.effective_repo_path(
+                    stub, mounted_drive=drive
+                )
+            except Exception as exc:
+                show_framed_message(self, "Network Share", str(exc), kind="error")
+                return
         
         self._test_progress, _, _ = make_framed_progress_dialog(
             self,
@@ -2263,17 +2988,33 @@ class RepositoryDialog(FramedDialog):
         self._test_progress.show()
         QApplication.processEvents()
         
-        env = build_repo_env(self._form_repo_stub(), password)
-        args = repo_restic_prefix(self._form_repo_stub()) + ["snapshots", "--latest", "1"]
+        env = build_repo_env(
+            stub,
+            password,
+            password_manager=self.password_manager,
+            settings_manager=self.settings_manager,
+        )
+        args = repo_restic_prefix(stub) + ["snapshots", "--latest", "1"]
         
         restic_cmd = self.parent().restic_cmd
         
-        self._test_worker = ResticWorker(restic_cmd, args, env, timeout=30)
+        self._test_worker = ResticWorker(restic_cmd, args, env, timeout=120)
         self._test_worker.finished.connect(self._on_test_completed)
         self._test_worker.start()
     
     def _on_test_completed(self, success, stdout, stderr):
         """Callback when connection test completes"""
+        # Disconnect connect-only / test mount
+        if getattr(self, "_test_network_stub", None) is not None:
+            try:
+                network_share.unmount_share(
+                    self._test_network_stub,
+                    mounted_drive=getattr(self, "_test_network_drive", "") or "",
+                )
+            except Exception:
+                pass
+            self._test_network_stub = None
+
         # Close progress dialog
         if hasattr(self, '_test_progress'):
             try:
@@ -2285,19 +3026,23 @@ class RepositoryDialog(FramedDialog):
         if success:
             self._test_result = True
             self._test_error = ""
-            QMessageBox.information(
-                self, 
-                "Connection Successful", 
-                "Successfully connected to the repository!\n\nThe repository is accessible and the password is correct."
+            show_framed_message(
+                self,
+                "Connection Successful",
+                "Successfully connected to the repository.\n\n"
+                "The repository is accessible and the password is correct.",
+                kind="info",
             )
         else:
             self._test_result = False
             self._test_error = (stderr or "Unknown error").strip()
-            error_msg = self._test_error or "Unknown error"
-            QMessageBox.warning(
-                self, 
-                "Connection Failed", 
-                f"Failed to connect to repository:\n\n{error_msg}\n\nPlease check the path and password."
+            summary, details = format_repository_test_failure(stderr, stdout)
+            show_framed_message(
+                self,
+                "Connection Failed",
+                summary,
+                kind="error",
+                details=details,
             )
     
     def get_repository_data(self):
@@ -2307,9 +3052,15 @@ class RepositoryDialog(FramedDialog):
             encrypted_password = self.password_manager.encrypt(self.password_input.text())
 
         repo_type = self._repo_type_id()
+        provider = self._cloud_provider_id() if repo_type == "cloud" else ""
+        # Persist HTTPS REST as type=https for compatibility with existing code paths
+        stored_type = repo_type
+        if repo_type == "cloud" and provider == "rest":
+            stored_type = "https"
+
         data = {
             "name": self.name_input.text().strip(),
-            "type": repo_type,
+            "type": stored_type,
             "path": self._build_location(),
             "password": encrypted_password,
         }
@@ -2328,17 +3079,37 @@ class RepositoryDialog(FramedDialog):
             "rest_user",
             "rest_password",
         )
+        network_keys = (
+            "network_server",
+            "network_share",
+            "network_subpath",
+            "network_user",
+            "network_password",
+            "network_drive",
+            "network_connect_only",
+        )
+        cloud_keys = (
+            "cloud_provider",
+            "cloud_path",
+            "rclone_remote",
+            "rclone_config",
+            "object_bucket",
+            "object_key_id",
+            "object_secret",
+            "object_endpoint",
+            "object_region",
+        )
 
-        if repo_type == "sftp":
+        if stored_type == "sftp":
             data["sftp_host"] = self.sftp_host_input.text().strip()
             data["sftp_port"] = int(self.sftp_port_spin.value())
             data["sftp_user"] = self.sftp_user_input.text().strip()
             data["sftp_remote_path"] = self.sftp_remote_input.text().strip()
             data["sftp_absolute"] = self.sftp_absolute_check.isChecked()
             data["ssh_key"] = self.sftp_key_input.text().strip()
-            for key in https_keys:
+            for key in https_keys + network_keys + cloud_keys:
                 data.pop(key, None)
-        elif repo_type in ("https", "rest"):
+        elif stored_type in ("https", "rest"):
             data["https_url"] = self.https_url_input.text().strip()
             data["rest_auth"] = self._https_auth_id()
             data["rest_user"] = self.https_user_input.text().strip()
@@ -2346,10 +3117,63 @@ class RepositoryDialog(FramedDialog):
             data["rest_password"] = (
                 self.password_manager.encrypt(http_pass) if http_pass else ""
             )
-            for key in sftp_keys:
+            data["cloud_provider"] = "rest"
+            for key in sftp_keys + network_keys:
+                data.pop(key, None)
+            for key in ("cloud_path", "rclone_remote", "rclone_config"):
+                data.pop(key, None)
+        elif stored_type == "network":
+            data["network_server"] = self.network_server_input.text().strip()
+            data["network_share"] = self.network_share_input.text().strip()
+            data["network_subpath"] = self.network_subpath_input.text().strip()
+            data["network_user"] = self.network_user_input.text().strip()
+            net_pass = self.network_pass_input.text()
+            data["network_password"] = (
+                self.password_manager.encrypt(net_pass) if net_pass else ""
+            )
+            data["network_drive"] = (
+                self.network_drive_combo.currentData()
+                if self.network_drive_combo.currentData() is not None
+                else ""
+            ) or ""
+            data["network_connect_only"] = self.network_connect_only_check.isChecked()
+            # Always store canonical UNC; runtime may remap via drive letter
+            data["path"] = network_share.build_unc_path(
+                data["network_server"],
+                data["network_share"],
+                data["network_subpath"],
+            )
+            for key in sftp_keys + https_keys + cloud_keys:
+                data.pop(key, None)
+        elif stored_type == "cloud":
+            data["cloud_provider"] = provider
+            data["cloud_path"] = self.cloud_path_input.text().strip()
+            if provider in ("s3", "b2", "azure", "wasabi"):
+                data["object_bucket"] = self.object_bucket_input.text().strip()
+                data["object_key_id"] = self.object_key_input.text().strip()
+                secret = self.object_secret_input.text()
+                data["object_secret"] = (
+                    self.password_manager.encrypt(secret) if secret else ""
+                )
+                data["object_endpoint"] = self.object_endpoint_input.text().strip()
+                data["object_region"] = self.object_region_input.text().strip()
+                for key in ("rclone_remote", "rclone_config"):
+                    data.pop(key, None)
+            else:
+                data["rclone_remote"] = self._selected_cloud_remote()
+                data["rclone_config"] = rclone_util.app_rclone_config_path()
+                for key in (
+                    "object_bucket",
+                    "object_key_id",
+                    "object_secret",
+                    "object_endpoint",
+                    "object_region",
+                ):
+                    data.pop(key, None)
+            for key in sftp_keys + https_keys + network_keys:
                 data.pop(key, None)
         else:
-            for key in sftp_keys + https_keys:
+            for key in sftp_keys + https_keys + network_keys + cloud_keys:
                 data.pop(key, None)
 
         # Preserve identity colour + prior check metadata on edit.
@@ -3112,6 +3936,7 @@ class ResticSettingsManager:
         self.defaults = {
             "theme": "slate",
             "restic_path": "restic",
+            "rclone_path": "rclone",
             "repositories": [],
             "backup_jobs": [],
             "last_repository": "",
@@ -3136,6 +3961,9 @@ class ResticSettingsManager:
             "health_restore_test_interval_unit": "days",
             "health_default_check_level": "quick",
             "health_restore_test_max_files": 5,
+            # If set, contains an encrypted blob of the app's `rclone.conf`
+            # (cloud OAuth tokens). Runtime decryption creates a temp config file.
+            "rclone_conf_encrypted": "",
         }
         self.settings = self.load_settings()
     
@@ -3175,6 +4003,7 @@ class SchedulerManager:
             repo,
             "",
             password_manager=self.settings_manager.password_manager,
+            settings_manager=self.settings_manager,
         )
         lines = []
         user = env.get("RESTIC_REST_USERNAME")
@@ -3189,6 +4018,28 @@ class SchedulerManager:
         if not lines:
             return "# (no HTTP auth)"
         return "\n".join(lines)
+
+    def _powershell_rclone_env_block(self, repo: dict) -> str:
+        """Emit PowerShell lines so scheduled restic can find rclone for cloud repos."""
+        if not rclone_util.is_cloud_repo(repo) and (repo.get("type") or "").lower() != "cloud":
+            return "# (no rclone env)"
+        rclone_path = rclone_util.resolve_rclone_path(self.settings_manager.get)
+        cfg = (repo.get("rclone_config") or "").strip() or rclone_util.app_rclone_config_path()
+        lines = []
+        if rclone_path:
+            bin_dir = os.path.dirname(os.path.abspath(rclone_path))
+            if bin_dir and os.path.isdir(bin_dir):
+                safe_dir = bin_dir.replace('"', '`"')
+                lines.append(f'$env:Path = "{safe_dir};" + $env:Path')
+        if cfg:
+            safe_cfg = str(cfg).replace('"', '`"')
+            lines.append(f'$env:RCLONE_CONFIG = "{safe_cfg}"')
+        if not lines:
+            return "# (no rclone env)"
+        return "\n".join(lines)
+
+    def _powershell_network_mount_block(self, repo: dict) -> str:
+        return network_share.powershell_mount_block(repo, password_ps_var="$netPassword")
 
     def create_scheduled_task(self, job_name, job_data):
         """Create a scheduled task/cron job for a backup job"""
@@ -3242,6 +4093,113 @@ class SchedulerManager:
             script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
             os.makedirs(script_dir, exist_ok=True)
             script_file = os.path.join(script_dir, f"{task_name}.ps1")
+
+            # Multi-repo scheduled jobs: use the app's CLI runner which already
+            # supports sequential backups to multiple repositories.
+            repositories_to_backup = []
+            if "repositories" in job_data and job_data["repositories"]:
+                repositories_to_backup = job_data["repositories"]
+            elif "repository" in job_data and job_data["repository"]:
+                repositories_to_backup = [job_data["repository"]]
+
+            if len(repositories_to_backup) > 1:
+                script_path = os.path.abspath(sys.argv[0])
+                python_exe = sys.executable
+
+                ps_script = f"""# Restic Backup Script for job: {job_name}
+# Generated by Restic Desktop (multi-repo)
+
+$ErrorActionPreference = "Stop"
+
+function Show-ToastNotification {{
+    param(
+        [string]$Title,
+        [string]$Message
+    )
+    try {{
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+        $toastXml = @"
+<toast>
+    <visual>
+        <binding template="ToastText02">
+            <text id="1">$Title</text>
+            <text id="2">$Message</text>
+        </binding>
+    </visual>
+    <audio src="ms-winsoundevent:Notification.Default"/>
+</toast>
+"@
+        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $xml.LoadXml($toastXml)
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Restic Desktop").Show($toast)
+    }} catch {{
+        Write-Host "Note: Could not show toast notification"
+    }}
+}}
+
+$startTime = Get-Date
+$exitCode = 1
+try {{
+    Write-Host "Starting backup job (multi-repo): {job_name}"
+    & "{python_exe}" "{script_path}" --run-job "{job_name}"
+    $exitCode = $LASTEXITCODE
+}} catch {{
+    Write-Host "Error running backup: $_"
+    $exitCode = 1
+}} finally {{
+    $duration = [Math]::Max(0, [int]((Get-Date) - $startTime).TotalSeconds)
+}}
+
+if ($exitCode -eq 0) {{
+    Show-ToastNotification "Backup Completed ✓" "Job '{job_name}' completed successfully"
+    exit 0
+}} else {{
+    Show-ToastNotification "Backup Failed ✗" "Job '{job_name}' failed with exit code: $exitCode"
+    exit $exitCode
+}}
+"""
+
+                with open(script_file, "w", encoding="utf-8") as f:
+                    f.write(ps_script)
+
+                command = f'powershell.exe -ExecutionPolicy Bypass -File "{script_file}"'
+
+                frequency = schedule.get("frequency", "daily")
+                time_str = schedule.get("time", "02:00")
+
+                schtasks_cmd = ["schtasks", "/CREATE", "/TN", task_name, "/TR", command]
+                if frequency == "daily":
+                    schtasks_cmd.extend(["/SC", "DAILY"])
+                elif frequency == "weekly":
+                    days = schedule.get("days", [])
+                    if not days:
+                        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                    day_map = {"Mon": "MON", "Tue": "TUE", "Wed": "WED", "Thu": "THU",
+                               "Fri": "FRI", "Sat": "SAT", "Sun": "SUN"}
+                    schtasks_days = ",".join([day_map.get(d, d) for d in days])
+                    schtasks_cmd.extend(["/SC", "WEEKLY", "/D", schtasks_days])
+                elif frequency == "monthly":
+                    day_of_month = schedule.get("day_of_month", 1)
+                    schtasks_cmd.extend(["/SC", "MONTHLY", "/D", str(day_of_month)])
+                else:
+                    schtasks_cmd.extend(["/SC", "DAILY"])
+
+                schtasks_cmd.extend(["/ST", time_str, "/F"])
+
+                result = subprocess.run(
+                    schtasks_cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=get_subprocess_creation_flags(),
+                )
+
+                if result.returncode == 0:
+                    return True, f"Scheduled multi-repo task '{task_name}' created successfully"
+                return False, f"Failed to create task: {result.stderr}"
             
             # Get repository name (support both old and new format)
             repo_name = None
@@ -3320,6 +4278,45 @@ class SchedulerManager:
             note = ""
             if "repositories" in job_data and len(job_data["repositories"]) > 1:
                 note = f"\n# Note: This job has {len(job_data['repositories'])} repositories configured, but scheduled tasks only backup to the first one."
+
+            # Option B (encrypted-at-rest rclone.conf): decrypt into a temp config file
+            # for this scheduled run, then set RCLONE_CONFIG to point at it.
+            use_encrypted_rclone = bool(
+                (self.settings_manager.get("rclone_conf_encrypted") or "").strip()
+            )
+            needs_rclone_cfg = rclone_util.is_cloud_repo(repo) or (
+                (repo.get("type") or "").lower() == "cloud"
+            )
+            rclone_env_block = self._powershell_rclone_env_block(repo)
+            rclone_cleanup_block = ""
+            if use_encrypted_rclone and needs_rclone_cfg:
+                rclone_path_for_bin = rclone_util.resolve_rclone_path(
+                    self.settings_manager.get
+                )
+                rclone_bin_dir = (
+                    os.path.dirname(os.path.abspath(rclone_path_for_bin))
+                    if rclone_path_for_bin
+                    else ""
+                )
+                safe_bin_dir = str(rclone_bin_dir).replace('"', '`"')
+                rclone_env_block = f'''
+# Decrypt encrypted rclone.conf for this scheduled run
+$rcloneCfg = Join-Path $env:TEMP "{task_name}_rclone.conf"
+try {{
+    & "{python_exe}" "{script_path}" --decrypt-rclone-conf --rclone-conf-out "$rcloneCfg" | Out-Null
+}} catch {{
+    Write-Host "Error: Failed to decrypt rclone.conf for job: {job_name}"
+    exit 1
+}}
+$env:RCLONE_CONFIG = $rcloneCfg
+'''
+                if safe_bin_dir:
+                    rclone_env_block += (
+                        f'$env:Path = "{safe_bin_dir};" + $env:Path\n'
+                    )
+                rclone_cleanup_block = (
+                    "if ($rcloneCfg) {{ Remove-Item $rcloneCfg -ErrorAction SilentlyContinue }}\n"
+                )
             
             # Create encrypted password file using Windows DPAPI
             password_file = os.path.join(script_dir, f"{task_name}.password")
@@ -3342,13 +4339,80 @@ $password | ConvertFrom-SecureString | Out-File -FilePath "{password_file}" -Enc
                         return False, f"Failed to encrypt password: {result.stderr}"
                 except Exception as e:
                     return False, f"Error encrypting password: {str(e)}"
+
+            # Network share password (connect-only) — separate DPAPI file
+            network_password_file = ""
+            net_pass = ""
+            if network_share.connect_only_enabled(repo) and repo.get("network_password"):
+                try:
+                    net_pass = self.settings_manager.password_manager.decrypt(
+                        repo.get("network_password")
+                    )
+                except Exception:
+                    net_pass = ""
+            if network_share.connect_only_enabled(repo) and net_pass:
+                network_password_file = os.path.join(
+                    script_dir, f"{task_name}.network.password"
+                )
+                ps_encrypt_net = f'''
+$password = ConvertTo-SecureString -String "{net_pass}" -AsPlainText -Force
+$password | ConvertFrom-SecureString | Out-File -FilePath "{network_password_file}" -Encoding utf8
+'''
+                try:
+                    result = subprocess.run(
+                        ["powershell.exe", "-Command", ps_encrypt_net],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=get_subprocess_creation_flags(),
+                    )
+                    if result.returncode != 0:
+                        return False, f"Failed to encrypt network password: {result.stderr}"
+                except Exception as e:
+                    return False, f"Error encrypting network password: {str(e)}"
+
+            # For connect-only + drive letter, bake the mapped path into -r
+            sched_repo = dict(repo)
+            if network_share.is_network_repo(sched_repo):
+                sched_repo["path"] = network_share.effective_repo_path(sched_repo)
+            restic_args = repo_restic_prefix(sched_repo) + ["backup"]
+            # (paths/tags/etc. already appended above onto previous restic_args — rebuild)
+            restic_args = repo_restic_prefix(sched_repo) + ["backup"]
+            restic_args.extend(job_data["paths"])
+            if job_data.get("tags"):
+                for tag in job_data["tags"]:
+                    restic_args.extend(["--tag", tag])
+            if job_data.get("exclude_patterns"):
+                for pattern in job_data["exclude_patterns"]:
+                    restic_args.extend(["--exclude", pattern])
+            if job_data.get("exclude_caches", True):
+                restic_args.append("--exclude-caches")
+            if job_data.get("pack_size", 0) > 0:
+                restic_args.extend(["--pack-size", str(job_data["pack_size"])])
+            if job_data.get("one_file_system", False):
+                restic_args.append("--one-file-system")
+            if job_data.get("exclude_if_present"):
+                restic_args.extend(["--exclude-if-present", job_data["exclude_if_present"]])
+            compression = job_data.get("compression", "auto")
+            if compression and compression != "off":
+                restic_args.extend(["--compression", compression])
+            if job_data.get("no_cache", False):
+                restic_args.append("--no-cache")
+            if job_data.get("ignore_inode", False):
+                restic_args.append("--ignore-inode")
+            if job_data.get("skip_if_unchanged", True):
+                restic_args.append("--skip-if-unchanged")
             
             ps_script = f"""# Restic Backup Script for job: {job_name}
 # Generated by Restic Desktop
 # Repository: {repo['path']}{note}
 
-# Set error action preference
+            # Set error action preference
 $ErrorActionPreference = "Stop"
+
+            # Temp decrypted rclone.conf path (used only when encryption is enabled).
+            $rcloneCfg = ""
 
 # Function to show Windows toast notification
 function Show-ToastNotification {{
@@ -3396,8 +4460,22 @@ if (Test-Path $passwordFile) {{
     exit 1
 }}
 
+# Optional network-share password + connect-only mount
+$netPassword = ""
+$networkPasswordFile = "{network_password_file}"
+if ($networkPasswordFile -and (Test-Path $networkPasswordFile)) {{
+    $secureNet = Get-Content $networkPasswordFile | ConvertTo-SecureString
+    $BSTR2 = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureNet)
+    $netPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR2)
+    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR2)
+}}
+{self._powershell_network_mount_block(repo)}
+
 # Optional HTTP Basic Auth for HTTPS / REST server repositories
 {self._powershell_rest_auth_block(repo)}
+
+# rclone PATH / config for cloud repositories
+{rclone_env_block}
 
 # Run restic backup
 $resticPath = "{restic_path}"
@@ -3443,6 +4521,9 @@ try {{
     Remove-Item Env:RESTIC_PASSWORD -ErrorAction SilentlyContinue
     Remove-Item Env:RESTIC_REST_USERNAME -ErrorAction SilentlyContinue
     Remove-Item Env:RESTIC_REST_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:RCLONE_CONFIG -ErrorAction SilentlyContinue
+    {rclone_cleanup_block}
+    {network_unmount}
 }}
 
 if ($exitCode -eq 0) {{
@@ -3461,6 +4542,7 @@ if ($exitCode -eq 0) {{
                 pause_code=pause_code,
                 python_exe=python_exe,
                 manager_script=script_path,
+                network_unmount=network_share.powershell_unmount_block(repo),
             )
             
             # Write PowerShell script to file
@@ -3854,6 +4936,9 @@ class ResticManagerWindow(QMainWindow):
         self.title_bar.refresh_clicked.connect(self._title_bar_refresh)
         self.title_bar.add_repository_clicked.connect(self.add_repository)
         self.title_bar.add_backup_job_clicked.connect(self.add_backup_job)
+        self.title_bar.add_destination_sync_clicked.connect(
+            self.open_add_destination_sync_wizard
+        )
         self.title_bar.browse_files_clicked.connect(self.mount_and_browse_snapshot)
         self.title_bar.start_restore_clicked.connect(self.start_restore)
         self.title_bar.dry_run_retention_clicked.connect(
@@ -3964,7 +5049,77 @@ class ResticManagerWindow(QMainWindow):
             repo or {},
             password or "",
             password_manager=self.settings_manager.password_manager,
+            settings_manager=self.settings_manager,
         )
+
+    def _network_password_for_repo(self, repo: Optional[dict]) -> str:
+        repo = repo or {}
+        plain = repo.get("network_password_plain")
+        if plain:
+            return str(plain)
+        enc = repo.get("network_password") or ""
+        if not enc:
+            return ""
+        try:
+            return self.settings_manager.password_manager.decrypt(enc)
+        except Exception:
+            return ""
+
+    def _begin_network_share_access(self, repo: dict) -> Tuple[dict, Optional[str]]:
+        """
+        Mount connect-only network shares. Returns (effective_repo, error_or_None).
+        Stores cleanup state on self._network_access_stack.
+        """
+        repo = dict(repo or {})
+        if not network_share.is_network_repo(repo):
+            return repo, None
+        if not network_share.connect_only_enabled(repo):
+            repo["path"] = network_share.effective_repo_path(repo)
+            return repo, None
+        try:
+            ok, msg, drive = network_share.mount_share(
+                repo,
+                username=repo.get("network_user") or "",
+                password=self._network_password_for_repo(repo),
+            )
+            if not ok:
+                return repo, msg or "Could not connect to network share."
+            repo["path"] = network_share.effective_repo_path(repo, mounted_drive=drive)
+            stack = getattr(self, "_network_access_stack", None)
+            if stack is None:
+                self._network_access_stack = []
+                stack = self._network_access_stack
+            stack.append({"repo": repo, "drive": drive})
+            return repo, None
+        except Exception as exc:
+            return repo, str(exc)
+
+    def _end_network_share_access(self, repo: Optional[dict] = None) -> None:
+        stack = getattr(self, "_network_access_stack", None)
+        if not stack:
+            return
+        if repo is None:
+            while stack:
+                item = stack.pop()
+                try:
+                    network_share.unmount_share(
+                        item["repo"], mounted_drive=item.get("drive") or ""
+                    )
+                except Exception:
+                    pass
+            return
+        # Pop matching entry (by name) from the end
+        name = (repo or {}).get("name")
+        for i in range(len(stack) - 1, -1, -1):
+            if stack[i]["repo"].get("name") == name or name is None:
+                item = stack.pop(i)
+                try:
+                    network_share.unmount_share(
+                        item["repo"], mounted_drive=item.get("drive") or ""
+                    )
+                except Exception:
+                    pass
+                break
     
     def create_sidebar(self, main_layout):
         """Create modern icon navigation sidebar"""
@@ -4272,6 +5427,7 @@ class ResticManagerWindow(QMainWindow):
                     repo,
                     password,
                     password_manager=self.settings_manager.password_manager,
+                    settings_manager=self.settings_manager,
                 )
                 args = repo_restic_prefix(repo) + ["snapshots", "--json"]
                 
@@ -4581,6 +5737,7 @@ class ResticManagerWindow(QMainWindow):
                     repo_data,
                     password,
                     password_manager=self.settings_manager.password_manager,
+                    settings_manager=self.settings_manager,
                 )
                 args = repo_restic_prefix(repo_data) + ["init"]
                 
@@ -4604,7 +5761,12 @@ class ResticManagerWindow(QMainWindow):
                 self.refresh_repository_list()
                 self.update_repository_combos()
                 self.log(f"Added repository: {repo_data['name']}")
-                QMessageBox.information(self, "Success", f"Repository '{repo_data['name']}' added successfully!")
+                show_framed_message(
+                    self,
+                    "Repository Added",
+                    f"Repository “{repo_data['name']}” was added successfully.",
+                    kind="info",
+                )
                 if callable(on_added):
                     try:
                         on_added(repo_data["name"])
@@ -4654,15 +5816,13 @@ class ResticManagerWindow(QMainWindow):
             self.refresh_repository_list()
             self.update_repository_combos()
             
-            # Show success with initialization details
-            details = f"Repository '{repo_data['name']}' has been initialized and added successfully!\n\n"
-            if stdout:
-                details += f"Output:\n{stdout[:500]}"  # Show first 500 chars
-            
-            QMessageBox.information(
-                self, 
-                "Repository Initialized", 
-                details
+            show_framed_message(
+                self,
+                "Repository Initialized",
+                f"Repository “{repo_data['name']}” has been initialized and added.",
+                kind="info",
+                min_width=480,
+                details=(stdout or "").strip()[:500],
             )
             self.log(f"Successfully initialized and added repository: {repo_data['name']}")
             callback = getattr(self, "_on_repo_added_callback", None)
@@ -4675,16 +5835,20 @@ class ResticManagerWindow(QMainWindow):
         else:
             self._on_repo_added_callback = None
             error_msg = stderr if stderr else "Unknown error"
-            # Also include stdout in case there are warnings
-            full_msg = f"Failed to initialize repository:\n\n{error_msg}"
+            summary = (
+                "The repository could not be initialized and was not added.\n\n"
+                f"Path: {repo_data['path']}"
+            )
+            details_parts = [error_msg]
             if stdout:
-                full_msg += f"\n\nAdditional output:\n{stdout[:300]}"
-            full_msg += f"\n\nRepository path: {repo_data['path']}\n\nThe repository was not added."
-            
-            QMessageBox.warning(
-                self, 
-                "Initialization Failed", 
-                full_msg
+                details_parts.append(stdout)
+            show_framed_message(
+                self,
+                "Initialization Failed",
+                summary,
+                kind="error",
+                min_width=480,
+                details="\n\n".join(details_parts),
             )
             self.log(f"Failed to initialize repository {repo_data['name']}: {error_msg}")
     
@@ -4848,10 +6012,14 @@ class ResticManagerWindow(QMainWindow):
                 return None, None, f"Could not decrypt repository credentials: {exc}"
 
         try:
+            repo, net_err = self._begin_network_share_access(repo)
+            if net_err:
+                return None, None, net_err
             env = build_repo_env(
                 repo,
                 password,
                 password_manager=self.settings_manager.password_manager,
+                settings_manager=self.settings_manager,
             )
             args = repo_restic_prefix(repo) + ["snapshots", "--latest", "1"]
         except Exception as exc:
@@ -4867,6 +6035,7 @@ class ResticManagerWindow(QMainWindow):
         automatic: bool,
     ) -> bool:
         """Persist one connectivity result and emit appropriately quiet feedback."""
+        self._end_network_share_access({"name": name})
         repositories = self.settings_manager.get("repositories") or []
         index = next(
             (i for i, repo in enumerate(repositories) if repo.get("name") == name),
@@ -5077,24 +6246,242 @@ class ResticManagerWindow(QMainWindow):
         path = repo.get("path") or "—"
         repo_type = repo.get("type") or "local"
 
-        if not self._framed_confirm(
-            title="Remove Repository",
-            heading=f"Remove “{name}” from the list?",
-            body="This only removes the repository from Restic Desktop. Backup data on disk is not deleted.",
-            note="You can add the repository again later if the path and password are still available.",
-            meta=[
-                ("Name", name),
-                ("Type", repo_type),
-                ("Path", path),
-            ],
-            confirm_label="Remove",
-            danger=True,
+        # Destructive options (cloud/local).
+        remove_configs_default = bool(
+            (repo_type or "").lower() in ("cloud", "s3", "onedrive", "azure", "b2", "wasabi")
+            or (repo.get("rclone_remote") or "").strip()
+        )
+
+        include_repo_delete_default = (repo_type or "").lower() == "local"
+
+        dialog = FramedDialog(
+            "Remove Repository",
+            self,
+            show_maximize=False,
+            show_minimize=False,
+        )
+        dialog.setMinimumWidth(620)
+
+        layout = dialog.body_layout
+        layout.setContentsMargins(16, 12, 16, 16)
+        layout.setSpacing(12)
+
+        heading_lbl = QLabel(f"Remove “{name}” from the list?")
+        heading_lbl.setObjectName("pageTitle")
+        heading_lbl.setStyleSheet("font-size: 18px;")
+        heading_lbl.setWordWrap(True)
+        layout.addWidget(heading_lbl)
+
+        body_lbl = QLabel(
+            "Choose what you want to remove. By default this removes the repository from Restic Desktop only."
+        )
+        body_lbl.setObjectName("pageSubtitle")
+        body_lbl.setWordWrap(True)
+        layout.addWidget(body_lbl)
+
+        meta = QFrame()
+        meta.setObjectName("browseMetaStrip")
+        meta_row = QHBoxLayout(meta)
+        meta_row.setContentsMargins(14, 10, 14, 10)
+        meta_row.setSpacing(20)
+        for i, (label, value) in enumerate(
+            [("Name", name), ("Type", repo_type), ("Path", path)]
         ):
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            lab = QLabel(label)
+            lab.setObjectName("browseMetaLabel")
+            val = QLabel(str(value))
+            val.setObjectName("browseMetaValue")
+            val.setWordWrap(True)
+            val.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            col.addWidget(lab)
+            col.addWidget(val)
+            stretch = 1 if i == 2 else 0
+            meta_row.addLayout(col, stretch)
+        layout.addWidget(meta)
+
+        if remove_configs_default:
+            cfg_desc = "Removes the stored rclone remote/token config for this repo from `rclone.conf`."
+        else:
+            cfg_desc = "Removes any stored cloud connection configuration for this repo."
+
+        remove_configs_check = QCheckBox("Remove configurations")
+        remove_configs_check.setChecked(remove_configs_default)
+        remove_configs_check.setToolTip(cfg_desc)
+        layout.addWidget(remove_configs_check)
+
+        if include_repo_delete_default:
+            include_desc = (
+                "Deletes the local restic repository data on disk (irreversible)."
+            )
+            include_delete_check = QCheckBox("Include repo deletion")
+        else:
+            include_desc = (
+                "Purges the restic repository data from cloud storage (irreversible, provider best-effort)."
+            )
+            include_delete_check = QCheckBox("Purge repo data (cloud)")
+
+        include_delete_check.setChecked(include_repo_delete_default)
+        include_delete_check.setToolTip(include_desc)
+        layout.addWidget(include_delete_check)
+
+        note_lbl = QLabel(
+            "This app always removes the repo from its settings. The extra options are best-effort and may require provider-specific cleanup."
+        )
+        note_lbl.setObjectName("copyNote")
+        note_lbl.setWordWrap(True)
+        layout.addWidget(note_lbl)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        footer.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("dialogSecondary")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(dialog.reject)
+        footer.addWidget(cancel_btn)
+
+        remove_btn = QPushButton("Remove")
+        remove_btn.setObjectName("dangerBtn" if True else "dialogPrimary")
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove_btn.clicked.connect(dialog.accept)
+        footer.addWidget(remove_btn)
+        layout.addLayout(footer)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+
+        # Save option state before we mutate settings/reload UI.
+        remove_configs = bool(remove_configs_check.isChecked())
+        include_repo_delete = bool(include_delete_check.isChecked())
 
         removed = repositories.pop(index)
         self.settings_manager.set("repositories", repositories)
         self.settings_manager.save_settings()
+
+        # Best-effort cleanup of rclone remote/token config.
+        if remove_configs:
+            try:
+                rclone_bin = rclone_util.resolve_rclone_path(
+                    self.settings_manager.get
+                )
+                remote_name = (repo.get("rclone_remote") or "").strip()
+                if remote_name:
+                    # If we store rclone.conf encrypted, decrypt to a temp file
+                    # so rclone config delete can operate on a real config.
+                    cfg_env: dict[str, str] = {}
+                    cfg_path = ""
+                    if (self.settings_manager.get("rclone_conf_encrypted") or "").strip():
+                        cfg_path = _runtime_rclone_config_path(
+                            settings_manager=self.settings_manager,
+                            password_manager=self.password_manager,
+                        )
+                    else:
+                        cfg_path = rclone_util.app_rclone_config_path()
+
+                    if cfg_path:
+                        cfg_env["RCLONE_CONFIG"] = cfg_path
+
+                    rclone_util.delete_rclone_remote(
+                        rclone_bin,
+                        remote_name,
+                        env=cfg_env,
+                    )
+
+                    # Re-encrypt updated config back into settings.
+                    if cfg_path and (self.settings_manager.get("rclone_conf_encrypted") or "").strip():
+                        try:
+                            cfg_text = Path(cfg_path).read_text(encoding="utf-8")
+                            encrypted = self.password_manager.encrypt(cfg_text)
+                            self.settings_manager.set(
+                                "rclone_conf_encrypted", encrypted
+                            )
+                            # keep rclone_config cleared; runtime decrypt handles it
+                            self.settings_manager.set("rclone_config", "")
+                            self.settings_manager.save_settings()
+                        except Exception:
+                            pass
+            except Exception:
+                # Do not fail deletion; repository is removed from settings already.
+                pass
+
+        # Optional local repository data deletion.
+        if include_repo_delete and (repo_type or "").lower() == "local":
+            try:
+                # repo['path'] points at the restic repo directory on disk.
+                repo_dir = str(repo.get("path") or "").strip()
+                if repo_dir:
+                    import shutil
+
+                    shutil.rmtree(repo_dir, ignore_errors=True)
+            except Exception as exc:
+                # Do not fail the whole delete-from-settings operation,
+                # but make the failure visible for troubleshooting.
+                err = str(exc)
+                self.log(f"Repo data deletion failed for '{name}': {err}")
+                show_framed_message(
+                    self,
+                    "Repo Deletion Failed",
+                    f"Failed to delete repository data on disk for '{name}'.\n\n{err}",
+                    kind="warning",
+                )
+        elif include_repo_delete and (repo_type or "").lower() == "cloud":
+            # Purge the restic repository contents from cloud storage.
+            # This is destructive and uses rclone "purge" (provider best-effort).
+            try:
+                repo_path = str(repo.get("path") or "").strip()
+                if not repo_path.startswith("rclone:"):
+                    raise ValueError(
+                        "Cloud repo path is not in expected 'rclone:remote:path' form."
+                    )
+                parsed = rclone_util.parse_rclone_location(repo_path)
+                remote = parsed.get("remote") or ""
+                rpath = parsed.get("path") or ""
+                if not remote:
+                    raise ValueError("Could not parse rclone remote from repo path.")
+
+                loc = f"{remote}:{rpath}" if rpath else f"{remote}:"
+
+                rclone_bin = rclone_util.resolve_rclone_path(
+                    self.settings_manager.get
+                )
+                # Prefer decrypted temp config if encryption-at-rest is enabled.
+                if (self.settings_manager.get("rclone_conf_encrypted") or "").strip():
+                    cfg_path = _runtime_rclone_config_path(
+                        settings_manager=self.settings_manager,
+                        password_manager=self.password_manager,
+                    )
+                else:
+                    cfg_path = rclone_util.app_rclone_config_path()
+
+                env = rclone_util.rclone_process_env(
+                    rclone_path=rclone_bin,
+                    config_path=cfg_path,
+                )
+
+                ok, stdout, stderr = rclone_util.run_rclone(
+                    rclone_bin,
+                    ["purge", loc],
+                    env=env,
+                    timeout=3600,
+                    creationflags=get_subprocess_creation_flags(),
+                )
+                if not ok:
+                    err = stderr or stdout or "Unknown rclone purge error"
+                    raise RuntimeError(err)
+            except Exception as exc:
+                err = str(exc)
+                self.log(f"Cloud purge failed for '{name}': {err}")
+                show_framed_message(
+                    self,
+                    "Cloud Purge Failed",
+                    f"Failed to purge cloud repository data for '{name}'.\n\n{err}",
+                    kind="warning",
+                )
+
         self.refresh_repository_list()
         self.update_repository_combos()
         self.log(f"Removed repository: {removed.get('name')}")
@@ -7104,6 +8491,7 @@ class ResticManagerWindow(QMainWindow):
                         dest_repo,
                         "",
                         password_manager=self.settings_manager.password_manager,
+                        settings_manager=self.settings_manager,
                     )
                 )
             args = repo_restic_prefix(source_repo) + [
@@ -7470,6 +8858,350 @@ class ResticManagerWindow(QMainWindow):
         self._unlock_worker = ResticWorker(self.restic_cmd, args, env, timeout=60)
         self._unlock_worker.finished.connect(self._on_unlock_completed)
         self._unlock_worker.start()
+
+    def migrate_all_snapshots_to_repository(self):
+        """Copy all snapshots from the selected source repo into another repository."""
+        if self._repository_status_blocks_foreground_operation("the copy"):
+            return
+
+        source_repo_name = self.snapshot_repo_combo.currentText()
+        if not source_repo_name:
+            QMessageBox.warning(self, "No Repository", "Please select a repository first.")
+            return
+
+        source_repo, source_password = self.get_repository_by_name(source_repo_name)
+        if not source_repo:
+            QMessageBox.warning(self, "Error", f"Repository '{source_repo_name}' not found.")
+            return
+
+        # Destination candidates: any other configured repository.
+        repositories = self.settings_manager.get("repositories") or []
+        dest_candidates = [r for r in repositories if r.get("name") and r.get("name") != source_repo_name]
+        dest_names = [r.get("name") for r in dest_candidates if r.get("name")]
+        if not dest_names:
+            QMessageBox.warning(
+                self,
+                "No Destination",
+                "No other repositories available. Please add another repository first.",
+            )
+            return
+
+        dialog = FramedDialog(
+            "Migrate Snapshots to Repository",
+            self,
+            show_maximize=False,
+            show_minimize=False,
+        )
+        dialog.setMinimumWidth(620)
+        dialog.body_layout.setContentsMargins(16, 12, 16, 16)
+        dialog.body_layout.setSpacing(12)
+        layout = dialog.body_layout
+
+        meta = QLabel(
+            f"Copy ALL snapshots from<br><br>"
+            f"<b>{source_repo_name}</b><br><br>to a destination repository.<br><br>"
+            f"If the destination is not initialized yet, you'll be prompted to initialize it first.",
+        )
+        meta.setTextFormat(Qt.TextFormat.RichText)
+        meta.setObjectName("pageSubtitle")
+        meta.setWordWrap(True)
+        layout.addWidget(meta)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+
+        dest_combo = QComboBox()
+        dest_combo.setMinimumHeight(32)
+        for name in dest_names:
+            dest_combo.addItem(str(name))
+        form.addRow("Destination", dest_combo)
+
+        timeout_spin = QSpinBox()
+        timeout_spin.setMinimum(0)
+        timeout_spin.setMaximum(24)
+        timeout_spin.setValue(6)
+        timeout_spin.setSuffix(" hours")
+        form.addRow("Timeout", timeout_spin)
+
+        layout.addLayout(form)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        footer.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("dialogSecondary")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(dialog.reject)
+        footer.addWidget(cancel_btn)
+
+        ok_btn = QPushButton("Migrate")
+        ok_btn.setObjectName("dialogPrimary")
+        ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ok_btn.clicked.connect(dialog.accept)
+        footer.addWidget(ok_btn)
+
+        layout.addLayout(footer)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        dest_repo_name = str(dest_combo.currentText() or "")
+        dest_repo, dest_password = self.get_repository_by_name(dest_repo_name)
+        if not dest_repo:
+            QMessageBox.warning(self, "Error", f"Destination repo '{dest_repo_name}' not found.")
+            return
+
+        timeout_hours = int(timeout_spin.value() or 0)
+        timeout_seconds = timeout_hours * 3600 if timeout_hours > 0 else 86400 * 7
+
+        # Destination init check.
+        dest_ready = False
+        try:
+            dest_env = self._repo_env(dest_repo, dest_password)
+            check_args = repo_restic_prefix(dest_repo) + ["snapshots", "--latest", "1", "--json"]
+            ok, _stdout, stderr = self.restic_cmd.run(check_args, env=dest_env, timeout=30)
+            dest_ready = bool(ok)
+            if not ok:
+                msg = ((stderr or "") + (_stdout or "")).lower()
+                if "repository does not exist" in msg or "no such repository" in msg:
+                    dest_ready = False
+        except Exception:
+            dest_ready = False
+
+        if not dest_ready:
+            confirmed = self._framed_confirm(
+                title="Initialize Destination Repository?",
+                heading=f"Destination '{dest_repo.get('name') or dest_repo.get('path')}' is not initialized.",
+                body=(
+                    "Restic needs an initialized destination repository before it can copy snapshots.\n\n"
+                    "Initialize it now (using the source repository's chunker parameters), then migrate?"
+                ),
+                note="This can take a few minutes.",
+                danger=False,
+            )
+            if not confirmed:
+                return
+
+            # Initialize destination (non-cancellable).
+            init_progress = FramedDialog(
+                "Initializing Destination",
+                self,
+                show_maximize=False,
+                show_minimize=False,
+                modal=False,
+                independent=True,
+            )
+            init_progress.setMinimumWidth(560)
+            init_progress.body_layout.setContentsMargins(20, 16, 20, 20)
+            init_progress.body_layout.setSpacing(14)
+
+            init_status = QLabel(
+                f"Initializing destination repository '{dest_repo.get('name') or dest_repo.get('path')}'..."
+            )
+            init_status.setObjectName("pageSubtitle")
+            init_status.setWordWrap(True)
+            init_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            init_progress.body_layout.addWidget(init_status)
+
+            init_output = QPlainTextEdit()
+            init_output.setReadOnly(True)
+            init_output.setPlaceholderText("Waiting for initialization output…")
+            init_output.setMinimumHeight(160)
+            init_progress.body_layout.addWidget(init_output)
+
+            init_progress.show()
+            QApplication.processEvents()
+
+            env = self._repo_env(dest_repo, dest_password)
+            env["RESTIC_FROM_PASSWORD"] = source_password or ""
+            init_args = repo_restic_prefix(dest_repo) + [
+                "init",
+                "--from-repo",
+                source_repo.get("path") or "",
+                "--copy-chunker-params",
+            ]
+
+            worker = ResticWorker(self.restic_cmd, init_args, env=env, timeout=3600, use_progress=True)
+            self._migrate_worker = worker  # keep reference
+
+            def _on_init_finished(success: bool, stdout: str, stderr: str):
+                try:
+                    init_progress.close()
+                    init_progress.deleteLater()
+                except Exception:
+                    pass
+                self._migrate_worker = None
+                try:
+                    # Always show final output for troubleshooting.
+                    if stdout:
+                        init_output.appendPlainText("\n=== STDOUT ===\n" + stdout)
+                    if stderr:
+                        init_output.appendPlainText("\n=== STDERR ===\n" + stderr)
+                except Exception:
+                    pass
+                if not success:
+                    show_framed_message(
+                        self,
+                        "Initialization Failed",
+                        f"Failed to initialize destination.\n\n{stderr or stdout or 'Unknown error'}",
+                        kind="warning",
+                    )
+                    return
+                self._migrate_copy_after_init(
+                    source_repo=source_repo,
+                    source_password=source_password,
+                    dest_repo=dest_repo,
+                    dest_password=dest_password,
+                    timeout_seconds=timeout_seconds,
+                )
+
+            def _on_worker_progress(line: str) -> None:
+                try:
+                    if line:
+                        init_output.appendPlainText(line)
+                except Exception:
+                    pass
+
+            worker.progress.connect(_on_worker_progress)
+            worker.finished.connect(_on_init_finished)
+            worker.start()
+            return
+
+        # Destination ready → run copy immediately.
+        self._migrate_copy_after_init(
+            source_repo=source_repo,
+            source_password=source_password,
+            dest_repo=dest_repo,
+            dest_password=dest_password,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _migrate_copy_after_init(
+        self,
+        *,
+        source_repo: dict,
+        source_password: str,
+        dest_repo: dict,
+        dest_password: str,
+        timeout_seconds: int,
+    ) -> None:
+        progress = FramedDialog(
+            "Copying Snapshots",
+            self,
+            show_maximize=False,
+            show_minimize=False,
+            modal=False,
+            independent=True,
+        )
+        progress.setMinimumWidth(680)
+        progress.body_layout.setContentsMargins(20, 16, 20, 20)
+        progress.body_layout.setSpacing(14)
+
+        status = QLabel(
+            f"Copying all snapshots from '{source_repo.get('name') or source_repo.get('path')}' "
+            f"to '{dest_repo.get('name') or dest_repo.get('path')}'..."
+        )
+        status.setObjectName("pageSubtitle")
+        status.setWordWrap(True)
+        status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress.body_layout.addWidget(status)
+
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        progress_bar.setTextVisible(True)
+        progress_bar.setFormat("%p%")
+        progress.body_layout.addWidget(progress_bar)
+
+        out = QPlainTextEdit()
+        out.setReadOnly(True)
+        out.setPlaceholderText("Waiting for copy output…")
+        out.setMinimumHeight(220)
+        progress.body_layout.addWidget(out)
+
+        progress.show()
+        QApplication.processEvents()
+
+        env = self._repo_env(source_repo, source_password)
+        env["RESTIC_PASSWORD2"] = dest_password or ""
+        # Encourage restic to emit frequent progress/status lines.
+        env["RESTIC_PROGRESS_FPS"] = env.get("RESTIC_PROGRESS_FPS") or "2"
+
+        # Copy all snapshots between repos.
+        args = repo_restic_prefix(source_repo) + [
+            "copy",
+            "--repo2",
+            dest_repo.get("path") or "",
+            "--json",
+        ]
+        worker_env = env
+        worker = ResticWorker(
+            self.restic_cmd,
+            args,
+            env=worker_env,
+            timeout=timeout_seconds,
+            use_progress=True,
+        )
+        self._migrate_worker = worker
+
+        def _on_finished(success: bool, stdout: str, stderr: str):
+            try:
+                # Dump final output into the log box for visibility.
+                try:
+                    if stdout:
+                        out.appendPlainText("\n=== STDOUT ===\n" + stdout)
+                    if stderr:
+                        out.appendPlainText("\n=== STDERR ===\n" + stderr)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            try:
+                progress.close()
+                progress.deleteLater()
+            except Exception:
+                pass
+            self._migrate_worker = None
+            if not success:
+                show_framed_message(
+                    self,
+                    "Copy Failed",
+                    f"Snapshot migration failed.\n\n{stderr or stdout or 'Unknown error'}",
+                    kind="warning",
+                )
+                return
+            show_framed_message(
+                self,
+                "Migration Complete",
+                "All snapshots were copied successfully.",
+                kind="info",
+            )
+
+        def _on_progress_line(line: str) -> None:
+            try:
+                if line:
+                    out.appendPlainText(line)
+            except Exception:
+                pass
+
+        def _on_progress_data(info: dict) -> None:
+            try:
+                pct = info.get("percent")
+                if pct is None:
+                    return
+                pct_f = float(pct)
+                pct_i = max(0, min(100, int(pct_f)))
+                progress_bar.setValue(pct_i)
+                if pct_f >= 99.5:
+                    progress_bar.setFormat("Done %p%")
+            except Exception:
+                pass
+
+        worker.progress.connect(_on_progress_line)
+        worker.progress_data.connect(_on_progress_data)
+        worker.finished.connect(_on_finished)
+        worker.start()
     
     def _on_unlock_completed(self, success, stdout, stderr):
         """Callback when unlock completes"""
@@ -8023,7 +9755,10 @@ class ResticManagerWindow(QMainWindow):
         QApplication.processEvents()
 
         env = build_repo_env(
-            repo, password or "", password_manager=self.settings_manager.password_manager
+            repo,
+            password or "",
+            password_manager=self.settings_manager.password_manager,
+            settings_manager=self.settings_manager,
         )
         # Force periodic progress lines even when stdout/stderr are pipes (non-TTY).
         if ctype in ("partial", "full"):
@@ -8148,7 +9883,10 @@ class ResticManagerWindow(QMainWindow):
             return
 
         env = build_repo_env(
-            repo, password or "", password_manager=self.settings_manager.password_manager
+            repo,
+            password or "",
+            password_manager=self.settings_manager.password_manager,
+            settings_manager=self.settings_manager,
         )
         prefix = repo_restic_prefix(repo)
 
@@ -9973,6 +11711,100 @@ class ResticManagerWindow(QMainWindow):
         """Open the guided flow for a new backup job."""
         self.open_backup_wizard()
 
+    def open_add_destination_sync_wizard(self):
+        """Open the wizard to add new repos to an existing job.
+
+        Supports either backfilling existing snapshots (replicate) or simply
+        starting backups to the newly added destinations.
+        """
+        from ui.add_destination_wizard import AddDestinationWizard
+
+        dialog = AddDestinationWizard(self, self.settings_manager)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            plan = dialog.get_action_plan()
+            job_name = str(plan.get("job_name") or "").strip()
+            dest_repos = list(plan.get("destination_repos") or [])
+            mode = str(plan.get("mode") or "").strip().lower()
+            source_repo_name = str(plan.get("source_repo") or "").strip()
+            timeout_hours = int(plan.get("timeout_hours") or 0)
+
+            if not job_name or not dest_repos:
+                QMessageBox.warning(self, "Invalid Selection", "Select a job and at least one destination repository.")
+                return
+
+            # Load the job
+            jobs = list(self.settings_manager.get("backup_jobs") or [])
+            job = next((j for j in jobs if str(j.get("name") or "").strip() == job_name), None)
+            if not job:
+                show_framed_message(
+                    self,
+                    "Job Not Found",
+                    f"Could not find backup job: {job_name}",
+                    kind="warning",
+                )
+                return
+
+            existing_repos = list(job.get("repositories") or [])
+            existing_set = {r for r in existing_repos}
+            added_repos = [r for r in dest_repos if r not in existing_set]
+
+            # Merge repositories into the job (preserve original order; append new)
+            merged = list(existing_repos)
+            for r in dest_repos:
+                if r not in existing_set:
+                    merged.append(r)
+                    existing_set.add(r)
+            job["repositories"] = merged
+
+            # Persist settings
+            for i, j in enumerate(jobs):
+                if str(j.get("name") or "").strip() == job_name:
+                    jobs[i] = job
+                    break
+            self.settings_manager.set("backup_jobs", jobs)
+            self.settings_manager.save_settings()
+
+            # Update scheduled task if enabled
+            schedule = job.get("schedule") or {}
+            if schedule.get("enabled"):
+                self.scheduler_manager.update_scheduled_task(job_name, job)
+
+            # Refresh UI list
+            self.refresh_backup_jobs_list()
+            if hasattr(self, "refresh_dashboard_jobs_table"):
+                self.refresh_dashboard_jobs_table()
+
+            show_framed_message(
+                self,
+                "Destination Added",
+                f"Added {len(added_repos)} destination repository/repositories to job '{job_name}'.",
+                kind="info",
+            )
+
+            # If user chose "start backup from now", stop here.
+            if mode != "replicate":
+                return
+
+            # Replicate/backfill mode
+            if not added_repos:
+                return
+            if not source_repo_name:
+                show_framed_message(
+                    self,
+                    "Missing Source",
+                    "Choose a source repository for replication.",
+                    kind="warning",
+                )
+                return
+
+            # Kick off sequential backfill from source -> each added destination
+            self._start_backfill_snapshots(
+                job_name=job_name,
+                source_repo_name=source_repo_name,
+                dest_repo_names=added_repos,
+                timeout_hours=timeout_hours,
+            )
+
     def open_backup_wizard(self):
         """Create, persist, and optionally run a backup from the guided wizard."""
         from ui.backup_wizard import BackupWizard
@@ -9983,6 +11815,345 @@ class ResticManagerWindow(QMainWindow):
             if self._persist_backup_job(job_data):
                 if dialog.run_now():
                     self.run_backup_job(job_data)
+
+    # --- Snapshot backfill (destination add) ---
+    def _start_backfill_snapshots(
+        self,
+        *,
+        job_name: str,
+        source_repo_name: str,
+        dest_repo_names: list[str],
+        timeout_hours: int,
+    ) -> None:
+        """Backfill snapshots from a source repo into newly added destination repos."""
+        self._backfill_active = True
+        self._backfill_job_name = job_name
+        self._backfill_source_repo_name = source_repo_name
+        self._backfill_dest_queue = list(dest_repo_names)
+        self._backfill_timeout_hours = max(0, int(timeout_hours or 0))
+
+        if not self._backfill_dest_queue:
+            self._backfill_active = False
+            return
+
+        self._run_backfill_for_next_destination()
+
+    def _run_backfill_for_next_destination(self) -> None:
+        if not getattr(self, "_backfill_active", False):
+            return
+        if not getattr(self, "_backfill_dest_queue", None):
+            self._backfill_active = False
+            # Non-modal completion dialog; use independent window to keep chrome consistent.
+            dlg = FramedDialog(
+                "Backfill Complete",
+                self,
+                show_maximize=False,
+                show_minimize=False,
+                modal=False,
+                independent=True,
+            )
+            dlg.setMinimumWidth(520)
+            dlg.body_layout.setContentsMargins(20, 16, 20, 20)
+            dlg.body_layout.setSpacing(14)
+
+            title_lbl = QLabel("Backfill Complete")
+            title_lbl.setObjectName("pageTitle")
+            title_lbl.setStyleSheet("font-size: 18px;")
+            title_lbl.setWordWrap(True)
+            dlg.body_layout.addWidget(title_lbl)
+
+            body_lbl = QLabel(
+                f"Replication/backfill completed for job '{self._backfill_job_name}'."
+            )
+            body_lbl.setObjectName("pageSubtitle")
+            body_lbl.setWordWrap(True)
+            dlg.body_layout.addWidget(body_lbl)
+
+            footer = QHBoxLayout()
+            footer.addStretch(1)
+            ok_btn = QPushButton("OK")
+            ok_btn.setObjectName("dialogPrimary")
+            ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            ok_btn.clicked.connect(dlg.accept)
+            footer.addWidget(ok_btn)
+            dlg.body_layout.addLayout(footer)
+
+            dlg.show()
+            return
+
+        dest_repo_name = self._backfill_dest_queue.pop(0)
+        source_repo_name = self._backfill_source_repo_name
+
+        source_repo, source_password = self.get_repository_by_name(source_repo_name)
+        dest_repo, dest_password = self.get_repository_by_name(dest_repo_name)
+        if not source_repo or not dest_repo:
+            # Skip if repo lookup fails
+            self._run_backfill_for_next_destination()
+            return
+
+        # Check if destination is initialized by running a lightweight snapshots query.
+        # We do this synchronously with a short timeout to avoid long UI blocking.
+        try:
+            dest_env = self._repo_env(dest_repo, dest_password)
+            check_args = repo_restic_prefix(dest_repo) + ["snapshots", "--latest", "1", "--json"]
+            ok, _stdout, stderr = self.restic_cmd.run(check_args, env=dest_env, timeout=30)
+            dest_ready = bool(ok)
+            if not ok:
+                msg = ((stderr or "") + (_stdout or "")).lower()
+                if "repository does not exist" in msg or "no such repository" in msg:
+                    dest_ready = False
+        except Exception:
+            dest_ready = False
+
+        if not dest_ready:
+            # Ask user before initializing the destination
+            self._run_backfill_init_or_skip(
+                source_repo=source_repo,
+                source_password=source_password,
+                dest_repo=dest_repo,
+                dest_password=dest_password,
+            )
+        else:
+            self._run_backfill_copy(
+                source_repo=source_repo,
+                source_password=source_password,
+                dest_repo=dest_repo,
+                dest_password=dest_password,
+            )
+
+    def _run_backfill_init_or_skip(
+        self,
+        *,
+        source_repo: dict,
+        source_password: str,
+        dest_repo: dict,
+        dest_password: str,
+    ) -> None:
+        """Initialize destination repo if user confirms, then copy."""
+        confirmed = self._framed_confirm(
+            title="Initialize Destination Repository?",
+            heading=f"Destination '{dest_repo.get('name') or dest_repo.get('path')}' is not initialized.",
+            body=(
+                "Restic needs an initialized destination repository before it can copy snapshots.\n\n"
+                "Initialize it now (using the source repository's chunker parameters), then copy snapshots?"
+            ),
+            note="This can take a few minutes.",
+            danger=False,
+        )
+        if not confirmed:
+            self._run_backfill_for_next_destination()
+            return
+
+        # Non-modal framed dialog so UI remains interactive while backfill runs.
+        progress = FramedDialog(
+            "Initializing Destination",
+            self,
+            show_maximize=False,
+            show_minimize=False,
+            modal=False,
+            independent=True,
+        )
+        progress.setMinimumWidth(520)
+        progress.body_layout.setContentsMargins(20, 16, 20, 20)
+        progress.body_layout.setSpacing(14)
+
+        status_lbl = QLabel(
+            f"Initializing destination repository '{dest_repo.get('name') or dest_repo.get('path')}'…"
+        )
+        status_lbl.setObjectName("pageSubtitle")
+        status_lbl.setWordWrap(True)
+        status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress.body_layout.addWidget(status_lbl)
+
+        # Indeterminate progress bar (restic will output logs underneath).
+        bar = QProgressBar()
+        bar.setRange(0, 0)
+        bar.setMinimumHeight(10)
+        bar.setTextVisible(False)
+        progress.body_layout.addWidget(bar)
+
+        # Show real-time restic output (helpful for long init/copy operations).
+        output_text = QPlainTextEdit()
+        output_text.setReadOnly(True)
+        output_text.setPlaceholderText("Waiting for initialization output…")
+        output_text.setMinimumHeight(140)
+        progress.body_layout.addWidget(output_text)
+
+        progress.show()
+        QApplication.processEvents()
+
+        timeout_seconds = 3600  # init should be quicker than copy
+        env = self._repo_env(dest_repo, dest_password)
+        # Password for --from-repo during init
+        env["RESTIC_FROM_PASSWORD"] = source_password or ""
+
+        init_args = repo_restic_prefix(dest_repo) + [
+            "init",
+            "--from-repo",
+            source_repo.get("path") or "",
+            "--copy-chunker-params",
+        ]
+        # If source is SFTP, try to carry SSH options too.
+        if (source_repo.get("type") or "").lower() == "sftp" and source_repo.get("ssh_key"):
+            init_args.extend(sftp_cli_options(source_repo.get("ssh_key") or ""))
+
+        worker = ResticWorker(
+            self.restic_cmd,
+            init_args,
+            env=env,
+            timeout=timeout_seconds,
+            use_progress=True,
+        )
+        # Keep a strong reference to avoid "QThread: Destroyed while thread ... is still running".
+        self._backfill_worker = worker
+
+        def _on_init_finished(success: bool, stdout: str, stderr: str):
+            try:
+                progress.close()
+                progress.deleteLater()
+            except Exception:
+                pass
+            try:
+                self._backfill_worker = None
+            except Exception:
+                pass
+            if not success:
+                QMessageBox.warning(
+                    self,
+                    "Backfill Init Failed",
+                    f"Failed to initialize destination '{dest_repo.get('name') or dest_repo.get('path')}':\n\n{stderr or stdout or 'Unknown error'}",
+                )
+                self._run_backfill_for_next_destination()
+                return
+            self._run_backfill_copy(
+                source_repo=source_repo,
+                source_password=source_password,
+                dest_repo=dest_repo,
+                dest_password=dest_password,
+            )
+
+        def _on_worker_progress(line: str) -> None:
+            if not line:
+                return
+            try:
+                output_text.appendPlainText(line)
+            except Exception:
+                pass
+
+        worker.progress.connect(_on_worker_progress)
+        worker.finished.connect(_on_init_finished)
+        worker.start()
+
+    def _run_backfill_copy(
+        self,
+        *,
+        source_repo: dict,
+        source_password: str,
+        dest_repo: dict,
+        dest_password: str,
+    ) -> None:
+        """Copy all snapshots from source -> destination in the background."""
+        # Non-modal framed dialog so UI remains interactive while backfill runs.
+        progress = FramedDialog(
+            "Replicating Snapshots",
+            self,
+            show_maximize=False,
+            show_minimize=False,
+            modal=False,
+            independent=True,
+        )
+        progress.setMinimumWidth(560)
+        progress.body_layout.setContentsMargins(20, 16, 20, 20)
+        progress.body_layout.setSpacing(14)
+
+        status_lbl = QLabel(
+            f"Copying all snapshots from '{source_repo.get('name') or source_repo.get('path')}' to '{dest_repo.get('name') or dest_repo.get('path')}'…"
+        )
+        status_lbl.setObjectName("pageSubtitle")
+        status_lbl.setWordWrap(True)
+        status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress.body_layout.addWidget(status_lbl)
+
+        bar = QProgressBar()
+        bar.setRange(0, 0)
+        bar.setMinimumHeight(10)
+        bar.setTextVisible(False)
+        progress.body_layout.addWidget(bar)
+
+        progress.show()
+        QApplication.processEvents()
+
+        # Show real-time restic output for the copy operation.
+        output_text = QPlainTextEdit()
+        output_text.setReadOnly(True)
+        output_text.setPlaceholderText("Waiting for copy output…")
+        output_text.setMinimumHeight(160)
+        progress.body_layout.addWidget(output_text)
+
+        timeout_seconds = self._backfill_timeout_hours * 3600 if self._backfill_timeout_hours > 0 else 86400 * 7
+
+        env = self._repo_env(source_repo, source_password)
+        # Destination password (legacy RESTIC_PASSWORD2 used by existing snapshot-copy code)
+        env["RESTIC_PASSWORD2"] = dest_password or ""
+        if (source_repo.get("type") or "").lower() not in ("https", "rest"):
+            env.update(
+                build_repo_env(
+                    dest_repo,
+                    "",
+                    password_manager=self.settings_manager.password_manager,
+                    settings_manager=self.settings_manager,
+                )
+            )
+
+        copy_args = repo_restic_prefix(source_repo) + [
+            "copy",
+            "--repo2",
+            dest_repo.get("path") or "",
+        ]
+        if (dest_repo.get("type") or "").lower() == "sftp":
+            copy_args.extend(sftp_cli_options(dest_repo.get("ssh_key") or ""))
+
+        worker = ResticWorker(
+            self.restic_cmd,
+            copy_args,
+            env=env,
+            timeout=timeout_seconds,
+            use_progress=True,
+        )
+        # Keep a strong reference to avoid "QThread: Destroyed while thread ... is still running".
+        self._backfill_worker = worker
+
+        def _on_copy_finished(success: bool, stdout: str, stderr: str):
+            try:
+                progress.close()
+                progress.deleteLater()
+            except Exception:
+                pass
+            try:
+                self._backfill_worker = None
+            except Exception:
+                pass
+            if not success:
+                QMessageBox.warning(
+                    self,
+                    "Backfill Failed",
+                    f"Snapshot replication to '{dest_repo.get('name') or dest_repo.get('path')}' failed:\n\n{stderr or stdout or 'Unknown error'}",
+                )
+                self._run_backfill_for_next_destination()
+                return
+            self._run_backfill_for_next_destination()
+
+        def _on_worker_progress(line: str) -> None:
+            if not line:
+                return
+            try:
+                output_text.appendPlainText(line)
+            except Exception:
+                pass
+
+        worker.progress.connect(_on_worker_progress)
+        worker.finished.connect(_on_copy_finished)
+        worker.start()
 
     def _persist_backup_job(self, job_data: dict, *, old_name: str = "") -> bool:
         """Validate and persist create/edit data, including OS scheduling."""
@@ -10003,16 +12174,6 @@ class ResticManagerWindow(QMainWindow):
         if not job_data.get("repositories"):
             QMessageBox.warning(
                 self, "Invalid Job", "Please select at least one repository."
-            )
-            return False
-        if (
-            job_data.get("schedule", {}).get("enabled")
-            and len(job_data.get("repositories") or []) > 1
-        ):
-            QMessageBox.warning(
-                self,
-                "Scheduling Limitation",
-                "Scheduled backup jobs currently support one repository.",
             )
             return False
         if not job_data.get("paths"):
@@ -10195,6 +12356,25 @@ class ResticManagerWindow(QMainWindow):
             # Try next repository if any remain
             self._try_next_repository()
             return
+
+        repo, net_err = self._begin_network_share_access(repo)
+        if net_err:
+            QMessageBox.warning(self, "Network Share", net_err)
+            self.log(f"Network share connect failed for {repo_name}: {net_err}")
+            self._backup_all_succeeded = False
+            self._record_job_run(
+                job_name=job.get("name", ""),
+                repo_name=repo_name,
+                started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                duration_sec=0,
+                success=False,
+                exit_code=1,
+                source="gui",
+                error_summary=net_err,
+            )
+            self._try_next_repository()
+            return
+        self._backup_active_repo = repo
         
         # Build restic backup command arguments
         env = self._repo_env(repo, password)
@@ -10694,6 +12874,12 @@ class ResticManagerWindow(QMainWindow):
     
     def _on_backup_completed(self, success, stdout, stderr):
         """Callback when backup completes"""
+        # Disconnect connect-only network share for this repo
+        active = getattr(self, "_backup_active_repo", None)
+        if active is not None:
+            self._end_network_share_access(active)
+            self._backup_active_repo = None
+
         # Don't process if cancelled
         if hasattr(self, '_backup_is_cancelled') and self._backup_is_cancelled:
             return
@@ -11598,6 +13784,64 @@ $arguments = @(
                 kind="warning",
             )
             self.log(f"Restic test failed for path: {restic_path}")
+
+    def browse_rclone_path(self):
+        """Browse for rclone executable"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select rclone Executable",
+            "",
+            "Executable Files (*.exe);;All Files (*.*)",
+        )
+        if file_path:
+            self.rclone_path_input.setText(file_path)
+
+    def test_rclone_path(self):
+        """Test if the rclone executable is accessible and working"""
+        rclone_path = ""
+        if hasattr(self, "rclone_path_input"):
+            rclone_path = self.rclone_path_input.text().strip()
+        if not rclone_path:
+            rclone_path = (
+                self.settings_manager.get("rclone_path") or "rclone"
+            ).strip()
+        if not rclone_path:
+            show_framed_message(
+                self,
+                "No Path",
+                "Please enter an rclone path first.",
+                kind="warning",
+            )
+            return
+
+        cfg = rclone_util.app_rclone_config_path()
+        env = rclone_util.rclone_process_env(
+            rclone_path=rclone_path, config_path=cfg
+        )
+        version = rclone_util.rclone_version(rclone_path, env=env)
+        if version:
+            show_framed_message(
+                self,
+                "rclone Found",
+                f"rclone executable is working.\n\n"
+                f"Path: {rclone_path}\n"
+                f"Version: {version}\n\n"
+                f"Cloud repositories use this binary. "
+                f"Save settings to keep this path.",
+                kind="info",
+            )
+            self.log(f"rclone test successful: {version}")
+        else:
+            show_framed_message(
+                self,
+                "rclone Not Found",
+                f"Failed to execute rclone from this path.\n\n"
+                f"Path: {rclone_path}\n\n"
+                f"Install from https://rclone.org/downloads/ "
+                f"or set the full path to rclone.exe.",
+                kind="warning",
+            )
+            self.log(f"rclone test failed for path: {rclone_path}")
     
     def browse_temp_restore_path(self):
         """Browse for temporary restore directory"""
@@ -11724,6 +13968,10 @@ $arguments = @(
     def save_settings(self):
         """Save application settings"""
         self.settings_manager.set("restic_path", self.restic_path_input.text())
+        if hasattr(self, "rclone_path_input"):
+            self.settings_manager.set(
+                "rclone_path", self.rclone_path_input.text().strip() or "rclone"
+            )
         theme_id = themes.resolve_theme_id(self.theme_combo.currentText())
         self.settings_manager.set("theme", theme_id)
         self.settings_manager.set("auto_refresh_snapshots", self.auto_refresh_check.isChecked())
@@ -12071,6 +14319,7 @@ $arguments = @(
                     "version": 2,
                     "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "includes_history": False,
+                    "includes_rclone_config": False,
                     "app": "Restic Desktop",
                 }
                 history_path = history_db.history_db_path(self.settings_manager.filename)
@@ -12100,6 +14349,12 @@ $arguments = @(
                     manifest["includes_history"] = False
                     manifest["history_note"] = "No history database found to include."
 
+                rclone_cfg = rclone_util.app_rclone_config_path()
+                if os.path.isfile(rclone_cfg):
+                    with open(rclone_cfg, "rb") as rf:
+                        zf.writestr("rclone.conf", rf.read())
+                    manifest["includes_rclone_config"] = True
+
                 zf.writestr(
                     "manifest.json",
                     json.dumps(manifest, indent=2).encode("utf-8"),
@@ -12115,6 +14370,8 @@ $arguments = @(
             parts = ["settings"]
             if manifest.get("includes_history"):
                 parts.append("history database")
+            if manifest.get("includes_rclone_config"):
+                parts.append("cloud config")
             show_framed_message(
                 self,
                 "Backup Complete",
@@ -12181,7 +14438,9 @@ $arguments = @(
 
             restored_settings = None
             history_bytes = None
+            rclone_bytes = None
             includes_history = False
+            includes_rclone = False
 
             # v2+ zip archive
             try:
@@ -12195,12 +14454,18 @@ $arguments = @(
                     if history_db.DEFAULT_DB_NAME in names:
                         history_bytes = zf.read(history_db.DEFAULT_DB_NAME)
                         includes_history = True
+                    if "rclone.conf" in names:
+                        rclone_bytes = zf.read("rclone.conf")
+                        includes_rclone = True
                     if "manifest.json" in names:
                         try:
                             manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
                             includes_history = bool(
                                 manifest.get("includes_history") and history_bytes
                             )
+                            includes_rclone = bool(
+                                manifest.get("includes_rclone_config") and rclone_bytes
+                            ) or includes_rclone
                         except Exception:
                             pass
             except zipfile.BadZipFile:
@@ -12232,6 +14497,11 @@ $arguments = @(
                 body += (
                     "\n\nThis backup also includes the history database "
                     "(job runs, logs, dashboard cache), which will replace the current one."
+                )
+            if includes_rclone:
+                body += (
+                    "\n\nThis backup includes cloud connection config (rclone.conf), "
+                    "which will replace the current cloud sign-ins."
                 )
 
             if not self._framed_confirm(
@@ -12268,9 +14538,16 @@ $arguments = @(
                     except OSError:
                         pass
 
+            if includes_rclone and rclone_bytes:
+                cfg_path = rclone_util.app_rclone_config_path()
+                with open(cfg_path, "wb") as out:
+                    out.write(rclone_bytes)
+
             parts = ["settings"]
             if includes_history:
                 parts.append("history database")
+            if includes_rclone:
+                parts.append("cloud config")
             show_framed_message(
                 self,
                 "Restore Complete",
@@ -13360,137 +15637,167 @@ def run_job_cli(job_name):
                 pass
             return 1
         
-        # Get repository (support old single + new multi format; CLI backs up first)
-        repositories = settings_manager.get("repositories")
+        # Get repositories (support old single + new multi format)
+        repositories = settings_manager.get("repositories") or []
+        repositories_to_backup: list[str] = []
         if job.get("repositories"):
-            repo_name = job["repositories"][0]
-        else:
-            repo_name = job.get("repository")
-        repo = next((r for r in repositories if r["name"] == repo_name), None) if repo_name else None
-        
-        if not repo:
-            print(f"[ERROR] Repository '{repo_name}' not found!")
+            repositories_to_backup = job.get("repositories") or []
+        elif job.get("repository"):
+            repositories_to_backup = [job.get("repository")]
+
+        if not repositories_to_backup:
+            print("[ERROR] No repositories configured for this job.")
+            return 1
+
+        print(f"[Restic Desktop CLI] Paths: {', '.join(job['paths'])}")
+
+        all_succeeded = True
+        last_stderr = ""
+
+        for repo_name in repositories_to_backup:
+            repo = next((r for r in repositories if r.get("name") == repo_name), None)
+            if not repo:
+                all_succeeded = False
+                last_stderr = f"Repository '{repo_name}' not found"
+                try:
+                    history_db.log_job_run_outcome(
+                        job_name=job_name,
+                        repo_name=repo_name or "",
+                        success=False,
+                        source="cli",
+                        exit_code=1,
+                        error_summary=last_stderr,
+                        db_path=db_path,
+                    )
+                except Exception:
+                    pass
+                continue
+
+            # Decrypt password for this repository
+            password = ""
+            if repo.get("password"):
+                password = settings_manager.password_manager.decrypt(repo["password"])
+
+            net_user = repo.get("network_user") or ""
+            net_pass = ""
+            if repo.get("network_password"):
+                try:
+                    net_pass = settings_manager.password_manager.decrypt(repo.get("network_password"))
+                except Exception:
+                    net_pass = ""
+
+            # Run backup for this repo
+            success = False
+            stdout = ""
+            stderr = ""
+            duration = 0.0
+
+            try:
+                with network_share.network_share_session(
+                    repo, username=net_user, password=net_pass
+                ) as live_repo:
+                    env = build_repo_env(
+                        live_repo,
+                        password,
+                        password_manager=settings_manager.password_manager,
+                        settings_manager=settings_manager,
+                    )
+                    args = repo_restic_prefix(live_repo) + ["backup", "--json"]
+
+                    args.extend(job["paths"])
+
+                    if job.get("tags"):
+                        for tag in job["tags"]:
+                            args.extend(["--tag", tag])
+
+                    if job.get("exclude_patterns"):
+                        for pattern in job["exclude_patterns"]:
+                            args.extend(["--exclude", pattern])
+
+                    if job.get("exclude_caches", True):
+                        args.append("--exclude-caches")
+
+                    if job.get("pack_size", 0) > 0:
+                        args.extend(["--pack-size", str(job["pack_size"])])
+
+                    if job.get("one_file_system", False):
+                        args.append("--one-file-system")
+
+                    if job.get("exclude_if_present"):
+                        args.extend(["--exclude-if-present", job["exclude_if_present"]])
+
+                    compression = job.get("compression", "auto")
+                    if compression and compression != "off":
+                        args.extend(["--compression", compression])
+
+                    if job.get("no_cache", False):
+                        args.append("--no-cache")
+
+                    if job.get("ignore_inode", False):
+                        args.append("--ignore-inode")
+
+                    if job.get("skip_if_unchanged", True):
+                        args.append("--skip-if-unchanged")
+
+                    print(f"[Restic Desktop CLI] Repository: {live_repo.get('path')}")
+                    print(f"[Restic Desktop CLI] Running backup...")
+                    started = time.time()
+                    success, stdout, stderr = restic_cmd.run(args, env, timeout=86400)
+                    duration = time.time() - started
+            except RuntimeError as net_exc:
+                success = False
+                stderr = str(net_exc)
+                duration = time.time() - started if 'started' in locals() else 0.0
+                stdout = ""
+
+            started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            duration_sec = duration
+
+            snap_id = history_db.extract_snapshot_short_id(stdout or "") if success else None
+            skipped = bool(success) and history_db.backup_skipped_unchanged(stdout or "")
+            error_summary = None if success else ((stderr or "Unknown error")[:500])
+
+            try:
+                history_db.insert_job_run(
+                    job_name=job_name,
+                    repo_name=repo_name,
+                    started_at=started_at,
+                    duration_sec=duration_sec,
+                    success=bool(success),
+                    exit_code=0 if success else 1,
+                    source="cli",
+                    error_summary=error_summary,
+                    snapshot_short_id=snap_id,
+                    db_path=db_path,
+                )
+            except Exception as exc:
+                print(f"[WARN] Failed to record job run: {exc}")
+
             try:
                 history_db.log_job_run_outcome(
                     job_name=job_name,
                     repo_name=repo_name or "",
-                    success=False,
+                    success=bool(success),
                     source="cli",
-                    exit_code=1,
-                    error_summary=f"Repository '{repo_name}' not found",
+                    duration_sec=duration_sec,
+                    exit_code=0 if success else 1,
+                    error_summary=error_summary,
+                    snapshot_short_id=snap_id,
+                    skipped_unchanged=skipped,
                     db_path=db_path,
                 )
-            except Exception:
-                pass
-            return 1
-        
-        # Decrypt password
-        password = ""
-        if repo.get("password"):
-            password = settings_manager.password_manager.decrypt(repo["password"])
-        
-        # Build command
-        env = build_repo_env(
-            repo,
-            password,
-            password_manager=settings_manager.password_manager,
-        )
-        args = repo_restic_prefix(repo) + ["backup", "--json"]
-        
-        # Add paths
-        args.extend(job["paths"])
-        
-        # Add tags
-        if job.get("tags"):
-            for tag in job["tags"]:
-                args.extend(["--tag", tag])
-        
-        # Add exclude patterns
-        if job.get("exclude_patterns"):
-            for pattern in job["exclude_patterns"]:
-                args.extend(["--exclude", pattern])
-        
-        # Add options
-        if job.get("exclude_caches", True):
-            args.append("--exclude-caches")
-        
-        if job.get("pack_size", 0) > 0:
-            args.extend(["--pack-size", str(job["pack_size"])])
-        
-        if job.get("one_file_system", False):
-            args.append("--one-file-system")
-        
-        if job.get("exclude_if_present"):
-            args.extend(["--exclude-if-present", job["exclude_if_present"]])
-        
-        # Compression
-        compression = job.get("compression", "auto")
-        if compression and compression != "off":
-            args.extend(["--compression", compression])
-        
-        # No cache
-        if job.get("no_cache", False):
-            args.append("--no-cache")
-        
-        # Ignore inode
-        if job.get("ignore_inode", False):
-            args.append("--ignore-inode")
+            except Exception as exc:
+                print(f"[WARN] Failed to write app log: {exc}")
 
-        # Skip creating a snapshot when nothing changed vs parent
-        if job.get("skip_if_unchanged", True):
-            args.append("--skip-if-unchanged")
-        
-        print(f"[Restic Desktop CLI] Running backup...")
-        print(f"[Restic Desktop CLI] Repository: {repo['path']}")
-        print(f"[Restic Desktop CLI] Paths: {', '.join(job['paths'])}")
-        
-        # Run backup
-        backup_timeout = job.get("timeout", 7200)  # Default 2 hours if not set
-        print(f"[Restic Desktop CLI] Timeout: {backup_timeout} seconds ({backup_timeout // 60} minutes)")
-        started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        started_mono = time.time()
-        success, stdout, stderr = restic_cmd.run(args, env, timeout=backup_timeout)
-        duration_sec = time.time() - started_mono
+            if success:
+                print(f"[Restic Desktop CLI] ✓ Backup to '{repo_name}' succeeded")
+            else:
+                all_succeeded = False
+                last_stderr = stderr or "Unknown error"
+                print(f"[Restic Desktop CLI] ✗ Backup to '{repo_name}' failed: {last_stderr}")
 
-        snap_id = (
-            history_db.extract_snapshot_short_id(stdout or "") if success else None
-        )
-        skipped = bool(success) and history_db.backup_skipped_unchanged(stdout or "")
-        error_summary = None if success else ((stderr or "Unknown error")[:500])
-        try:
-            history_db.insert_job_run(
-                job_name=job_name,
-                repo_name=repo_name,
-                started_at=started_at,
-                duration_sec=duration_sec,
-                success=bool(success),
-                exit_code=0 if success else 1,
-                source="cli",
-                error_summary=error_summary,
-                snapshot_short_id=snap_id,
-                db_path=db_path,
-            )
-        except Exception as exc:
-            print(f"[WARN] Failed to record job run: {exc}")
-
-        try:
-            history_db.log_job_run_outcome(
-                job_name=job_name,
-                repo_name=repo_name or "",
-                success=bool(success),
-                source="cli",
-                duration_sec=duration_sec,
-                exit_code=0 if success else 1,
-                error_summary=error_summary,
-                snapshot_short_id=snap_id,
-                skipped_unchanged=skipped,
-                db_path=db_path,
-            )
-        except Exception as exc:
-            print(f"[WARN] Failed to write app log: {exc}")
-        
-        # Stamp last_run only on success
-        if success:
+        # Stamp last_run only if all repositories succeeded
+        if all_succeeded:
             stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             job["last_run"] = stamp
             if job.get("schedule") is None:
@@ -13502,15 +15809,12 @@ def run_job_cli(job_name):
                     break
             settings_manager.set("backup_jobs", jobs)
             settings_manager.save_settings()
-        
-        if success:
-            print(f"[Restic Desktop CLI] ✓ Backup completed successfully!")
-            print(f"[Restic Desktop CLI] Output saved to log")
+            print("[Restic Desktop CLI] ✓ Backup completed successfully for all repositories")
             return 0
-        else:
-            print(f"[Restic Desktop CLI] ✗ Backup failed!")
-            print(f"[ERROR] {stderr}")
-            return 1
+
+        print("[Restic Desktop CLI] ✗ Backup failed for one or more repositories")
+        print(f"[ERROR] {last_stderr}")
+        return 1
     
     except Exception as e:
         print(f"[ERROR] Exception occurred: {str(e)}")
@@ -13591,6 +15895,42 @@ def record_job_run_cli(args) -> int:
         return 1
 
 
+def decrypt_rclone_conf_cli(out_path: str) -> int:
+    """Decrypt encrypted-at-rest `rclone.conf` into `out_path` (CLI helper)."""
+    try:
+        settings_manager = ResticSettingsManager()
+        enc = (settings_manager.get("rclone_conf_encrypted") or "").strip()
+        if not enc:
+            print("[ERROR] No encrypted rclone.conf found in settings.")
+            return 1
+
+        decrypted = settings_manager.password_manager.decrypt(enc)
+        if not decrypted.strip():
+            print("[ERROR] Decrypted rclone.conf was empty.")
+            return 1
+
+        out_path = str(out_path or "").strip()
+        if not out_path:
+            out_path = os.path.join(
+                tempfile.gettempdir(),
+                f"resticdesk_rclone_{os.getpid()}.conf",
+            )
+
+        out_dir = os.path.dirname(out_path)
+        if out_dir and not os.path.isdir(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(decrypted)
+
+        # Print the output path (useful for PowerShell scripting).
+        print(out_path)
+        return 0
+    except Exception as e:
+        print(f"[ERROR] Failed to decrypt rclone.conf: {e}")
+        return 1
+
+
 def main():
 
     parser = argparse.ArgumentParser(
@@ -13627,6 +15967,17 @@ def main():
         metavar='JOB_NAME',
         help='Record a completed job run into the history database (no restic call).'
     )
+    cli_group.add_argument(
+        '--decrypt-rclone-conf',
+        action='store_true',
+        help='Decrypt encrypted-at-rest rclone.conf to a plaintext temp file (CLI helper).',
+    )
+    cli_group.add_argument(
+        '--rclone-conf-out',
+        type=str,
+        default='',
+        help='Output path for --decrypt-rclone-conf.',
+    )
     cli_group.add_argument('--repo-name', type=str, default='', help='Repository name for --record-job-run.')
     cli_group.add_argument('--duration', type=float, default=None, help='Duration in seconds for --record-job-run.')
     cli_group.add_argument('--success', type=str, default='0', help='1/0 success flag for --record-job-run.')
@@ -13647,6 +15998,8 @@ def main():
         print("Debug mode enabled: Debug information will be printed to console.")
     
     # Handle CLI mode (for scheduled tasks)
+    if args.decrypt_rclone_conf:
+        return decrypt_rclone_conf_cli(args.rclone_conf_out)
     if args.record_job_run:
         return record_job_run_cli(args)
     if args.run_job:

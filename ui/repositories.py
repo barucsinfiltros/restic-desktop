@@ -371,6 +371,19 @@ def populate_repository_table(
         name = repo.get("name", "") or "—"
         path = repo.get("path", "") or "—"
         repo_type = repo.get("type", "local") or "local"
+        if repo_type == "cloud":
+            provider = (repo.get("cloud_provider") or "").strip()
+            if provider:
+                try:
+                    import core.rclone_util as rclone_util
+
+                    repo_type = f"cloud/{rclone_util.provider_label(provider)}"
+                except Exception:
+                    repo_type = f"cloud/{provider}"
+        elif repo_type == "network":
+            repo_type = "network share"
+        elif repo_type in ("https", "rest"):
+            repo_type = "HTTPS REST"
         last_checked = repo.get("last_checked", "Never") or "Never"
         last_sort = 0.0
         if last_checked and last_checked != "Never":

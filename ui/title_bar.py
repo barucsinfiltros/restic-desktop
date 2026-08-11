@@ -24,6 +24,7 @@ class TitleBar(QWidget):
     refresh_clicked = Signal()
     add_repository_clicked = Signal()
     add_backup_job_clicked = Signal()
+    add_destination_sync_clicked = Signal()
     browse_files_clicked = Signal()
     start_restore_clicked = Signal()
     dry_run_retention_clicked = Signal()
@@ -89,6 +90,12 @@ class TitleBar(QWidget):
             "add.svg",
             self.add_backup_job_clicked.emit,
         )
+        self._add_destination_sync_btn = self._make_action_btn(
+            "  Add Destination / Sync",
+            "Add a new destination repo and optionally backfill snapshots",
+            "repository.svg",
+            self.add_destination_sync_clicked.emit,
+        )
         self._browse_files_btn = self._make_action_btn(
             "  Browse Files",
             "Browse all snapshots in the repository and restore specific files",
@@ -128,6 +135,7 @@ class TitleBar(QWidget):
         row.addWidget(self._refresh_btn)
         row.addWidget(self._add_repo_btn)
         row.addWidget(self._add_job_btn)
+        row.addWidget(self._add_destination_sync_btn)
         row.addWidget(self._browse_files_btn)
         row.addWidget(self._start_restore_btn)
         row.addWidget(self._dry_run_retention_btn)
@@ -141,6 +149,7 @@ class TitleBar(QWidget):
             self._refresh_btn.hide()
             self._add_repo_btn.hide()
             self._add_job_btn.hide()
+            self._add_destination_sync_btn.hide()
             self._browse_files_btn.hide()
             self._start_restore_btn.hide()
             self._dry_run_retention_btn.hide()
@@ -208,6 +217,7 @@ class TitleBar(QWidget):
         self._refresh_btn.setVisible(show_refresh)
         self._add_repo_btn.setVisible(page_index == 1)
         self._add_job_btn.setVisible(page_index == 4)
+        self._add_destination_sync_btn.setVisible(page_index == 4)
         self._browse_files_btn.setVisible(page_index == 3)
         self._start_restore_btn.setVisible(page_index == 3)
         self._dry_run_retention_btn.setVisible(page_index == 5)

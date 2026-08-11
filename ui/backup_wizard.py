@@ -251,14 +251,6 @@ class BackupWizard(WizardDialog):
     def _validate_schedule(self) -> str:
         if (
             self.schedule_enabled.isChecked()
-            and len(self.repos_list.selectedItems()) > 1
-        ):
-            return (
-                "Scheduled backups currently support one repository. "
-                "Select one repository or leave scheduling disabled."
-            )
-        if (
-            self.schedule_enabled.isChecked()
             and self.frequency_combo.currentText() == "Weekly"
             and not any(check.isChecked() for check in self.day_checks.values())
         ):

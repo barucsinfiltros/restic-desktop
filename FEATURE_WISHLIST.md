@@ -50,7 +50,8 @@ Audience: people who want a proper restic app, not an enterprise Veeam/Acronis r
 
 ## Nice later (don’t block a solid 1.0)
 
-10. Cloud backends (S3 / B2 / etc.) with proper credential forms  
+10. Cloud backends (OneDrive / Google Drive / … via rclone; S3/B2/Azure native) ✅ Done
+    - Settings → Dependencies for rclone; Cloud provider subtypes; connect-only network shares; rclone.conf in settings backup
 11. Richer snapshot tags / search filters; compare jobs  
 12. Bandwidth limits / schedule windows (“only after 11pm”)  
 13. Linux / macOS scheduling parity (if those platforms matter)  
