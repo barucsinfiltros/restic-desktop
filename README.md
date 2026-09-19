@@ -208,7 +208,7 @@ Application messages appear on the **Logs** page (filterable by Errors / Warning
 
 ## License and third-party notices
 
-- **Restic Desktop** source code is released under the [MIT License](LICENSE).
+- **Restic Desktop** source code is released under the [MIT License](LICENSE)
 - **PySide6 / Qt** are used under their LGPL terms (see the Qt Company / PySide6 documentation).
 - **restic** is separate software under its own license — see [restic.net](https://restic.net/).
 
