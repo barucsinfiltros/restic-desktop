@@ -22,6 +22,7 @@ License generator GUI:
 import argparse
 from typing import Optional, List, Dict, Tuple, Any, Sequence
 from collections import deque
+from contextlib import ExitStack
 import json
 import os
 import re
@@ -34,7 +35,6 @@ import hmac
 import hashlib
 import tempfile
 import shutil
-import stat
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -50,6 +50,7 @@ import core.history_db as history_db
 import core.rclone_util as rclone_util
 import core.network_share as network_share
 from core import restic_supervisor
+from core.restore_destination import guard_destination
 from ui.backup_worker import BackupWorker
 from ui.title_bar import TitleBar
 from ui.framed_dialog import FramedDialog
@@ -1314,7 +1315,8 @@ class ResticCommand:
                 process_callback(None)
     
     def run_with_progress(self, args: List[str], env: Optional[Dict[str, str]] = None,
-                         progress_callback=None, timeout: int = 3600) -> Tuple[bool, str, str]:
+                         progress_callback=None, timeout: int = 3600,
+                         restore_destination=None) -> Tuple[bool, str, str]:
         """
         Execute a restic command with real-time progress updates
         progress_callback will be called with each line of output
@@ -1329,16 +1331,23 @@ class ResticCommand:
         if self.debug:
             print(f"[RESTIC] Running: {' '.join(cmd)}")
         
+        guards = ExitStack()
         try:
             import time
             import threading
             from queue import Queue, Empty
-            
+
+            if restore_destination is not None:
+                try:
+                    guards.enter_context(guard_destination(*restore_destination))
+                except (OSError, ValueError):
+                    return False, "", "The restore destination changed or could not be verified."
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
+                stdin=subprocess.DEVNULL if restore_destination is not None else subprocess.PIPE,
                 text=True,
                 encoding='utf-8',
                 errors='replace',
@@ -1481,6 +1490,8 @@ class ResticCommand:
             
         except Exception as e:
             return False, "", str(e)
+        finally:
+            guards.close()
     
     def version(self) -> Optional[str]:
         """Get Restic version"""
@@ -1538,13 +1549,14 @@ class ResticWorker(QThread):
     progress_data = Signal(dict)  # structured progress data
     
     def __init__(self, restic_cmd: ResticCommand, args: List[str], env: Optional[Dict] = None, 
-                 timeout: int = 300, use_progress: bool = False):
+                 timeout: int = 300, use_progress: bool = False, *, restore_destination=None):
         super().__init__()
         self.restic_cmd = restic_cmd
         self.args = args
         self.env = env or {}
         self.timeout = timeout
         self.use_progress = use_progress
+        self.restore_destination = restore_destination
         self._process = None
 
     def _set_process(self, process) -> None:
@@ -1573,7 +1585,8 @@ class ResticWorker(QThread):
                 success, stdout, stderr = self.restic_cmd.run_with_progress(
                     self.args, self.env, 
                     progress_callback=self._parse_progress,
-                    timeout=self.timeout
+                    timeout=self.timeout,
+                    restore_destination=self.restore_destination,
                 )
             else:
                 # Standard execution
@@ -7654,25 +7667,19 @@ class ResticManagerWindow(QMainWindow):
             return
 
         try:
-            check_path = target_dir
-            while not os.path.exists(check_path):
-                parent = os.path.dirname(check_path)
-                if not parent or parent == check_path:
-                    break
-                check_path = parent
-            if check_path and os.path.exists(check_path):
-                free_gb = shutil.disk_usage(check_path).free / (1024**3)
-                if free_gb < 1 and not show_framed_message(
-                    parent_dialog,
-                    "Low Disk Space",
-                    f"Only {free_gb:.2f} GB is free at the restore destination.\n\n"
-                    "Continue with the restore anyway?",
-                    kind="warning",
-                    buttons="yes_no",
-                ):
-                    return
-        except Exception as exc:
-            self.log(f"Warning: Could not check restore disk space: {exc}")
+            with guard_destination(target_dir) as (destination, _):
+                free_gb = shutil.disk_usage(destination).free / (1024**3)
+            if free_gb < 1 and not show_framed_message(
+                parent_dialog,
+                "Low Disk Space",
+                f"Only {free_gb:.2f} GB is free at the restore destination.\n\n"
+                "Continue with the restore anyway?",
+                kind="warning",
+                buttons="yes_no",
+            ):
+                return
+        except (OSError, ValueError):
+            self.log("Warning: Could not verify available space at the restore destination.")
 
         short_id = str(snapshot_id)[:8]
         self.log(
@@ -11188,17 +11195,11 @@ class ResticManagerWindow(QMainWindow):
     ) -> ResticWorker | None:
         """Contain legacy restoration to a separate, empty directory."""
         try:
-            destination = Path(target)
-            flags = getattr(destination.lstat(), "st_file_attributes", 0)
-            if (not destination.is_absolute() or destination.is_symlink()
-                    or flags & stat.FILE_ATTRIBUTE_REPARSE_POINT):
-                raise ValueError
-            with os.scandir(destination) as entries:
-                if next(entries, None) is not None:
-                    raise ValueError
+            with guard_destination(target) as (destination, identity):
+                target = str(destination)
         except (OSError, ValueError):
             show_framed_message(
-                self, "Restore destination", "Select an existing, empty folder at a separate location.",
+                self, "Restore destination", "Select an existing, empty folder with no linked path components.",
                 kind="warning",
             )
             return None
@@ -11222,6 +11223,7 @@ class ResticManagerWindow(QMainWindow):
             env,
             timeout=3600,
             use_progress=True,
+            restore_destination=(target, identity),
         )
         if on_progress is not None:
             worker.progress.connect(on_progress)
@@ -11271,28 +11273,9 @@ class ResticManagerWindow(QMainWindow):
             return
 
         # Check available disk space on target location
-        import shutil
         try:
-            # Get disk usage statistics for the target path
-            # If path doesn't exist, check its parent or drive
-            check_path = target
-            import os
-            while not os.path.exists(check_path) and check_path:
-                parent = os.path.dirname(check_path)
-                if parent == check_path:  # Reached root
-                    break
-                check_path = parent
-            
-            if not check_path:
-                # Fallback to checking the drive letter on Windows
-                import platform
-                if platform.system() == "Windows" and len(target) > 2:
-                    check_path = target[:3]  # e.g., "C:\"
-                else:
-                    check_path = "/"
-            
-            total, used, free = shutil.disk_usage(check_path)
-            free_gb = free / (1024**3)
+            with guard_destination(target) as (destination, _):
+                free_gb = shutil.disk_usage(destination).free / (1024**3)
             
             # Warn if less than 1GB free
             if free_gb < 1:
@@ -11308,8 +11291,8 @@ class ResticManagerWindow(QMainWindow):
                     return
             else:
                 self.log(f"Available space on target: {free_gb:.2f} GB")
-        except Exception as e:
-            self.log(f"Warning: Could not check disk space: {e}")
+        except (OSError, ValueError):
+            self.log("Warning: Could not verify available space at the restore destination.")
         
         # Get snapshot ID
         snapshot_id = self.restore_snapshot_combo.currentData()
@@ -12699,6 +12682,8 @@ class ResticManagerWindow(QMainWindow):
         source: str = "gui",
         error_summary: Optional[str] = None,
         snapshot_short_id: Optional[str] = None,
+        outcome: Optional[str] = None,
+        stop_reason: Optional[str] = None,
     ) -> None:
         try:
             history_db.insert_job_run(
@@ -12711,6 +12696,8 @@ class ResticManagerWindow(QMainWindow):
                 source=source,
                 error_summary=error_summary,
                 snapshot_short_id=snapshot_short_id,
+                outcome=outcome,
+                stop_reason=stop_reason,
                 db_path=self._history_db_path(),
             )
         except Exception as exc:
@@ -12770,11 +12757,10 @@ class ResticManagerWindow(QMainWindow):
             body="Restic will finish its current process. Remaining destinations will be skipped.",
             confirm_label="Stop Job",
         ) and worker.cancel():
-            self._on_backup_stopping(restic_supervisor.Outcome.CANCELLED)
+            self._on_backup_stopping(restic_supervisor.StopReason.CANCELLED)
 
     def _on_backup_stopping(self, reason):
-        verb = "Time limit reached" if reason is restic_supervisor.Outcome.TIMED_OUT else "Stop requested"
-        self._backup_status_label.setText(f"{verb}. Waiting for Restic to exit…")
+        self._backup_status_label.setText(f"{reason.message}. Waiting for Restic to exit…")
         self._backup_cancel_btn.setEnabled(False)
 
     def _on_backup_progress(self, progress_info):
@@ -12871,13 +12857,13 @@ class ResticManagerWindow(QMainWindow):
             restic_supervisor.Outcome.COMPLETED: "Backup completed",
             restic_supervisor.Outcome.UNCHANGED: "No changes; snapshot skipped",
             restic_supervisor.Outcome.INCOMPLETE: "Backup incomplete",
-            restic_supervisor.Outcome.CANCELLED: "Backup job stopped",
-            restic_supervisor.Outcome.TIMED_OUT: "Backup time limit exceeded",
             restic_supervisor.Outcome.INTERRUPTED: "Backup interrupted",
             restic_supervisor.Outcome.START_FAILED: "Could not start Restic",
             restic_supervisor.Outcome.FAILED: "Backup failed",
         }
         label = labels[outcome]
+        if result.stop_reason is not None:
+            label = f"{label} ({result.stop_reason.message.lower()})"
         diagnostic = " ".join(part for part in (result.detail, result.stderr.strip()) if part)
         snapshot = result.snapshot_id
         self._record_job_run(
@@ -12890,6 +12876,8 @@ class ResticManagerWindow(QMainWindow):
             source="gui",
             error_summary=None if result.succeeded else f"{label}: {diagnostic}"[:500],
             snapshot_short_id=snapshot[:8] if snapshot else None,
+            outcome=result.outcome.value,
+            stop_reason=result.stop_reason.value if result.stop_reason else None,
         )
         self._backup_all_succeeded = self._backup_all_succeeded and result.succeeded
         self._backup_status_label.setText(label)
@@ -12906,10 +12894,8 @@ class ResticManagerWindow(QMainWindow):
         if snapshot and hasattr(self, "snapshots_table"):
             QTimer.singleShot(1000, self.load_snapshots)
 
-        if outcome in (
-            restic_supervisor.Outcome.CANCELLED,
-            restic_supervisor.Outcome.TIMED_OUT,
-            restic_supervisor.Outcome.INTERRUPTED,
+        if result.stops_batch and (
+            not result.succeeded or self._current_repo_index + 1 < self._total_repos
         ):
             self._backup_batch_active = False
             self._backup_close_btn.setEnabled(True)
@@ -15500,7 +15486,7 @@ def run_job_cli(job_name):
         last_stderr = ""
         failure_code = None
 
-        for repo_name in repositories_to_backup:
+        for repo_index, repo_name in enumerate(repositories_to_backup):
             repo = next((r for r in repositories if r.get("name") == repo_name), None)
             if not repo:
                 all_succeeded = False
@@ -15562,8 +15548,10 @@ def run_job_cli(job_name):
             snap_id = result.snapshot_id[:8] if result and result.snapshot_id else None
             skipped = result is not None and result.outcome is restic_supervisor.Outcome.UNCHANGED
             if result is not None:
-                diagnostic = f"{result.outcome.value}: {result.detail} {result.stderr.strip()}"
+                stop_note = f" ({result.stop_reason.message.lower()})" if result.stop_reason else ""
+                diagnostic = f"{result.outcome.value}{stop_note}: {result.detail} {result.stderr.strip()}"
             else:
+                stop_note = ""
                 diagnostic = "Could not prepare or access the repository."
             error_summary = None if success else diagnostic.strip()[:500]
 
@@ -15579,6 +15567,8 @@ def run_job_cli(job_name):
                     error_summary=error_summary,
                     snapshot_short_id=snap_id,
                     db_path=db_path,
+                    outcome=result.outcome.value if result else None,
+                    stop_reason=result.stop_reason.value if result and result.stop_reason else None,
                 )
             except Exception as exc:
                 print(f"[WARN] Failed to record job run: {exc}")
@@ -15601,17 +15591,19 @@ def run_job_cli(job_name):
 
             if success:
                 label = "No changes; snapshot skipped" if skipped else "Backup completed"
-                print(f"[Restic Desktop CLI] {label}: '{repo_name}'")
+                print(f"[Restic Desktop CLI] {label}{stop_note}: '{repo_name}'")
             else:
                 all_succeeded = False
                 if failure_code is None and exit_code is not None and 1 <= exit_code <= 255:
                     failure_code = exit_code
                 last_stderr = error_summary or "Unknown error"
                 print(f"[Restic Desktop CLI] ✗ Backup to '{repo_name}' failed: {last_stderr}")
-                if result and result.outcome in (
-                    restic_supervisor.Outcome.TIMED_OUT, restic_supervisor.Outcome.INTERRUPTED
-                ):
-                    break
+
+            if result and result.stops_batch:
+                if repo_index + 1 < len(repositories_to_backup):
+                    print("[Restic Desktop CLI] Remaining repositories were skipped.")
+                    return failure_code or 1
+                break
 
         # Stamp last_run only if all repositories succeeded
         if all_succeeded:

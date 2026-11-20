@@ -32,10 +32,17 @@ class Outcome(str, Enum):
     UNCHANGED = "unchanged"
     FAILED = "failed"
     INCOMPLETE = "incomplete"
-    CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
-    TIMED_OUT = "timed_out"
     START_FAILED = "start_failed"
+
+
+class StopReason(str, Enum):
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+
+    @property
+    def message(self) -> str:
+        return "Time limit reached" if self is StopReason.TIMED_OUT else "Stop requested"
 
 
 class StopPolicy(str, Enum):
@@ -80,10 +87,21 @@ class ExecutionResult:
     stderr: str = field(default="", repr=False)
     detail: str = ""
     output_truncated: bool = False
+    stop_reason: StopReason | None = None
 
     @property
     def succeeded(self) -> bool:
         return self.outcome in (Outcome.COMPLETED, Outcome.UNCHANGED)
+
+    @property
+    def snapshot_created(self) -> bool | None:
+        if self.snapshot_id is not None:
+            return True
+        return False if self.outcome is Outcome.UNCHANGED else None
+
+    @property
+    def stops_batch(self) -> bool:
+        return self.stop_reason is not None or self.outcome is Outcome.INTERRUPTED
 
 
 class Execution:
@@ -98,7 +116,7 @@ class Execution:
         self._done = Event()
         self._exited = Event()
         self._result: ExecutionResult | None = None
-        self._stop_reason: Outcome | None = None
+        self._stop_reason: StopReason | None = None
         self._progress: deque[Progress] = deque(maxlen=256)
 
     @property
@@ -111,7 +129,7 @@ class Execution:
             return ExecutionState.RUNNING
 
     @property
-    def stop_reason(self) -> Outcome | None:
+    def stop_reason(self) -> StopReason | None:
         with self._lock:
             return self._stop_reason
 
@@ -125,7 +143,7 @@ class Execution:
         return self.pid is not None and not self._exited.is_set()
 
     def cancel(self) -> bool:
-        return self._request_stop(Outcome.CANCELLED)
+        return self._request_stop(StopReason.CANCELLED)
 
     def wait(self, timeout: float | None = None) -> ExecutionResult | None:
         return self._result if self._done.wait(timeout) else None
@@ -136,7 +154,7 @@ class Execution:
             self._progress.clear()
             return events
 
-    def _request_stop(self, reason: Outcome) -> bool:
+    def _request_stop(self, reason: StopReason) -> bool:
         with self._lock:
             if self._result is not None or self._stop_reason is not None or self._exited.is_set():
                 return False
@@ -274,17 +292,13 @@ def _prepare(request: ExecutionRequest) -> tuple[list[str], dict[str, str], Path
     raise _InvalidRequest("The configured executable could not be resolved.")
 
 
-def _classify(request: ExecutionRequest, code: int, final_stdout: bytes) -> tuple[Outcome, str | None, str]:
-    if code == 130 or code < 0 or code == 0xC000013A:
-        return Outcome.INTERRUPTED, None, "Process was interrupted."
-    if code != 0 and not (request.validate_backup and code == 3):
-        return Outcome.FAILED, None, "Process returned a non-zero exit code."
-    if not request.validate_backup:
-        return Outcome.COMPLETED, None, ""
-    try:
-        summary = json.loads(final_stdout)
-    except (ValueError, UnicodeDecodeError):
-        summary = None
+def _classify(request: ExecutionRequest, code: int | None, final_stdout: bytes) -> tuple[Outcome, str | None, str]:
+    summary = None
+    if request.validate_backup:
+        try:
+            summary = json.loads(final_stdout)
+        except (ValueError, UnicodeDecodeError):
+            pass
     has_summary = (
         isinstance(summary, dict)
         and summary.get("message_type") == "summary"
@@ -292,16 +306,23 @@ def _classify(request: ExecutionRequest, code: int, final_stdout: bytes) -> tupl
         and type(summary.get("total_files_processed")) is int
         and summary["total_files_processed"] >= 0
     )
-    if has_summary:
-        snapshot = summary.get("snapshot_id")
-        if isinstance(snapshot, str) and _SNAPSHOT_ID.fullmatch(snapshot):
-            if code == 3:
-                return Outcome.INCOMPLETE, snapshot, "Some source data could not be read."
-            return Outcome.COMPLETED, snapshot, ""
-        if code == 0 and "snapshot_id" not in summary and request.allow_unchanged:
-            return Outcome.UNCHANGED, None, ""
-    if code == 3:
-        return Outcome.INCOMPLETE, None, "Some source data could not be read."
+    snapshot = summary.get("snapshot_id") if has_summary else None
+    if not isinstance(snapshot, str) or not _SNAPSHOT_ID.fullmatch(snapshot):
+        snapshot = None
+    if code is None:
+        return Outcome.INTERRUPTED, snapshot, "Process exit code could not be confirmed."
+    if code == 130 or code < 0 or code == 0xC000013A:
+        return Outcome.INTERRUPTED, snapshot, "Process was interrupted."
+    if request.validate_backup and code == 3:
+        return Outcome.INCOMPLETE, snapshot, "Some source data could not be read."
+    if code != 0:
+        return Outcome.FAILED, snapshot, "Process returned a non-zero exit code."
+    if not request.validate_backup:
+        return Outcome.COMPLETED, None, ""
+    if snapshot is not None:
+        return Outcome.COMPLETED, snapshot, ""
+    if has_summary and "snapshot_id" not in summary and request.allow_unchanged:
+        return Outcome.UNCHANGED, None, ""
     return Outcome.FAILED, None, "No valid final Restic backup summary was received."
 
 
@@ -310,10 +331,12 @@ def _finish(
     outcome: Outcome, code: int | None = None, **details,
 ) -> None:
     with handle._lock:
+        if handle._result is not None:
+            return
         handle._result = ExecutionResult(
             handle.execution_id, handle.pid, handle.started_at, datetime.now(timezone.utc),
-            time.monotonic() - launched_at, handle._stop_reason or outcome, code,
-            request.profile_ref, request.repository_ref, **details,
+            time.monotonic() - launched_at, outcome, code,
+            request.profile_ref, request.repository_ref, stop_reason=handle._stop_reason, **details,
         )
         handle._done.set()
 
@@ -345,21 +368,31 @@ def _monitor(handle: Execution, request: ExecutionRequest, process, launched_at:
                 stream.close()
         return received
 
-    while process.poll() is None:
+    while True:
+        with handle._lock:
+            code = process.poll()
+            if code is not None:
+                handle._exited.set()
+                break
         if deadline is not None and time.monotonic() >= deadline:
-            handle._request_stop(Outcome.TIMED_OUT)
+            # Output processing may have taken long enough for the child to exit.
+            with handle._lock:
+                code = process.poll()
+                if code is not None:
+                    handle._exited.set()
+                    break
+                if handle._stop_reason is None:
+                    handle._stop_reason = StopReason.TIMED_OUT
         if handle.stop_reason is not None and not termination_attempted and request.stop_policy is StopPolicy.TERMINATE_CHILD:
             termination_attempted = True
             try:
                 process.terminate()
             except OSError:
-                termination_failed = process.poll() is None
+                termination_failed = True
         if not drain():
             handle._wake.wait(0.02)
             handle._wake.clear()
 
-    code = process.wait()
-    handle._exited.set()
     # Drain currently available bytes. A descendant keeping a pipe open cannot
     # postpone completion of the direct child or force an unbounded final drain.
     for _ in range(64):
@@ -372,13 +405,9 @@ def _monitor(handle: Execution, request: ExecutionRequest, process, launched_at:
     stdout, stderr = captures
     outcome, snapshot, detail = _classify(request, code, stdout.last_record)
     if capture_failed:
-        outcome, detail = Outcome.FAILED, "Subprocess output capture was incomplete."
-    if handle.stop_reason is not None:
-        detail = (
-            "Stop requested; direct process has exited."
-            if not termination_failed
-            else "Termination request failed; direct process subsequently exited."
-        )
+        detail = f"{detail} Subprocess output capture was incomplete.".strip()
+    if termination_failed:
+        detail = f"{detail} The termination call failed or the process had already exited.".strip()
     _finish(
         handle, request, launched_at, outcome, code, snapshot_id=snapshot,
         stdout=stdout.output(), stderr=stderr.output(), detail=detail,

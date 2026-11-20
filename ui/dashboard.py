@@ -412,6 +412,13 @@ def show_jobs_context_menu(host: Any, global_pos) -> None:
         _show_last_run_details(host, job_name, parent=table)
 
 
+def _history_status(row) -> str:
+    outcome = row.get("outcome")
+    if outcome:
+        return outcome.replace("_", " ").capitalize()
+    return "Success" if row.get("success") else "Failed"
+
+
 def _show_last_run_details(host: Any, job_name: str, *, parent=None) -> None:
     """Show the latest job_runs row for a job."""
     try:
@@ -441,7 +448,7 @@ def _show_last_run_details(host: Any, job_name: str, *, parent=None) -> None:
         )
         return
 
-    status = "Success" if row.get("success") else "Failed"
+    status = _history_status(row)
     duration = history_db.format_duration(row.get("duration_sec"))
     error = (row.get("error_summary") or "").strip() or "—"
     snap = (row.get("snapshot_short_id") or "").strip() or "—"
@@ -449,6 +456,7 @@ def _show_last_run_details(host: Any, job_name: str, *, parent=None) -> None:
         f"Job: {row.get('job_name') or job_name}",
         f"Repository: {row.get('repo_name') or '—'}",
         f"Status: {status}",
+        f"Stop request: {(row.get('stop_reason') or '—').replace('_', ' ').capitalize()}",
         f"Duration: {duration}",
         f"Started: {row.get('started_at') or '—'}",
         f"Finished: {row.get('finished_at') or '—'}",
@@ -565,7 +573,8 @@ def populate_jobs_table(host: Any) -> None:
 
         status = "Scheduled" if schedule.get("enabled") else "Ready"
         if last_hist is not None:
-            status = "Success" if last_hist.get("success") else "Failed"
+            status = _history_status(last_hist)
+        status_for_rank = ("Success" if last_hist.get("success") else "Failed") if last_hist is not None else status
         last_display = (
             format_relative_time_short(str(last_run)) if last_run != "—" else "Never"
         )
@@ -599,7 +608,7 @@ def populate_jobs_table(host: Any) -> None:
             elif col == 1:
                 item.setData(_JOB_NAME_ROLE, job_name)
             elif col == 2:
-                item.setData(Qt.ItemDataRole.UserRole, status_rank.get(status, 0))
+                item.setData(Qt.ItemDataRole.UserRole, status_rank.get(status_for_rank, 0))
                 item.setData(_JOB_NAME_ROLE, job_name)
             elif col == 3:
                 item.setData(Qt.ItemDataRole.UserRole, duration_sec)
@@ -616,10 +625,10 @@ def populate_jobs_table(host: Any) -> None:
                 item.setForeground(muted_color)
                 item.setData(TableRowHover.BASE_FG_ROLE, muted)
                 item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
-            if col == 2 and status == "Success":
+            if col == 2 and status_for_rank == "Success":
                 item.setForeground(QColor(success_color))
                 item.setData(TableRowHover.LOCKED_FG_ROLE, success_color)
-            elif col == 2 and status == "Failed":
+            elif col == 2 and status_for_rank == "Failed":
                 item.setForeground(QColor(failed_color))
                 item.setData(TableRowHover.LOCKED_FG_ROLE, failed_color)
             if col == 3:

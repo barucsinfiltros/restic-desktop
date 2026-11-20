@@ -1,15 +1,16 @@
 import json
+from io import BytesIO
 import os
 from pathlib import Path
 import socket
 import subprocess
 import sys
-from threading import Event
-import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from core.restic_supervisor import ExecutionRequest, ExecutionState, Outcome, StopPolicy, start
+from core import restic_supervisor as supervisor
+from core.restic_supervisor import ExecutionRequest, ExecutionState, Outcome, StopPolicy, StopReason, start
 
 
 _GATED = (
@@ -76,14 +77,16 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(execution.process_is_running)
         connection.sendall(b"x")
         result = self.result(execution)
-        self.assertEqual((result.outcome, result.exit_code), (Outcome.CANCELLED, 0))
-        self.assertFalse(result.succeeded)
+        self.assertEqual((result.outcome, result.exit_code), (Outcome.COMPLETED, 0))
+        self.assertEqual(result.stop_reason, StopReason.CANCELLED)
+        self.assertTrue(result.succeeded)
 
     def test_opt_in_termination_is_observed(self):
         execution, connection = self.gated(stop_policy=StopPolicy.TERMINATE_CHILD)
         self.assertTrue(execution.cancel())
         result = self.result(execution)
-        self.assertEqual(result.outcome, Outcome.CANCELLED)
+        self.assertIn(result.outcome, (Outcome.FAILED, Outcome.INTERRUPTED))
+        self.assertEqual(result.stop_reason, StopReason.CANCELLED)
         self.assertNotEqual(result.exit_code, 0)
         connection.settimeout(5)
         try:
@@ -97,23 +100,87 @@ class SupervisorTests(unittest.TestCase):
             "import threading; threading.Event().wait(20)", timeout=0.2,
             stop_policy=StopPolicy.TERMINATE_CHILD,
         ))
-        self.assertEqual(result.outcome, Outcome.TIMED_OUT)
+        self.assertEqual(result.stop_reason, StopReason.TIMED_OUT)
+        self.assertIn(result.outcome, (Outcome.FAILED, Outcome.INTERRUPTED))
         self.assertNotEqual(result.exit_code, 0)
         self.assertFalse(result.succeeded)
 
-    def test_timeout_can_remain_pending_while_child_runs(self):
-        execution, connection = self.gated(timeout=0.5)
-        until = time.monotonic() + 5
-        poll = Event()
-        while execution.stop_reason is None and time.monotonic() < until:
-            poll.wait(0.01)
-        self.assertEqual(execution.stop_reason, Outcome.TIMED_OUT)
-        self.assertEqual(execution.state, ExecutionState.STOP_REQUESTED)
-        self.assertIsNone(execution.wait(0))
-        self.assertTrue(execution.process_is_running)
-        connection.sendall(b"x")
+    def monitor_backup(self, code, *, cancel=False, timeout=False, exit_before_timeout=False):
+        execution = supervisor.Execution()
+        execution.pid = 123
+        request = ExecutionRequest("fixture", ("backup",), validate_backup=True,
+                                   timeout=1 if timeout else None)
+        snapshot = "ab" * 32
+        summary = json.dumps({
+            "message_type": "summary", "snapshot_id": snapshot, "total_files_processed": 1,
+        }).encode()
+        child = SimpleNamespace(
+            stdout=BytesIO(summary + b"\n"), stderr=BytesIO(),
+            poll=Mock(side_effect=[None, code] if not timeout or exit_before_timeout else [None, None, code]),
+        )
+        if cancel:
+            self.assertTrue(execution.cancel())
+        inspected = False
+
+        def read(pipe):
+            nonlocal inspected
+            if not inspected:
+                inspected = True
+                if exit_before_timeout:
+                    self.assertFalse(execution.cancel())
+                else:
+                    self.assertEqual(execution.state, ExecutionState.STOP_REQUESTED)
+                    self.assertIsNone(execution.wait(0))
+                    self.assertTrue(execution.process_is_running)
+            return pipe.read()
+
+        progressed = []
+        original_emit = execution._emit
+
+        def emit(event):
+            progressed.append(execution.process_is_running)
+            original_emit(event)
+
+        with (
+            patch.object(supervisor.time, "monotonic", return_value=2),
+            patch.object(supervisor, "read_available", side_effect=read),
+            patch.object(supervisor, "prepare_pipe"),
+            patch.object(execution, "_emit", side_effect=emit),
+        ):
+            supervisor._monitor(execution, request, child, 0, lambda value: value)
         result = self.result(execution)
-        self.assertEqual((result.outcome, result.exit_code), (Outcome.TIMED_OUT, 0))
+        self.assertEqual(progressed, [not exit_before_timeout])
+        self.assertEqual(result.exit_code, code)
+        self.assertEqual(result.snapshot_id, snapshot)
+        self.assertTrue(result.snapshot_created)
+        self.assertEqual(result.stop_reason, None if exit_before_timeout else
+                         StopReason.CANCELLED if cancel else StopReason.TIMED_OUT)
+        supervisor._finish(execution, request, 0, Outcome.FAILED, 99)
+        self.assertIs(execution.wait(0), result)
+        return result
+
+    def test_cancel_preserves_success_incomplete_and_failure(self):
+        for code, expected in [(0, Outcome.COMPLETED), (3, Outcome.INCOMPLETE), (11, Outcome.FAILED)]:
+            with self.subTest(code=code):
+                result = self.monitor_backup(code, cancel=True)
+                self.assertEqual(result.outcome, expected)
+                self.assertTrue(result.stops_batch)
+
+    def test_timeout_preserves_success_and_failure(self):
+        for code, expected in [(0, Outcome.COMPLETED), (11, Outcome.FAILED)]:
+            with self.subTest(code=code):
+                result = self.monitor_backup(code, timeout=True)
+                self.assertEqual(result.outcome, expected)
+                self.assertTrue(result.stops_batch)
+
+    def test_exit_before_timeout_check_does_not_register_a_timeout(self):
+        result = self.monitor_backup(0, timeout=True, exit_before_timeout=True)
+        self.assertEqual(result.outcome, Outcome.COMPLETED)
+        self.assertFalse(result.stops_batch)
+
+    def test_unconfirmed_exit_is_interrupted(self):
+        request = ExecutionRequest("fixture", ("backup",), validate_backup=True)
+        self.assertEqual(supervisor._classify(request, None, b"")[0], Outcome.INTERRUPTED)
 
     def test_argument_list_preserves_windows_special_characters(self):
         args = ("a b", "a&b", 'a"b', "x|y", "^%!*", "á space\\", "")
@@ -200,6 +267,10 @@ class SupervisorTests(unittest.TestCase):
                 ))
                 self.assertEqual(result.outcome, wanted)
                 self.assertEqual(result.exit_code, code)
+                expected_created = False if wanted is Outcome.UNCHANGED else (
+                    True if wanted in (Outcome.COMPLETED, Outcome.INCOMPLETE) else None
+                )
+                self.assertIs(result.snapshot_created, expected_created)
 
     def test_environment_and_credential_redaction(self):
         secret = "fictitious-secret"

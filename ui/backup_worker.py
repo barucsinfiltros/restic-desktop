@@ -39,7 +39,7 @@ class BackupWorker(QObject):
         execution = self._execution
         result = execution.wait(0)
         stop = execution.stop_reason
-        if stop is not None and stop is not self._reported_stop:
+        if result is None and stop is not None and stop is not self._reported_stop:
             self._reported_stop = stop
             self.stopping.emit(stop)
         for event in execution.drain_progress():

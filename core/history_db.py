@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_DB_NAME = "restic_history.db"
 CACHE_KEY = "latest"
 
@@ -79,7 +79,9 @@ def migrate(db_path: Optional[str] = None) -> None:
                 exit_code INTEGER,
                 source TEXT NOT NULL,
                 error_summary TEXT,
-                snapshot_short_id TEXT
+                snapshot_short_id TEXT,
+                outcome TEXT,
+                stop_reason TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_job_runs_job_finished
@@ -117,6 +119,15 @@ def migrate(db_path: Optional[str] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs (ts);
             """
         )
+        columns = {column["name"] for column in conn.execute("PRAGMA table_info(job_runs)")}
+        if not {"outcome", "stop_reason"} <= columns:
+            # Serialize column additions across GUI and scheduled CLI processes.
+            conn.execute("BEGIN IMMEDIATE")
+            columns = {column["name"] for column in conn.execute("PRAGMA table_info(job_runs)")}
+            if "outcome" not in columns:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN outcome TEXT")
+            if "stop_reason" not in columns:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN stop_reason TEXT")
         row = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
@@ -149,6 +160,8 @@ def insert_job_run(
     source: str = "gui",
     error_summary: Optional[str] = None,
     snapshot_short_id: Optional[str] = None,
+    outcome: Optional[str] = None,
+    stop_reason: Optional[str] = None,
     db_path: Optional[str] = None,
 ) -> int:
     """Insert one job_runs row. Returns row id."""
@@ -162,8 +175,8 @@ def insert_job_run(
             """
             INSERT INTO job_runs (
                 job_name, repo_name, started_at, finished_at, duration_sec,
-                success, exit_code, source, error_summary, snapshot_short_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                success, exit_code, source, error_summary, snapshot_short_id, outcome, stop_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_name,
@@ -176,6 +189,8 @@ def insert_job_run(
                 source,
                 summary or None,
                 snapshot_short_id or None,
+                outcome,
+                stop_reason,
             ),
         )
         return int(cur.lastrowid)
