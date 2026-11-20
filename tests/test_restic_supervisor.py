@@ -241,7 +241,7 @@ class SupervisorTests(unittest.TestCase):
     def test_tail_limit_and_final_summary(self):
         summary = json.dumps({"message_type": "summary", "total_files_processed": 1, "snapshot_id": "ab" * 32})
         result = self.result(self.launch(
-            "import os, sys; [os.write(1, (b'x'*4095)+b'\\n') for _ in range(280)]; print(sys.argv[1])",
+            "import os, sys; [os.write(1, (b'x'*4095)+b'\\n') for _ in range(1100)]; print(sys.argv[1])",
             summary, validate_backup=True,
         ))
         self.assertEqual(result.outcome, Outcome.COMPLETED)

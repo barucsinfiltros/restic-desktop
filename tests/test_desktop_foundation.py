@@ -217,10 +217,10 @@ sys.exit(app.exec())
         import restic_manager as desktop
         from ui.dashboard import _history_status
 
-        for code, outcome, count, cli_code in (
-            (0, restic_supervisor.Outcome.COMPLETED, 2, 1),
-            (0, restic_supervisor.Outcome.COMPLETED, 1, 0),
-            (11, restic_supervisor.Outcome.FAILED, 2, 11),
+        for code, outcome, count, cli_code, reason in (
+            (0, restic_supervisor.Outcome.COMPLETED, 2, 1, restic_supervisor.StopReason.TIMED_OUT),
+            (0, restic_supervisor.Outcome.COMPLETED, 1, 0, restic_supervisor.StopReason.CANCELLED),
+            (11, restic_supervisor.Outcome.FAILED, 2, 11, restic_supervisor.StopReason.TIMED_OUT),
         ):
             with self.subTest(code=code, count=count):
                 folder = self.enterContext(tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent))
@@ -231,7 +231,7 @@ sys.exit(app.exec())
                     "repositories": [{"name": name} for name in names],
                     "restic_path": sys.executable,
                 }.get
-                result = _stopped_result(outcome, code, restic_supervisor.StopReason.TIMED_OUT)
+                result = _stopped_result(outcome, code, reason)
                 with (
                     patch.object(desktop, "ResticSettingsManager", return_value=settings),
                     patch.object(desktop, "build_repo_env", return_value={}),
@@ -244,9 +244,14 @@ sys.exit(app.exec())
                 db_path = desktop.history_db.history_db_path(settings.filename)
                 row = desktop.history_db.get_latest_job_run("fixture", db_path=db_path)
                 self.assertEqual((row["success"], row["exit_code"]), (int(code == 0), code))
-                self.assertEqual((row["outcome"], row["stop_reason"]), (outcome.value, "timed_out"))
+                self.assertEqual((row["outcome"], row["stop_reason"]), (outcome.value, reason.value))
                 self.assertEqual(row["snapshot_short_id"], "abababab")
                 self.assertEqual(_history_status(row), outcome.value.capitalize())
+                logs = desktop.history_db.load_logs(db_path=db_path)
+                self.assertEqual(len(logs), 1)
+                self.assertIn(f"[outcome={outcome.value}]", logs[0]["message"])
+                self.assertIn(f"[stop_reason={reason.value}]", logs[0]["message"])
+                self.assertEqual(logs[0]["level"], "info" if code == 0 else "error")
                 self.assertEqual(settings.save_settings.call_count, int(cli_code == 0))
 
     def test_history_migration_preserves_existing_rows(self):

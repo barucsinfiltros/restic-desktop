@@ -21,6 +21,28 @@ class RestoreDestinationTests(unittest.TestCase):
             self.assertEqual(path, self.target)
             self.assertEqual(len(identity), len(path.parts))
 
+    @unittest.skipUnless(os.name == "nt", "Windows path namespaces require Windows.")
+    def test_windows_normal_local_path_with_spaces_and_unicode(self):
+        target = self.root / "restauración con espacios"
+        target.mkdir()
+        with restore.guard_destination(target.as_posix()) as (path, _):
+            self.assertEqual(path, target)
+
+    @unittest.skipUnless(os.name == "nt", "Windows path namespaces require Windows.")
+    def test_windows_rejects_special_namespaces_and_reserved_components(self):
+        for path in (
+            r"\\server\share\folder",
+            "\\\\?\\" + str(self.target),
+            "\\\\.\\" + str(self.target),
+            self.root / "NUL.txt",
+            self.root / "directory.",
+            self.root / "directory ",
+            self.root / "directory:stream",
+        ):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                with restore.guard_destination(path):
+                    self.fail("Unsupported path was accepted")
+
     def test_missing_nonempty_and_invalid_paths(self):
         (self.target / "sentinel").touch()
         for bad in (self.root / "missing", self.target, "relative", self.root / "bad\0name"):

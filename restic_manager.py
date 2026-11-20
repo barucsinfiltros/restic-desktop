@@ -24,6 +24,7 @@ from typing import Optional, List, Dict, Tuple, Any, Sequence
 from collections import deque
 from contextlib import ExitStack
 import json
+import logging
 import os
 import re
 import shlex
@@ -1248,6 +1249,64 @@ class PasswordManager:
             return ""
 
 # Restic command wrapper
+def _confirm_restore_exit(process, reason, report_progress):
+    """Request a stop for this child and wait until its exit can be observed."""
+    warned = False
+
+    def report_pending():
+        nonlocal warned
+        if warned:
+            return
+        warned = True
+        message = "Restic exit is unconfirmed. The restore destination remains protected."
+        if report_progress is not None:
+            try:
+                report_progress(message)
+                return
+            except Exception:
+                pass
+        try:
+            logging.warning(message)
+        except Exception:
+            # Reporting cannot interrupt cleanup.
+            pass
+
+    try:
+        code = process.poll()
+    except Exception:
+        code = None
+    if code is not None:
+        return code
+
+    try:
+        if reason == "Restore cancellation requested":
+            process.terminate()
+            return process.wait(timeout=2)
+        process.kill()
+    except Exception:
+        report_pending()
+        if reason == "Restore cancellation requested":
+            try:
+                process.kill()
+            except Exception:
+                pass  # The wait loop still owns the live process.
+
+    while True:
+        try:
+            return process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            report_pending()
+        except Exception:
+            report_pending()
+            try:
+                code = process.poll()
+            except Exception:
+                code = None
+            if code is not None:
+                return code
+            time.sleep(0.25)
+
+
 class ResticCommand:
     """Wrapper for executing Restic commands"""
     
@@ -1316,7 +1375,7 @@ class ResticCommand:
     
     def run_with_progress(self, args: List[str], env: Optional[Dict[str, str]] = None,
                          progress_callback=None, timeout: int = 3600,
-                         restore_destination=None) -> Tuple[bool, str, str]:
+                         restore_destination=None, restore_cancelled=None) -> Tuple[bool, str, str]:
         """
         Execute a restic command with real-time progress updates
         progress_callback will be called with each line of output
@@ -1332,8 +1391,11 @@ class ResticCommand:
             print(f"[RESTIC] Running: {' '.join(cmd)}")
         
         guards = ExitStack()
+        process = None
+        observed_exit = None
+        interruption = None
+        partial_stdout = ""
         try:
-            import time
             import threading
             from queue import Queue, Empty
 
@@ -1415,17 +1477,22 @@ class ResticCommand:
             stdout_thread.start()
             stderr_thread.start()
             
-            start_time = time.time()
+            start_time = time.monotonic()
             
             # Process output as it comes
             while True:
-                # Check timeout
-                if timeout and (time.time() - start_time) > timeout:
+                poll_result = process.poll()
+                if poll_result is not None:
+                    observed_exit = poll_result
+                elif restore_cancelled is not None and restore_cancelled():
+                    interruption = "Restore cancellation requested"
+                    break
+                elif timeout and (time.monotonic() - start_time) > timeout:
+                    if restore_destination is not None:
+                        interruption = "Restore time limit reached"
+                        break
                     process.kill()
                     return False, "".join(stdout_lines), "Command timeout"
-                
-                # Check if process finished
-                poll_result = process.poll()
                 
                 # Read available stdout
                 try:
@@ -1475,23 +1542,24 @@ class ResticCommand:
                 
                 time.sleep(0.05)  # Small delay to prevent CPU spinning
             
-            # Wait for threads to finish
-            stdout_thread.join(timeout=1.0)
-            stderr_thread.join(timeout=1.0)
-            
-            success = process.returncode == 0
-            stdout = "".join(stdout_lines)
-            stderr = "".join(stderr_lines)
-            
-            if self.debug:
-                print(f"[RESTIC] Return code: {process.returncode}")
-            
-            return success, stdout, stderr
+            if interruption is None:
+                stdout_thread.join(timeout=1.0)
+                stderr_thread.join(timeout=1.0)
+                if self.debug:
+                    print(f"[RESTIC] Return code: {observed_exit}")
+                return observed_exit == 0, "".join(stdout_lines), "".join(stderr_lines)
+            partial_stdout = "".join(stdout_lines)
             
         except Exception as e:
-            return False, "", str(e)
+            if restore_destination is not None and process is not None:
+                interruption = interruption or f"Restore execution error ({type(e).__name__})"
+            else:
+                return False, "", str(e)
         finally:
+            if restore_destination is not None and process is not None and observed_exit is None:
+                observed_exit = _confirm_restore_exit(process, interruption or "Restore interrupted", progress_callback)
             guards.close()
+        return False, partial_stdout, f"{interruption}. Restic exit code: {observed_exit}."
     
     def version(self) -> Optional[str]:
         """Get Restic version"""
@@ -1564,7 +1632,7 @@ class ResticWorker(QThread):
         self._process = process
 
     def cancel(self) -> None:
-        """Request cancellation and stop a tracked standard-command subprocess."""
+        """Signal a guarded restore or stop a tracked standard-command child."""
         self.requestInterruption()
         process = self._process
         if process is None or process.poll() is not None:
@@ -1587,6 +1655,7 @@ class ResticWorker(QThread):
                     progress_callback=self._parse_progress,
                     timeout=self.timeout,
                     restore_destination=self.restore_destination,
+                    restore_cancelled=self.isInterruptionRequested if self.restore_destination is not None else None,
                 )
             else:
                 # Standard execution
@@ -5407,7 +5476,7 @@ class ResticManagerWindow(QMainWindow):
         """Switch to a different page"""
         # Handle Exit action
         if page_index == -1:
-            QApplication.instance().quit()
+            self.close()
             return
         
         self.stacked_widget.setCurrentIndex(page_index)
@@ -14227,6 +14296,9 @@ $arguments = @(
 
     def restore_settings(self):
         """Restore settings (and history DB when present) from an encrypted backup."""
+        if self._restore_operation_running():
+            show_framed_message(self, "Restore In Progress", "Wait for Restic before restarting the application.")
+            return
         import base64
         import hashlib
         import io
@@ -14346,6 +14418,9 @@ $arguments = @(
                 confirm_label="Restore",
                 danger=True,
             ):
+                return
+            if self._restore_operation_running():
+                show_framed_message(self, "Restore In Progress", "Wait for Restic before restarting the application.")
                 return
 
             self.settings_manager.settings = restored_settings
@@ -15294,19 +15369,14 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             )
             return
         
-        # Check for running restore
-        if hasattr(self, '_restore_worker') and self._restore_worker.isRunning():
-            running_operations.append("Restore operation")
+        if self._restore_operation_running():
+            event.ignore()
+            show_framed_message(self, "Restore In Progress", "Wait for Restic to exit before closing the application.")
+            return
         
         # Check for running copy
         if hasattr(self, '_copy_worker') and self._copy_worker.isRunning():
             running_operations.append("Copy operation")
-        if (
-            hasattr(self, "_browse_restore_worker")
-            and self._browse_restore_worker is not None
-            and self._browse_restore_worker.isRunning()
-        ):
-            running_operations.append("Restore operation")
         
         # Warn about running operations
         if running_operations:
@@ -15384,8 +15454,8 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
                 thread.quit()
                 thread.wait(1000)  # Wait 1 second per thread
                 
-                # If still running, terminate
-                if thread.isRunning():
+                # Guarded restores must confirm their own child exit.
+                if thread.isRunning() and getattr(thread, "restore_destination", None) is None:
                     thread.terminate()
                     thread.wait(500)  # Wait another 500ms after termination
 
@@ -15585,6 +15655,8 @@ def run_job_cli(job_name):
                     snapshot_short_id=snap_id,
                     skipped_unchanged=skipped,
                     db_path=db_path,
+                    outcome=result.outcome.value if result else None,
+                    stop_reason=result.stop_reason.value if result and result.stop_reason else None,
                 )
             except Exception as exc:
                 print(f"[WARN] Failed to write app log: {exc}")

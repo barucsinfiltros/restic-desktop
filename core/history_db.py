@@ -426,6 +426,8 @@ def log_job_run_outcome(
     snapshot_short_id: Optional[str] = None,
     skipped_unchanged: bool = False,
     db_path: Optional[str] = None,
+    outcome: Optional[str] = None,
+    stop_reason: Optional[str] = None,
 ) -> int:
     """Write one concise Logs-page entry for a CLI/scheduled backup outcome."""
     src = (source or "cli").strip().lower() or "cli"
@@ -463,6 +465,10 @@ def log_job_run_outcome(
         else:
             message = f"{label} {where} failed{code} ({dur})"
 
+    if outcome:
+        message += f" [outcome={outcome}]"
+    if stop_reason:
+        message += f" [stop_reason={stop_reason}]"
     return insert_log(message, level=level, db_path=db_path)
 
 

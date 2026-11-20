@@ -195,7 +195,7 @@ Criterios de aceptación:
 
 ### Fase 2 — Contención de riesgos heredados
 
-**Estado:** implementada inicialmente; H1 sigue parcialmente pendiente de corrección y aceptación.
+**Estado:** implementada inicialmente. H1.1 tiene una corrección verificada con procesos simulados y sigue pendiente de auditoría y aceptación.
 
 Objetivos:
 
@@ -545,7 +545,7 @@ Referencia de implementación auditada:
 |---|---|
 | 0 — Preparación | Realizada inicialmente |
 | 1 — Componentes visuales | Implementada inicialmente; aceptación pendiente |
-| 2 — Contención heredada | Parcialmente aceptada; H1 pendiente |
+| 2 — Contención heredada | Corrección H1.1 probada con procesos simulados; H1 pendiente de auditoría y aceptación |
 | 3 — Supervisor Restic | H2 aceptado; H3 pendiente de solución futura |
 | 4 — Modelo perfiles/repositorios | Pendiente |
 | 5 — Perfiles y respaldos | Pendiente |
@@ -557,15 +557,15 @@ Referencia de implementación auditada:
 
 ### Deuda técnica y riesgos abiertos
 
-- **H1:** la validación de rutas Windows mejoró, pero los handles pueden liberarse antes de confirmar la terminación del proceso en ciertos caminos de timeout o excepción. No aceptar restauraciones sensibles hasta corregir y probar este comportamiento.
-- **H2:** la separación entre resultado observado y motivo de parada se considera corregida por la auditoría del commit indicado.
+- **H1:** el commit auditado liberaba handles sin confirmar la salida en ciertos caminos de timeout o excepción. El seguimiento local mantiene la protección hasta observar la salida del hijo directo. Las pruebas sincronizadas cubren timeout, cancelación y errores de terminación y espera. La aceptación y la prueba de symlinks reales en Windows siguen pendientes.
+- **H2:** la auditoría aceptó la separación entre resultado y motivo de parada. El seguimiento conserva ambos datos en el registro secundario y deja intacto el límite de drenaje, ya que las pruebas no reprodujeron la pérdida del resumen. Ver [Base inicial del fork](INITIAL_FOUNDATION.md) para la evidencia y sus límites.
 - **H3:** `StopPolicy.WAIT` puede esperar indefinidamente; el plazo no garantiza la terminación.
 - La restauración aún no tiene confinamiento completo de escrituras, staging transaccional, verificación final ni rollback.
 - Las tareas programadas heredadas, comandos fuera del supervisor, gestión de credenciales y concurrencia entre instancias necesitan revisión.
 - El servicio o mecanismo de apagado de Windows no está seleccionado ni validado.
 - Las pruebas con Restic real deben seguir usando repositorios temporales desechables.
 
-Este estado es una fotografía de la auditoría indicada, no una afirmación automática sobre commits posteriores.
+La auditoría indicada se aplica al commit de referencia. Las correcciones posteriores de esta sección se describen como seguimiento pendiente de reauditoría.
 
 ---
 
