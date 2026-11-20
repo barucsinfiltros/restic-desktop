@@ -34,6 +34,7 @@ import hmac
 import hashlib
 import tempfile
 import shutil
+import stat
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -48,6 +49,8 @@ import ui.themes as themes
 import core.history_db as history_db
 import core.rclone_util as rclone_util
 import core.network_share as network_share
+from core import restic_supervisor
+from ui.backup_worker import BackupWorker
 from ui.title_bar import TitleBar
 from ui.framed_dialog import FramedDialog
 from ui.rounded_menu import RoundedMenu
@@ -1888,6 +1891,51 @@ def append_job_tag_args(args: List[str], job: Optional[dict]) -> None:
     """Append ``--tag`` flags for a job onto a restic argument list."""
     for tag in job_backup_tags(job):
         args.extend(["--tag", tag])
+
+
+def build_backup_args(repo: dict, job: dict) -> list[str]:
+    """Build the shared Restic JSON backup request for GUI and CLI."""
+    args = repo_restic_prefix(repo) + ["backup", "--json"]
+
+    # Add tags (includes stable job:<name>)
+    append_job_tag_args(args, job)
+
+    # Add exclude patterns
+    if job.get("exclude_patterns"):
+        for pattern in job["exclude_patterns"]:
+            args.extend(["--exclude", pattern])
+
+    # Add options
+    if job.get("exclude_caches", True):
+        args.append("--exclude-caches")
+
+    if job.get("pack_size", 0) > 0:
+        args.extend(["--pack-size", str(job["pack_size"])])
+
+    if job.get("one_file_system", False):
+        args.append("--one-file-system")
+
+    if job.get("exclude_if_present"):
+        args.extend(["--exclude-if-present", job["exclude_if_present"]])
+
+    # Compression
+    compression = job.get("compression", "auto")
+    if compression and compression != "off":
+        args.extend(["--compression", compression])
+
+    # No cache
+    if job.get("no_cache", False):
+        args.append("--no-cache")
+
+    # Ignore inode
+    if job.get("ignore_inode", False):
+        args.append("--ignore-inode")
+
+    # Skip creating a snapshot when nothing changed vs parent
+    if job.get("skip_if_unchanged", True):
+        args.append("--skip-if-unchanged")
+    args.extend(["--", *job["paths"]])
+    return args
 
 
 def _normalize_backup_path(path: str) -> str:
@@ -5536,7 +5584,6 @@ class ResticManagerWindow(QMainWindow):
             )
 
         repo_last = {}
-        repo_snaps = {}
         repo_sizes = {}
         for row in repo_data or []:
             if len(row) >= 4 and row[0] and row[3]:
@@ -5548,12 +5595,8 @@ class ResticManagerWindow(QMainWindow):
                     repo_sizes[row[0]] = int(row[1] or 0)
                 except (TypeError, ValueError):
                     repo_sizes[row[0]] = 0
-            if len(row) >= 6 and row[0] and row[4]:
-                repo_snaps[row[0]] = {"short_id": row[4], "id": row[5] or row[4]}
         self._repo_last_backup = repo_last
-        self._repo_last_snapshot = repo_snaps
         self._repo_sizes = repo_sizes
-        self._sync_job_last_runs_from_repos(repo_last, repo_snaps)
 
         if repo_data:
             self._update_dashboard_charts(repo_data)
@@ -5704,46 +5747,6 @@ class ResticManagerWindow(QMainWindow):
         self._apply_dashboard_stats(total_snapshots, total_size, last_backup, repo_data)
         self._set_dashboard_refreshing(False)
 
-    def _sync_job_last_runs_from_repos(self, repo_last: dict, repo_snaps: dict | None = None) -> None:
-        """Persist discovered snapshot times/ids onto backup jobs (no SQLite needed)."""
-        repo_snaps = repo_snaps or {}
-        if not repo_last and not repo_snaps:
-            return
-        jobs = self.settings_manager.get("backup_jobs") or []
-        changed = False
-        for job in jobs:
-            repos = job.get("repositories") or []
-            if not repos and job.get("repository"):
-                repos = [job.get("repository")]
-            best = ""
-            best_snap = None
-            for name in repos:
-                stamp = repo_last.get(name) or ""
-                if stamp and (not best or stamp > best):
-                    best = stamp
-                    best_snap = repo_snaps.get(name)
-            if best:
-                prev = (job.get("schedule") or {}).get("last_run") or job.get("last_run")
-                if prev != best:
-                    job["last_run"] = best
-                    if job.get("schedule") is None:
-                        job["schedule"] = {"enabled": False}
-                    job["schedule"]["last_run"] = best
-                    changed = True
-            if best_snap:
-                short_id = best_snap.get("short_id") or ""
-                full_id = best_snap.get("id") or short_id
-                if short_id and (
-                    job.get("last_snapshot_id") != short_id
-                    or job.get("last_snapshot_full_id") != full_id
-                ):
-                    job["last_snapshot_id"] = short_id
-                    job["last_snapshot_full_id"] = full_id
-                    changed = True
-        if changed:
-            self.settings_manager.set("backup_jobs", jobs)
-            self.settings_manager.save_settings()
-    
     def _chart_theme_kwargs(self) -> dict:
         current_theme = (
             self.settings_manager.get("theme") if hasattr(self, "settings_manager") else "slate"
@@ -6434,255 +6437,29 @@ class ResticManagerWindow(QMainWindow):
                 self.log(f"Updated repository: {repo_data['name']}")
     
     def delete_repository(self, index):
-        """Delete repository at index"""
-        repositories = self.settings_manager.get("repositories") or []
+        """Remove a registration from application settings only."""
+        repositories = list(self.settings_manager.get("repositories") or [])
         if not (0 <= index < len(repositories)):
             return
         repo = repositories[index]
         name = repo.get("name") or "—"
-        path = repo.get("path") or "—"
-        repo_type = repo.get("type") or "local"
-
-        # Destructive options (cloud/local).
-        remove_configs_default = bool(
-            (repo_type or "").lower() in ("cloud", "s3", "onedrive", "azure", "b2", "wasabi")
-            or (repo.get("rclone_remote") or "").strip()
-        )
-
-        include_repo_delete_default = (repo_type or "").lower() == "local"
-
-        dialog = FramedDialog(
-            "Remove Repository",
-            self,
-            show_maximize=False,
-            show_minimize=False,
-        )
-        dialog.setMinimumWidth(620)
-
-        layout = dialog.body_layout
-        layout.setContentsMargins(16, 12, 16, 16)
-        layout.setSpacing(12)
-
-        heading_lbl = QLabel(f"Remove “{name}” from the list?")
-        heading_lbl.setObjectName("pageTitle")
-        heading_lbl.setStyleSheet("font-size: 18px;")
-        heading_lbl.setWordWrap(True)
-        layout.addWidget(heading_lbl)
-
-        body_lbl = QLabel(
-            "Choose what you want to remove. By default this removes the repository from Restic Desktop only."
-        )
-        body_lbl.setObjectName("pageSubtitle")
-        body_lbl.setWordWrap(True)
-        layout.addWidget(body_lbl)
-
-        meta = QFrame()
-        meta.setObjectName("browseMetaStrip")
-        meta_row = QHBoxLayout(meta)
-        meta_row.setContentsMargins(14, 10, 14, 10)
-        meta_row.setSpacing(20)
-        for i, (label, value) in enumerate(
-            [("Name", name), ("Type", repo_type), ("Path", path)]
+        if not self._framed_confirm(
+            title="Unregister Repository",
+            heading=f"Unregister “{name}”?",
+            body="This removes the repository from the list. Its data and backend credentials stay in place.",
+            note="Jobs that reference this repository must be updated before running again.",
+            meta=[("Repository", name), ("Location", repo.get("path") or "—")],
+            confirm_label="Unregister",
         ):
-            col = QVBoxLayout()
-            col.setSpacing(2)
-            lab = QLabel(label)
-            lab.setObjectName("browseMetaLabel")
-            val = QLabel(str(value))
-            val.setObjectName("browseMetaValue")
-            val.setWordWrap(True)
-            val.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse
-            )
-            col.addWidget(lab)
-            col.addWidget(val)
-            stretch = 1 if i == 2 else 0
-            meta_row.addLayout(col, stretch)
-        layout.addWidget(meta)
-
-        if remove_configs_default:
-            cfg_desc = "Removes the stored rclone remote/token config for this repo from `rclone.conf`."
-        else:
-            cfg_desc = "Removes any stored cloud connection configuration for this repo."
-
-        remove_configs_check = QCheckBox("Remove configurations")
-        remove_configs_check.setChecked(remove_configs_default)
-        remove_configs_check.setToolTip(cfg_desc)
-        layout.addWidget(remove_configs_check)
-
-        if include_repo_delete_default:
-            include_desc = (
-                "Deletes the local restic repository data on disk (irreversible)."
-            )
-            include_delete_check = QCheckBox("Include repo deletion")
-        else:
-            include_desc = (
-                "Purges the restic repository data from cloud storage (irreversible, provider best-effort)."
-            )
-            include_delete_check = QCheckBox("Purge repo data (cloud)")
-
-        include_delete_check.setChecked(include_repo_delete_default)
-        include_delete_check.setToolTip(include_desc)
-        layout.addWidget(include_delete_check)
-
-        note_lbl = QLabel(
-            "This app always removes the repo from its settings. The extra options are best-effort and may require provider-specific cleanup."
-        )
-        note_lbl.setObjectName("copyNote")
-        note_lbl.setWordWrap(True)
-        layout.addWidget(note_lbl)
-
-        footer = QHBoxLayout()
-        footer.setSpacing(8)
-        footer.addStretch(1)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("dialogSecondary")
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.clicked.connect(dialog.reject)
-        footer.addWidget(cancel_btn)
-
-        remove_btn = QPushButton("Remove")
-        remove_btn.setObjectName("dangerBtn" if True else "dialogPrimary")
-        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        remove_btn.clicked.connect(dialog.accept)
-        footer.addWidget(remove_btn)
-        layout.addLayout(footer)
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
-        # Save option state before we mutate settings/reload UI.
-        remove_configs = bool(remove_configs_check.isChecked())
-        include_repo_delete = bool(include_delete_check.isChecked())
-
-        removed = repositories.pop(index)
+        repositories.pop(index)
         self.settings_manager.set("repositories", repositories)
         self.settings_manager.save_settings()
-
-        # Best-effort cleanup of rclone remote/token config.
-        if remove_configs:
-            try:
-                rclone_bin = rclone_util.resolve_rclone_path(
-                    self.settings_manager.get
-                )
-                remote_name = (repo.get("rclone_remote") or "").strip()
-                if remote_name:
-                    # If we store rclone.conf encrypted, decrypt to a temp file
-                    # so rclone config delete can operate on a real config.
-                    cfg_env: dict[str, str] = {}
-                    cfg_path = ""
-                    if (self.settings_manager.get("rclone_conf_encrypted") or "").strip():
-                        cfg_path = _runtime_rclone_config_path(
-                            settings_manager=self.settings_manager,
-                            password_manager=self.password_manager,
-                        )
-                    else:
-                        cfg_path = rclone_util.app_rclone_config_path()
-
-                    if cfg_path:
-                        cfg_env["RCLONE_CONFIG"] = cfg_path
-
-                    rclone_util.delete_rclone_remote(
-                        rclone_bin,
-                        remote_name,
-                        env=cfg_env,
-                    )
-
-                    # Re-encrypt updated config back into settings.
-                    if cfg_path and (self.settings_manager.get("rclone_conf_encrypted") or "").strip():
-                        try:
-                            cfg_text = Path(cfg_path).read_text(encoding="utf-8")
-                            encrypted = self.password_manager.encrypt(cfg_text)
-                            self.settings_manager.set(
-                                "rclone_conf_encrypted", encrypted
-                            )
-                            # keep rclone_config cleared; runtime decrypt handles it
-                            self.settings_manager.set("rclone_config", "")
-                            self.settings_manager.save_settings()
-                        except Exception:
-                            pass
-            except Exception:
-                # Do not fail deletion; repository is removed from settings already.
-                pass
-
-        # Optional local repository data deletion.
-        if include_repo_delete and (repo_type or "").lower() == "local":
-            try:
-                # repo['path'] points at the restic repo directory on disk.
-                repo_dir = str(repo.get("path") or "").strip()
-                if repo_dir:
-                    import shutil
-
-                    shutil.rmtree(repo_dir, ignore_errors=True)
-            except Exception as exc:
-                # Do not fail the whole delete-from-settings operation,
-                # but make the failure visible for troubleshooting.
-                err = str(exc)
-                self.log(f"Repo data deletion failed for '{name}': {err}")
-                show_framed_message(
-                    self,
-                    "Repo Deletion Failed",
-                    f"Failed to delete repository data on disk for '{name}'.\n\n{err}",
-                    kind="warning",
-                )
-        elif include_repo_delete and (repo_type or "").lower() == "cloud":
-            # Purge the restic repository contents from cloud storage.
-            # This is destructive and uses rclone "purge" (provider best-effort).
-            try:
-                repo_path = str(repo.get("path") or "").strip()
-                if not repo_path.startswith("rclone:"):
-                    raise ValueError(
-                        "Cloud repo path is not in expected 'rclone:remote:path' form."
-                    )
-                parsed = rclone_util.parse_rclone_location(repo_path)
-                remote = parsed.get("remote") or ""
-                rpath = parsed.get("path") or ""
-                if not remote:
-                    raise ValueError("Could not parse rclone remote from repo path.")
-
-                loc = f"{remote}:{rpath}" if rpath else f"{remote}:"
-
-                rclone_bin = rclone_util.resolve_rclone_path(
-                    self.settings_manager.get
-                )
-                # Prefer decrypted temp config if encryption-at-rest is enabled.
-                if (self.settings_manager.get("rclone_conf_encrypted") or "").strip():
-                    cfg_path = _runtime_rclone_config_path(
-                        settings_manager=self.settings_manager,
-                        password_manager=self.password_manager,
-                    )
-                else:
-                    cfg_path = rclone_util.app_rclone_config_path()
-
-                env = rclone_util.rclone_process_env(
-                    rclone_path=rclone_bin,
-                    config_path=cfg_path,
-                )
-
-                ok, stdout, stderr = rclone_util.run_rclone(
-                    rclone_bin,
-                    ["purge", loc],
-                    env=env,
-                    timeout=3600,
-                    creationflags=get_subprocess_creation_flags(),
-                )
-                if not ok:
-                    err = stderr or stdout or "Unknown rclone purge error"
-                    raise RuntimeError(err)
-            except Exception as exc:
-                err = str(exc)
-                self.log(f"Cloud purge failed for '{name}': {err}")
-                show_framed_message(
-                    self,
-                    "Cloud Purge Failed",
-                    f"Failed to purge cloud repository data for '{name}'.\n\n{err}",
-                    kind="warning",
-                )
-
         self.refresh_repository_list()
         self.update_repository_combos()
-        self.log(f"Removed repository: {removed.get('name')}")
-    
+        self.log(f"Unregistered repository: {name}")
+
     def update_repository_combos(self):
         """Update all repository combo boxes"""
         repositories = self.settings_manager.get("repositories")
@@ -7704,7 +7481,7 @@ class ResticManagerWindow(QMainWindow):
         restore_act = menu.addAction("Restore selected…")
         restore_act.setEnabled(has_selection)
         restore_orig_act = menu.addAction("Restore to original location…")
-        restore_orig_act.setEnabled(has_selection)
+        restore_orig_act.setEnabled(False)
         copy_act = menu.addAction("Copy path(s)")
         copy_act.setEnabled(has_selection)
         menu.addSeparator()
@@ -7820,48 +7597,6 @@ class ResticManagerWindow(QMainWindow):
             to_original=to_original,
         )
 
-    def _move_restored_files_to_original(self, temp_target: str) -> list[str]:
-        """
-        Move files from a temp restore target into their original absolute paths.
-
-        Restic restores Windows paths under the target as ``D\\folder\\file``;
-        this converts that back to ``D:\\folder\\file``.
-        """
-        moved_files: list[str] = []
-        if not temp_target or not os.path.isdir(temp_target):
-            return moved_files
-
-        for root, _dirs, files in os.walk(temp_target):
-            for filename in files:
-                src_file = os.path.join(root, filename)
-                rel_path = os.path.relpath(src_file, temp_target)
-
-                if sys.platform == "win32":
-                    parts = rel_path.split(os.sep)
-                    if len(parts) > 0 and len(parts[0]) == 1 and parts[0].isalpha():
-                        drive = parts[0] + ":\\"
-                        dest_path = os.path.join(drive, *parts[1:]) if len(parts) > 1 else drive
-                    else:
-                        self.log(f"Warning: Could not parse drive from path: {rel_path}")
-                        continue
-                else:
-                    dest_path = os.path.join("/", rel_path)
-
-                dest_dir = os.path.dirname(dest_path)
-                if dest_dir:
-                    os.makedirs(dest_dir, exist_ok=True)
-                shutil.move(src_file, dest_path)
-                moved_files.append(dest_path)
-                self.log(f"Moved: {dest_path}")
-
-        try:
-            shutil.rmtree(temp_target)
-            self.log(f"Cleaned up temp directory: {temp_target}")
-        except Exception as e:
-            self.log(f"Warning: Could not remove temp directory: {e}")
-
-        return moved_files
-
     def _restore_paths_from_snapshot(
         self,
         paths_to_restore: list[str],
@@ -7897,59 +7632,26 @@ class ResticManagerWindow(QMainWindow):
             preview += f"\n  … and {len(paths_to_restore) - 10} more"
 
         if to_original:
-            temp_root = (
-                self.settings_manager.get("temp_restore_path")
-                or os.path.join(tempfile.gettempdir(), "restic_restore")
+            show_framed_message(
+                parent_dialog, "Restore destination",
+                "Choose a separate destination. Restoring to original locations is unavailable.",
+                kind="warning",
             )
-            target_dir = os.path.join(
-                temp_root,
-                f"browse_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            return
+        if not target_dir:
+            target_dir = QFileDialog.getExistingDirectory(
+                parent_dialog, "Select Restore Target Directory", os.path.expanduser("~")
             )
-            try:
-                os.makedirs(target_dir, exist_ok=True)
-            except Exception as e:
-                QMessageBox.warning(
-                    parent_dialog,
-                    "Temp Path Error",
-                    f"Could not create temporary restore folder:\n{target_dir}\n\n{e}",
-                )
-                return
-
-            result = QMessageBox.warning(
-                parent_dialog,
-                "Confirm Restore to Original",
-                f"Restore {item_label} to the ORIGINAL locations?\n\n"
-                "This can overwrite existing files.\n\n"
-                f"Items:\n{preview}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if result != QMessageBox.StandardButton.Yes:
-                try:
-                    os.rmdir(target_dir)
-                except Exception:
-                    pass
-                return
-            dest_label = "original locations"
-        else:
-            if not target_dir:
-                target_dir = QFileDialog.getExistingDirectory(
-                    parent_dialog,
-                    "Select Restore Target Directory",
-                    os.path.expanduser("~"),
-                )
-            if not target_dir:
-                return
-
-            result = QMessageBox.question(
-                parent_dialog,
-                "Confirm Restore",
-                f"Restore {item_label} to:\n{target_dir}\n\n"
-                f"Items:\n{preview}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if result != QMessageBox.StandardButton.Yes:
-                return
-            dest_label = target_dir
+        if not target_dir:
+            return
+        result = QMessageBox.question(
+            parent_dialog,
+            "Confirm Restore",
+            f"Restore {item_label} to:\n{target_dir}\n\nItems:\n{preview}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
 
         try:
             check_path = target_dir
@@ -7975,7 +7677,7 @@ class ResticManagerWindow(QMainWindow):
         short_id = str(snapshot_id)[:8]
         self.log(
             f"Restoring {item_label} from snapshot {short_id} "
-            f"({'to original via ' + target_dir if to_original else 'to ' + target_dir})"
+            f"to {target_dir}"
         )
 
         progress, progress_label, _ = make_framed_progress_dialog(
@@ -7993,7 +7695,7 @@ class ResticManagerWindow(QMainWindow):
             if text:
                 lbl.setText(f"Restoring {item_label}…\n{text[:160]}")
 
-        def _on_done(success, stdout, stderr, dlg=progress, temp=target_dir, original=to_original):
+        def _on_done(success, stdout, stderr, dlg=progress):
             if getattr(self, "_browse_restore_worker", None) is worker:
                 self._browse_restore_worker = None
             try:
@@ -8011,51 +7713,12 @@ class ResticManagerWindow(QMainWindow):
                 self.log(f"Restore failed: {err}")
                 return
 
-            if original:
-                try:
-                    QApplication.processEvents()
-                    moved = self._move_restored_files_to_original(temp)
-                except Exception as e:
-                    self.log(f"Error moving files to original locations: {e}")
-                    QMessageBox.warning(
-                        parent_dialog,
-                        "Move Error",
-                        f"Files were restored to a temp folder but could not be moved:\n{e}\n\n"
-                        f"Files are in:\n{temp}",
-                    )
-                    return
-
-                if moved:
-                    preview_moved = "\n".join(moved[:5])
-                    if len(moved) > 5:
-                        preview_moved += f"\n… and {len(moved) - 5} more"
-                    QMessageBox.information(
-                        parent_dialog,
-                        "Restore Complete",
-                        f"Successfully restored {len(moved)} file(s) to original locations!\n\n"
-                        f"{preview_moved}",
-                    )
-                    self.log(f"Restore to original completed: {len(moved)} file(s)")
-                    show_notification(
-                        title="Restore Complete",
-                        message=f"Restored {len(moved)} file(s) to original locations.",
-                        icon_type="success",
-                        duration="short",
-                    )
-                else:
-                    QMessageBox.warning(
-                        parent_dialog,
-                        "Restore Issue",
-                        "Restore completed but no files were found to move to original locations.",
-                    )
-                return
-
             QMessageBox.information(
                 parent_dialog,
                 "Restore Complete",
-                f"Successfully restored {item_label} to:\n{dest_label}",
+                f"Successfully restored {item_label} to:\n{target_dir}",
             )
-            self.log(f"Restore completed: {item_label} → {dest_label}")
+            self.log(f"Restore completed: {item_label} → {target_dir}")
             show_notification(
                 title="Restore Complete",
                 message=f"Restored {item_label}.",
@@ -8072,6 +7735,10 @@ class ResticManagerWindow(QMainWindow):
             on_progress=_on_progress,
             on_finished=_on_done,
         )
+        if worker is None:
+            progress.close()
+            progress.deleteLater()
+            return
         parent_dialog._restore_worker = worker
         self._browse_restore_worker = worker  # prevent GC if parent drops ref
 
@@ -8235,7 +7902,7 @@ class ResticManagerWindow(QMainWindow):
     
     def _on_diff_completed(self, success, stdout, stderr, output_widget, added_label, modified_label, removed_label):
         """Callback when diff command completes"""
-        if success or stdout:
+        if success:
             output = stdout if stdout else stderr
             output_widget.setPlainText(output)
             
@@ -10420,11 +10087,9 @@ class ResticManagerWindow(QMainWindow):
                 on_complete(False)
             return
 
-        target = Path(temp_root) / f"restic_health_test_{name}"
         try:
-            if target.exists():
-                shutil.rmtree(target, ignore_errors=True)
-            target.mkdir(parents=True, exist_ok=True)
+            Path(temp_root).mkdir(parents=True, exist_ok=True)
+            target = Path(tempfile.mkdtemp(prefix="restic-health-", dir=temp_root))
         except Exception as exc:
             progress.close()
             show_framed_message(
@@ -11382,7 +11047,7 @@ class ResticManagerWindow(QMainWindow):
         restore_act = menu.addAction("Restore selected…")
         restore_act.setEnabled(has_selection)
         restore_orig_act = menu.addAction("Restore to original location…")
-        restore_orig_act.setEnabled(has_selection)
+        restore_orig_act.setEnabled(False)
         menu.addSeparator()
         expand_act = menu.addAction("Expand")
         expand_act.setEnabled(can_expand)
@@ -11520,14 +11185,30 @@ class ResticManagerWindow(QMainWindow):
         on_progress=None,
         on_progress_data=None,
         on_finished=None,
-    ) -> ResticWorker:
-        """Build and launch the shared restore command used by every restore UI."""
+    ) -> ResticWorker | None:
+        """Contain legacy restoration to a separate, empty directory."""
+        try:
+            destination = Path(target)
+            flags = getattr(destination.lstat(), "st_file_attributes", 0)
+            if (not destination.is_absolute() or destination.is_symlink()
+                    or flags & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise ValueError
+            with os.scandir(destination) as entries:
+                if next(entries, None) is not None:
+                    raise ValueError
+        except (OSError, ValueError):
+            show_framed_message(
+                self, "Restore destination", "Select an existing, empty folder at a separate location.",
+                kind="warning",
+            )
+            return None
         env = self._repo_env(repo, password)
         args = repo_restic_prefix(repo) + [
             "restore",
             snapshot_id,
             "--target",
             target,
+            "--overwrite", "never",
         ]
         for path in paths or []:
             include = str(path).strip().lstrip("/")
@@ -11577,23 +11258,18 @@ class ResticManagerWindow(QMainWindow):
             )
             return
         
-        # Determine target directory
         if restore_to_original:
-            # Use temporary restore location, then move files to original
-            temp_restore_path = self.settings_manager.get("temp_restore_path")
-            target = temp_restore_path
-            self.log(f"Using temporary restore location: {target}")
-        else:
-            target = self.restore_target_input.text()
-            if not target:
-                show_framed_message(
-                    self,
-                    "Incomplete",
-                    "Please select a target directory, or enable “Restore to original location”.",
-                    kind="warning",
-                )
-                return
-        
+            show_framed_message(
+                self, "Restore destination",
+                "Choose a separate destination. Restoring to original locations is unavailable.",
+                kind="warning",
+            )
+            return
+        target = self.restore_target_input.text().strip()
+        if not target:
+            show_framed_message(self, "Incomplete", "Select a target directory.", kind="warning")
+            return
+
         # Check available disk space on target location
         import shutil
         try:
@@ -11651,14 +11327,9 @@ class ResticManagerWindow(QMainWindow):
             )
             return
         
-        # Confirm restore
-        if restore_to_original:
-            location_msg = "ORIGINAL LOCATIONS (this will overwrite existing files!)"
-            confirm_kind = "warning"
-        else:
-            location_msg = target
-            confirm_kind = "info"
-        
+        location_msg = target
+        confirm_kind = "info"
+
         if restore_path:
             msg = f"Restore “{restore_path}” from snapshot {snapshot_id} to:\n{location_msg}?"
         else:
@@ -11681,24 +11352,8 @@ class ResticManagerWindow(QMainWindow):
         self.restore_progress.setRange(0, 0)  # Indeterminate
         self.restore_log.clear()
         
-        # Log restore information
-        if restore_to_original:
-            self.log(f"Starting restore from {repo_name}/{snapshot_id} to temp location (will move to original)")
-        else:
-            self.log(f"Starting restore from {repo_name}/{snapshot_id} to {target}")
-        
-        if restore_path:
-            self.log(f"Restoring path: {restore_path}")
-        else:
-            self.log("Restoring all files from snapshot...")
-        
-        # Store restore metadata for completion callback
-        self._restore_metadata = {
-            "restore_to_original": restore_to_original,
-            "restore_path": restore_path,
-            "temp_target": target
-        }
-        
+        self.log(f"Starting restore from {repo_name}/{snapshot_id} to {target}")
+
         self._restore_worker = self._launch_restore_worker(
             repo=repo,
             password=password,
@@ -11709,6 +11364,8 @@ class ResticManagerWindow(QMainWindow):
             on_progress_data=self._on_restore_progress,
             on_finished=self._on_restore_complete,
         )
+        if self._restore_worker is None:
+            self.restore_progress.setVisible(False)
     
     def _on_restore_progress(self, progress_info):
         """Update restore progress bar"""
@@ -11728,34 +11385,10 @@ class ResticManagerWindow(QMainWindow):
             if stderr:
                 self.log(f"Restic stderr: {stderr}")
             
-            # Check if we need to move files to original location
-            if hasattr(self, '_restore_metadata') and self._restore_metadata.get('restore_to_original'):
-                temp_target = self._restore_metadata['temp_target']
-                
-                self.log("Moving files from temp location to original locations...")
-                
-                try:
-                    moved_files = self._move_restored_files_to_original(temp_target)
-                    
-                    if moved_files:
-                        self.log(f"Successfully moved {len(moved_files)} file(s) to original location(s)")
-                        QMessageBox.information(self, "Restore Complete", 
-                            f"Successfully restored {len(moved_files)} file(s) to original locations!\n\n" +
-                            "\n".join(moved_files[:5]) + 
-                            (f"\n... and {len(moved_files) - 5} more" if len(moved_files) > 5 else ""))
-                    else:
-                        self.log("Warning: No files were moved (restore may have failed)")
-                        QMessageBox.warning(self, "Restore Issue", "Restore completed but no files were found to move.")
-                    
-                except Exception as e:
-                    self.log(f"Error moving files to original locations: {e}")
-                    QMessageBox.warning(self, "Move Error", 
-                        f"Files were restored to temp location but could not be moved:\n{e}\n\n" +
-                        f"Files are in: {temp_target}")
-            else:
-                # Normal restore (not to original location)
-                self.log("Restore completed successfully!")
-                QMessageBox.information(self, "Restore Complete", f"Files have been restored successfully!\n\n{stderr if stderr else stdout}")
+            self.log("Restore completed successfully!")
+            QMessageBox.information(
+                self, "Restore Complete", f"Files have been restored successfully!\n\n{stderr or stdout}"
+            )
         else:
             self.log(f"Restore failed: {stderr}")
             QMessageBox.warning(self, "Restore Failed", f"Restore operation failed:\n{stderr}")
@@ -11933,7 +11566,7 @@ class ResticManagerWindow(QMainWindow):
 
         restore_orig_btn = QPushButton("Restore to Original…")
         restore_orig_btn.setObjectName("dialogSecondary")
-        restore_orig_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        restore_orig_btn.setCursor(Qt.CursorShape.ForbiddenCursor)
         restore_orig_btn.setEnabled(False)
         restore_orig_btn.clicked.connect(
             lambda: self._restore_selected_from_snapshot_browser(
@@ -12006,7 +11639,6 @@ class ResticManagerWindow(QMainWindow):
 
         def _set_restore_enabled(enabled: bool) -> None:
             restore_selected_btn.setEnabled(enabled)
-            restore_orig_btn.setEnabled(enabled)
 
         def load_snapshot_files():
             full_id = snapshot_combo.currentData()
@@ -12766,6 +12398,9 @@ class ResticManagerWindow(QMainWindow):
 
     def run_backup_job(self, job):
         """Run a backup job (supports multiple repositories)"""
+        if getattr(self, "_backup_batch_active", False):
+            show_framed_message(self, "Backup In Progress", "Wait for the current backup job to finish.")
+            return
         if self._repository_status_blocks_foreground_operation("the backup"):
             return
         # Get repository/repositories list
@@ -12796,92 +12431,38 @@ class ResticManagerWindow(QMainWindow):
     
     def _run_single_repository_backup(self, job, repo_name, repo_index):
         """Run backup for a single repository"""
-        # Get repository
-        repo, password = self.get_repository_by_name(repo_name)
-        if not repo:
-            error_msg = f"Repository '{repo_name}' not found."
-            QMessageBox.warning(self, "Repository Not Found", error_msg)
-            self.log(error_msg)
+        attempt_at = datetime.now(timezone.utc)
+        try:
+            repo, password = self.get_repository_by_name(repo_name)
+            if not repo:
+                raise ValueError("Missing repository")
+            repo, net_err = self._begin_network_share_access(repo)
+            if net_err:
+                raise OSError("Network share unavailable")
+            self._backup_active_repo = repo
+            env = self._repo_env(repo, password)
+            args = build_backup_args(repo, job)
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError):
+            active = getattr(self, "_backup_active_repo", None)
+            if active is not None:
+                self._end_network_share_access(active)
+                self._backup_active_repo = None
+            message = f"Could not prepare or access repository '{repo_name}'."
+            QMessageBox.warning(self, "Backup Destination", message)
+            self.log(message)
             self._backup_all_succeeded = False
             self._record_job_run(
                 job_name=job.get("name", ""),
                 repo_name=repo_name,
-                started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                started_at=attempt_at.strftime("%Y-%m-%dT%H:%M:%S"),
                 duration_sec=0,
                 success=False,
-                exit_code=1,
                 source="gui",
-                error_summary=error_msg,
+                error_summary=message,
             )
-            
-            # Try next repository if any remain
-            self._try_next_repository()
+            QTimer.singleShot(0, self._try_next_repository)
             return
 
-        repo, net_err = self._begin_network_share_access(repo)
-        if net_err:
-            QMessageBox.warning(self, "Network Share", net_err)
-            self.log(f"Network share connect failed for {repo_name}: {net_err}")
-            self._backup_all_succeeded = False
-            self._record_job_run(
-                job_name=job.get("name", ""),
-                repo_name=repo_name,
-                started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-                duration_sec=0,
-                success=False,
-                exit_code=1,
-                source="gui",
-                error_summary=net_err,
-            )
-            self._try_next_repository()
-            return
-        self._backup_active_repo = repo
-        
-        # Build restic backup command arguments
-        env = self._repo_env(repo, password)
-        args = repo_restic_prefix(repo) + ["backup", "--json"]
-        
-        # Add paths
-        args.extend(job["paths"])
-        
-        # Add tags (includes stable job:<name>)
-        append_job_tag_args(args, job)
-        
-        # Add exclude patterns
-        if job.get("exclude_patterns"):
-            for pattern in job["exclude_patterns"]:
-                args.extend(["--exclude", pattern])
-        
-        # Add options
-        if job.get("exclude_caches", True):
-            args.append("--exclude-caches")
-        
-        if job.get("pack_size", 0) > 0:
-            args.extend(["--pack-size", str(job["pack_size"])])
-        
-        if job.get("one_file_system", False):
-            args.append("--one-file-system")
-        
-        if job.get("exclude_if_present"):
-            args.extend(["--exclude-if-present", job["exclude_if_present"]])
-        
-        # Compression
-        compression = job.get("compression", "auto")
-        if compression and compression != "off":
-            args.extend(["--compression", compression])
-        
-        # No cache
-        if job.get("no_cache", False):
-            args.append("--no-cache")
-        
-        # Ignore inode
-        if job.get("ignore_inode", False):
-            args.append("--ignore-inode")
-
-        # Skip creating a snapshot when nothing changed vs parent
-        if job.get("skip_if_unchanged", True):
-            args.append("--skip-if-unchanged")
-        
         # Show progress dialog (create once for first repo, reuse for others)
         if not hasattr(self, '_backup_progress_dialog') or not self._backup_progress_dialog.isVisible():
             dialog = FramedDialog(
@@ -12997,10 +12578,10 @@ class ResticManagerWindow(QMainWindow):
             buttons_layout = QHBoxLayout()
             buttons_layout.setSpacing(8)
 
-            cancel_btn = QPushButton("Cancel Backup")
+            cancel_btn = QPushButton("Stop Backup Job")
             cancel_btn.setObjectName("dangerBtn")
             cancel_btn.setToolTip(
-                "Cancel the running backup job. This will stop the backup and unlock the repository."
+                "Stop scheduling destinations after the current Restic process exits."
             )
             cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             cancel_btn.clicked.connect(lambda: self._cancel_backup())
@@ -13031,7 +12612,7 @@ class ResticManagerWindow(QMainWindow):
                             "Closing this window will not stop the backup. "
                             "It will continue in the background and locks will remain until completion."
                         ),
-                        note="Use Cancel Backup if you want to stop the job.",
+                        note="Use Stop Backup Job to skip the remaining destinations.",
                         confirm_label="Close anyway",
                         danger=True,
                     ):
@@ -13082,30 +12663,27 @@ class ResticManagerWindow(QMainWindow):
         
         QApplication.processEvents()
         
-        # Store repo info for callback
-        self._backup_job_name = job['name']
-        self._backup_repo = repo
+        self._backup_job_name = job["name"]
         self._backup_repo_name = repo_name
-        self._backup_repo_password = password
-        self._backup_is_cancelled = False
-        self._backup_started_at = time.time()
-        self._backup_started_at_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        
-        # Start backup
-        backup_timeout = job.get("timeout", 7200)  # Default 2 hours if not set
-        self.log(
-            f"Starting backup job: {job['name']} -> "
-            f"Repository {repo_index + 1}/{self._total_repos}: {repo_name}"
+        backup_timeout = job.get("timeout", 7200)
+        self.log(f"Starting backup job: {job['name']} → {repo_name} ({repo_index + 1}/{self._total_repos})")
+
+        old_worker = getattr(self, "_backup_worker", None)
+        if old_worker is not None:
+            old_worker.deleteLater()
+        request = restic_supervisor.ExecutionRequest(
+            self.restic_cmd.restic_path, tuple(args),
+            environment=env, timeout=backup_timeout or None,
+            validate_backup=True, allow_unchanged=job.get("skip_if_unchanged", True),
+            profile_ref=job["name"], repository_ref=repo_name,
         )
-        self.log(f"Command: restic {' '.join(args)}")
-        self.log(f"Timeout: {backup_timeout} seconds ({backup_timeout // 60} minutes)")
-        
-        self._backup_worker = ResticWorker(self.restic_cmd, args, env, timeout=backup_timeout, use_progress=True)
-        self._backup_worker.finished.connect(self._on_backup_completed)
+        self._backup_worker = BackupWorker(request, self)
+        self._backup_worker.completed.connect(self._on_backup_completed)
         self._backup_worker.progress_data.connect(self._on_backup_progress)
         self._backup_worker.progress.connect(self._on_backup_output)
+        self._backup_worker.stopping.connect(self._on_backup_stopping)
         self._backup_worker.start()
-    
+
     def _history_db_path(self) -> str:
         return history_db.history_db_path(self.settings_manager.filename)
 
@@ -13183,69 +12761,22 @@ class ResticManagerWindow(QMainWindow):
             self.refresh_backup_jobs_list()
     
     def _cancel_backup(self):
-        """Cancel the running backup"""
-        if not hasattr(self, '_backup_worker') or not self._backup_worker.isRunning():
+        worker = getattr(self, "_backup_worker", None)
+        if worker is None or not worker.isRunning():
             return
-        
-        if not self._framed_confirm(
-            title="Cancel Backup",
-            heading="Cancel this backup?",
-            body=(
-                "The backup will be stopped and the repository will be unlocked. "
-                "Any partial data may remain in the repository."
-            ),
-            confirm_label="Cancel Backup",
-            danger=True,
-        ):
-            return
+        if self._framed_confirm(
+            title="Stop Backup Job",
+            heading="Stop this job after the current destination?",
+            body="Restic will finish its current process. Remaining destinations will be skipped.",
+            confirm_label="Stop Job",
+        ) and worker.cancel():
+            self._on_backup_stopping(restic_supervisor.Outcome.CANCELLED)
 
-        self._backup_is_cancelled = True
-        self._backup_batch_active = False
-        
-        # Terminate the worker thread
-        if hasattr(self, '_backup_worker'):
-            self._backup_worker.terminate()
-            self._backup_worker.wait(2000)  # Wait up to 2 seconds
-            if self._backup_worker.isRunning():
-                self._backup_worker.terminate()  # Force terminate
-        
-        # Update UI
-        if hasattr(self, '_backup_status_label'):
-            self._backup_status_label.setText("Backup cancelled by user")
-        
-        if hasattr(self, '_backup_progress_bar'):
-            self._backup_progress_bar.setRange(0, 100)
-            self._backup_progress_bar.setValue(0)
-        
-        if hasattr(self, '_backup_cancel_btn'):
-            self._backup_cancel_btn.setEnabled(False)
-        
-        if hasattr(self, '_backup_close_btn'):
-            self._backup_close_btn.setEnabled(True)
-        
-        self.log(f"Backup job '{self._backup_job_name}' cancelled by user")
-        
-        # Auto-unlock the repository
-        self._auto_unlock_after_cancel()
-    
-    def _auto_unlock_after_cancel(self):
-        """Automatically unlock repository after backup cancellation"""
-        if not hasattr(self, '_backup_repo') or not hasattr(self, '_backup_repo_password'):
-            return
-        
-        self.log(f"Auto-unlocking repository after cancellation...")
-        
-        # Execute unlock command in background
-        env = self._repo_env(self._backup_repo, self._backup_repo_password)
-        args = repo_restic_prefix(self._backup_repo) + ["unlock"]
-        
-        unlock_worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
-        unlock_worker.finished.connect(lambda success, stdout, stderr: self._on_auto_unlock_completed(success, stderr, "cancel"))
-        unlock_worker.start()
-        
-        # Store reference to prevent garbage collection
-        self._cancel_unlock_worker = unlock_worker
-    
+    def _on_backup_stopping(self, reason):
+        verb = "Time limit reached" if reason is restic_supervisor.Outcome.TIMED_OUT else "Stop requested"
+        self._backup_status_label.setText(f"{verb}. Waiting for Restic to exit…")
+        self._backup_cancel_btn.setEnabled(False)
+
     def _on_backup_progress(self, progress_info):
         """Callback for backup progress updates"""
         if not hasattr(self, '_backup_progress_bar'):
@@ -13311,8 +12842,6 @@ class ResticManagerWindow(QMainWindow):
                 file_text += f" (+{len(current_files)-1} more)"
             self._backup_current_file_label.setText(file_text)
         
-        # Force UI update
-        QApplication.processEvents()
     
     def _on_backup_output(self, line: str):
         """Callback for raw output lines during backup"""
@@ -13331,183 +12860,65 @@ class ResticManagerWindow(QMainWindow):
             scrollbar = self._backup_output_text.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
     
-    def _on_backup_completed(self, success, stdout, stderr):
-        """Callback when backup completes"""
-        # Disconnect connect-only network share for this repo
+    def _on_backup_completed(self, result: restic_supervisor.ExecutionResult):
         active = getattr(self, "_backup_active_repo", None)
         if active is not None:
             self._end_network_share_access(active)
             self._backup_active_repo = None
 
-        # Don't process if cancelled
-        if hasattr(self, '_backup_is_cancelled') and self._backup_is_cancelled:
-            return
-
-        started_mono = getattr(self, "_backup_started_at", None)
-        duration_sec = (time.time() - started_mono) if started_mono is not None else None
-        started_iso = getattr(self, "_backup_started_at_iso", None) or datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%dT%H:%M:%S")
-        error_summary = None if success else ((stderr or stdout or "Unknown error")[:500])
-        snap_id = history_db.extract_snapshot_short_id(stdout or "") if success else None
+        outcome = result.outcome
+        labels = {
+            restic_supervisor.Outcome.COMPLETED: "Backup completed",
+            restic_supervisor.Outcome.UNCHANGED: "No changes; snapshot skipped",
+            restic_supervisor.Outcome.INCOMPLETE: "Backup incomplete",
+            restic_supervisor.Outcome.CANCELLED: "Backup job stopped",
+            restic_supervisor.Outcome.TIMED_OUT: "Backup time limit exceeded",
+            restic_supervisor.Outcome.INTERRUPTED: "Backup interrupted",
+            restic_supervisor.Outcome.START_FAILED: "Could not start Restic",
+            restic_supervisor.Outcome.FAILED: "Backup failed",
+        }
+        label = labels[outcome]
+        diagnostic = " ".join(part for part in (result.detail, result.stderr.strip()) if part)
+        snapshot = result.snapshot_id
         self._record_job_run(
-            job_name=getattr(self, "_backup_job_name", "") or "",
-            repo_name=getattr(self, "_backup_repo_name", "") or "",
-            started_at=started_iso,
-            duration_sec=duration_sec,
-            success=bool(success),
-            exit_code=0 if success else 1,
+            job_name=self._backup_job_name,
+            repo_name=self._backup_repo_name,
+            started_at=(result.started_at or result.finished_at).strftime("%Y-%m-%dT%H:%M:%S"),
+            duration_sec=result.duration_seconds,
+            success=result.succeeded,
+            exit_code=result.exit_code,
             source="gui",
-            error_summary=error_summary,
-            snapshot_short_id=snap_id,
+            error_summary=None if result.succeeded else f"{label}: {diagnostic}"[:500],
+            snapshot_short_id=snapshot[:8] if snapshot else None,
         )
-        if not success:
-            self._backup_all_succeeded = False
-        
-        # Update dialog
-        if hasattr(self, '_backup_progress_bar'):
-            self._backup_progress_bar.setRange(0, 100)
+        self._backup_all_succeeded = self._backup_all_succeeded and result.succeeded
+        self._backup_status_label.setText(label)
+        self._backup_cancel_btn.setEnabled(False)
+        if result.succeeded:
             self._backup_progress_bar.setValue(100)
-        
-        skipped = bool(success) and history_db.backup_skipped_unchanged(stdout or "")
+        self._on_backup_output(f"{label} — {self._backup_repo_name}")
+        self.log(f"{label}: {self._backup_job_name} → {self._backup_repo_name}")
+        show_notification(
+            title=label,
+            message=f"{self._backup_job_name} → {self._backup_repo_name}",
+            icon_type="success" if result.succeeded else "error",
+        )
+        if snapshot and hasattr(self, "snapshots_table"):
+            QTimer.singleShot(1000, self.load_snapshots)
 
-        # Add completion message to output (output already displayed dynamically)
-        if hasattr(self, '_backup_output_text'):
-            self._backup_output_text.appendPlainText("")
-            self._backup_output_text.appendPlainText("=" * 60)
-            if success:
-                if skipped:
-                    self._backup_output_text.appendPlainText(
-                        f"✓ Backup to '{self._backup_repo_name}' finished — "
-                        "no changes, snapshot skipped"
-                    )
-                else:
-                    self._backup_output_text.appendPlainText(
-                        f"✓ Backup to '{self._backup_repo_name}' completed successfully!"
-                    )
-            else:
-                self._backup_output_text.appendPlainText(
-                    f"✗ Backup to '{self._backup_repo_name}' failed!"
-                )
-            self._backup_output_text.appendPlainText("=" * 60)
-            # Auto-scroll to bottom
-            scrollbar = self._backup_output_text.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-        
-        if success:
-            if skipped:
-                status_msg = (
-                    f"✓ Backup to '{self._backup_repo_name}' finished — "
-                    "no changes, snapshot skipped"
-                )
-                notify_title = "Backup Unchanged ✓"
-                notify_msg = (
-                    f"Backup job '{self._backup_job_name}' to "
-                    f"'{self._backup_repo_name}' found no changes; "
-                    "no new snapshot was created."
-                )
-                log_msg = (
-                    f"Backup job '{self._backup_job_name}' → "
-                    f"'{self._backup_repo_name}' skipped (unchanged)"
-                )
-            else:
-                status_msg = (
-                    f"✓ Backup to '{self._backup_repo_name}' completed successfully!"
-                )
-                notify_title = "Backup Completed Successfully ✓"
-                notify_msg = (
-                    f"Backup job '{self._backup_job_name}' to "
-                    f"'{self._backup_repo_name}' completed successfully."
-                )
-                log_msg = (
-                    f"Backup job '{self._backup_job_name}' → "
-                    f"'{self._backup_repo_name}' completed successfully"
-                )
-
-            if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText(status_msg)
-            
-            self.log(log_msg)
-            
-            # Show success notification
-            show_notification(
-                title=notify_title,
-                message=notify_msg,
-                icon_type="success",
-                duration="short"
-            )
-            
-            # Auto-unlock if locks exist (check and unlock)
-            self._auto_unlock_after_completion()
-            
-            # Refresh snapshots if on snapshots page
-            if hasattr(self, 'snapshots_table'):
-                QTimer.singleShot(1000, self.load_snapshots)
-        else:
-            if hasattr(self, '_backup_status_label'):
-                self._backup_status_label.setText(f"✗ Backup to '{self._backup_repo_name}' failed!")
-            
-            error_msg = stderr if stderr else "Unknown error"
-            self.log(f"Backup job '{self._backup_job_name}' â†’ '{self._backup_repo_name}' failed: {error_msg}")
-            
-            # Show failure notification
-            show_notification(
-                title="Backup Failed ✗",
-                message=f"Backup job '{self._backup_job_name}' to '{self._backup_repo_name}' failed. Check logs for details.",
-                icon_type="error",
-                duration="long"
-            )
-            
-            # Also try to unlock on failure in case lock is stuck
-            if "locked" in error_msg.lower():
-                self._auto_unlock_after_completion()
-        
-        # Try next repository if any remain (for multi-repo backups)
-        # Use QTimer to give UI a chance to update before starting next backup
-        QTimer.singleShot(500, self._try_next_repository)
-    
-    def _auto_unlock_after_completion(self):
-        """Automatically check and unlock repository if locks exist"""
-        if not hasattr(self, '_backup_repo') or not hasattr(self, '_backup_repo_password'):
+        if outcome in (
+            restic_supervisor.Outcome.CANCELLED,
+            restic_supervisor.Outcome.TIMED_OUT,
+            restic_supervisor.Outcome.INTERRUPTED,
+        ):
+            self._backup_batch_active = False
+            self._backup_close_btn.setEnabled(True)
+            if hasattr(self, "refresh_dashboard_jobs_table"):
+                self.refresh_dashboard_jobs_table()
             return
-        
-        # First check if there are any locks
-        env = self._repo_env(self._backup_repo, self._backup_repo_password)
-        args = repo_restic_prefix(self._backup_repo) + ["list", "locks"]
-        
-        check_worker = ResticWorker(self.restic_cmd, args, env, timeout=15)
-        check_worker.finished.connect(self._on_lock_check_completed)
-        check_worker.start()
-        
-        # Store reference
-        self._lock_check_worker = check_worker
-    
-    def _on_lock_check_completed(self, success, stdout, stderr):
-        """Check if locks exist and unlock if needed"""
-        # If there are locks listed, unlock them
-        if success and stdout and stdout.strip():
-            self.log(f"Stale locks detected, auto-unlocking repository...")
-            
-            env = self._repo_env(self._backup_repo, self._backup_repo_password)
-            args = repo_restic_prefix(self._backup_repo) + ["unlock"]
-            
-            unlock_worker = ResticWorker(self.restic_cmd, args, env, timeout=30)
-            unlock_worker.finished.connect(lambda success, stdout, stderr: self._on_auto_unlock_completed(success, stderr, "completion"))
-            unlock_worker.start()
-            
-            # Store reference
-            self._auto_unlock_worker = unlock_worker
-    
-    def _on_auto_unlock_completed(self, success, stderr, context):
-        """Callback when auto-unlock completes"""
-        if success:
-            self.log(f"Repository auto-unlocked after backup {context}")
-        else:
-            # Only log error, don't show message box since this is automatic
-            if stderr:
-                self.log(f"Auto-unlock after {context} failed: {stderr}")
-    
-    
+        QTimer.singleShot(500, self._try_next_repository)
+
+
     # Retention Methods
     def _on_retention_frequency_changed(self, frequency):
         """Toggle between day of week and day of month based on frequency"""
@@ -15890,9 +15301,12 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         # Check if any critical operations are running
         running_operations = []
         
-        # Check for running backup
-        if hasattr(self, '_backup_worker') and self._backup_worker.isRunning():
-            running_operations.append("Backup job")
+        if getattr(self, "_backup_batch_active", False):
+            event.ignore()
+            show_framed_message(
+                self, "Backup In Progress", "Wait for Restic to finish before closing the application."
+            )
+            return
         
         # Check for running restore
         if hasattr(self, '_restore_worker') and self._restore_worker.isRunning():
@@ -15952,8 +15366,7 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             '_snapshot_worker', '_restore_snapshot_worker', '_browse_files_worker',
             '_diff_worker', '_forget_worker', '_tag_worker', '_copy_worker', '_prune_worker',
             '_unlock_worker', '_stats_worker', '_verify_worker', '_restore_worker',
-            '_backup_worker', '_init_worker', '_test_worker', '_lock_check_worker',
-            '_auto_unlock_worker', '_cancel_unlock_worker', '_repo_check_worker',
+            '_init_worker', '_test_worker', '_repo_check_worker',
             '_repo_status_worker', '_browse_restore_worker'
         ]
         
@@ -16050,11 +15463,6 @@ def run_job_cli(job_name):
         # Load settings
         settings_manager = ResticSettingsManager()
         db_path = history_db.history_db_path(settings_manager.filename)
-        restic_cmd = ResticCommand(
-            restic_path=settings_manager.get("restic_path"),
-            debug=DEBUG_MODE
-        )
-        
         # Find the job
         jobs = settings_manager.get("backup_jobs")
         job = next((j for j in jobs if j["name"] == job_name), None)
@@ -16090,6 +15498,7 @@ def run_job_cli(job_name):
 
         all_succeeded = True
         last_stderr = ""
+        failure_code = None
 
         for repo_name in repositories_to_backup:
             repo = next((r for r in repositories if r.get("name") == repo_name), None)
@@ -16123,74 +15532,40 @@ def run_job_cli(job_name):
                 except Exception:
                     net_pass = ""
 
-            # Run backup for this repo
-            success = False
-            stdout = ""
-            stderr = ""
-            duration = 0.0
-
+            # Use the same execution contract as the foreground backup.
+            attempt_at = datetime.now(timezone.utc)
+            result = None
             try:
                 with network_share.network_share_session(
                     repo, username=net_user, password=net_pass
                 ) as live_repo:
                     env = build_repo_env(
-                        live_repo,
-                        password,
+                        live_repo, password,
                         password_manager=settings_manager.password_manager,
                         settings_manager=settings_manager,
                     )
-                    args = repo_restic_prefix(live_repo) + ["backup", "--json"]
+                    request = restic_supervisor.ExecutionRequest(
+                        settings_manager.get("restic_path"), tuple(build_backup_args(live_repo, job)),
+                        environment=env, timeout=job.get("timeout", 7200) or None,
+                        validate_backup=True, allow_unchanged=job.get("skip_if_unchanged", True),
+                        profile_ref=job_name, repository_ref=repo_name,
+                    )
+                    result = restic_supervisor.start(request).wait()
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError):
+                # Network adapter diagnostics can include sensitive configuration.
+                pass
 
-                    args.extend(job["paths"])
-
-                    append_job_tag_args(args, job)
-
-                    if job.get("exclude_patterns"):
-                        for pattern in job["exclude_patterns"]:
-                            args.extend(["--exclude", pattern])
-
-                    if job.get("exclude_caches", True):
-                        args.append("--exclude-caches")
-
-                    if job.get("pack_size", 0) > 0:
-                        args.extend(["--pack-size", str(job["pack_size"])])
-
-                    if job.get("one_file_system", False):
-                        args.append("--one-file-system")
-
-                    if job.get("exclude_if_present"):
-                        args.extend(["--exclude-if-present", job["exclude_if_present"]])
-
-                    compression = job.get("compression", "auto")
-                    if compression and compression != "off":
-                        args.extend(["--compression", compression])
-
-                    if job.get("no_cache", False):
-                        args.append("--no-cache")
-
-                    if job.get("ignore_inode", False):
-                        args.append("--ignore-inode")
-
-                    if job.get("skip_if_unchanged", True):
-                        args.append("--skip-if-unchanged")
-
-                    print(f"[Restic Desktop CLI] Repository: {live_repo.get('path')}")
-                    print(f"[Restic Desktop CLI] Running backup...")
-                    started = time.time()
-                    success, stdout, stderr = restic_cmd.run(args, env, timeout=86400)
-                    duration = time.time() - started
-            except RuntimeError as net_exc:
-                success = False
-                stderr = str(net_exc)
-                duration = time.time() - started if 'started' in locals() else 0.0
-                stdout = ""
-
-            started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-            duration_sec = duration
-
-            snap_id = history_db.extract_snapshot_short_id(stdout or "") if success else None
-            skipped = bool(success) and history_db.backup_skipped_unchanged(stdout or "")
-            error_summary = None if success else ((stderr or "Unknown error")[:500])
+            success = result is not None and result.succeeded
+            started_at = ((result.started_at if result else None) or attempt_at).strftime("%Y-%m-%dT%H:%M:%S")
+            duration_sec = result.duration_seconds if result else None
+            exit_code = result.exit_code if result else None
+            snap_id = result.snapshot_id[:8] if result and result.snapshot_id else None
+            skipped = result is not None and result.outcome is restic_supervisor.Outcome.UNCHANGED
+            if result is not None:
+                diagnostic = f"{result.outcome.value}: {result.detail} {result.stderr.strip()}"
+            else:
+                diagnostic = "Could not prepare or access the repository."
+            error_summary = None if success else diagnostic.strip()[:500]
 
             try:
                 history_db.insert_job_run(
@@ -16199,7 +15574,7 @@ def run_job_cli(job_name):
                     started_at=started_at,
                     duration_sec=duration_sec,
                     success=bool(success),
-                    exit_code=0 if success else 1,
+                    exit_code=exit_code,
                     source="cli",
                     error_summary=error_summary,
                     snapshot_short_id=snap_id,
@@ -16215,7 +15590,7 @@ def run_job_cli(job_name):
                     success=bool(success),
                     source="cli",
                     duration_sec=duration_sec,
-                    exit_code=0 if success else 1,
+                    exit_code=exit_code,
                     error_summary=error_summary,
                     snapshot_short_id=snap_id,
                     skipped_unchanged=skipped,
@@ -16225,11 +15600,18 @@ def run_job_cli(job_name):
                 print(f"[WARN] Failed to write app log: {exc}")
 
             if success:
-                print(f"[Restic Desktop CLI] ✓ Backup to '{repo_name}' succeeded")
+                label = "No changes; snapshot skipped" if skipped else "Backup completed"
+                print(f"[Restic Desktop CLI] {label}: '{repo_name}'")
             else:
                 all_succeeded = False
-                last_stderr = stderr or "Unknown error"
+                if failure_code is None and exit_code is not None and 1 <= exit_code <= 255:
+                    failure_code = exit_code
+                last_stderr = error_summary or "Unknown error"
                 print(f"[Restic Desktop CLI] ✗ Backup to '{repo_name}' failed: {last_stderr}")
+                if result and result.outcome in (
+                    restic_supervisor.Outcome.TIMED_OUT, restic_supervisor.Outcome.INTERRUPTED
+                ):
+                    break
 
         # Stamp last_run only if all repositories succeeded
         if all_succeeded:
@@ -16249,11 +15631,10 @@ def run_job_cli(job_name):
 
         print("[Restic Desktop CLI] ✗ Backup failed for one or more repositories")
         print(f"[ERROR] {last_stderr}")
-        return 1
+        return failure_code or 1
     
-    except Exception as e:
-        print(f"[ERROR] Exception occurred: {str(e)}")
-        traceback.print_exc()
+    except Exception:
+        print("[ERROR] Backup job could not run.")
         try:
             settings_manager = ResticSettingsManager()
             history_db.log_job_run_outcome(
@@ -16261,7 +15642,7 @@ def run_job_cli(job_name):
                 success=False,
                 source="cli",
                 exit_code=1,
-                error_summary=str(e)[:500],
+                error_summary="Backup job could not run.",
                 db_path=history_db.history_db_path(settings_manager.filename),
             )
         except Exception:
@@ -16646,4 +16027,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

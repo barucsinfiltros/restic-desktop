@@ -111,6 +111,7 @@ class RestoreWizard(WizardDialog):
         self.to_original = QCheckBox(
             "Restore to original locations (may overwrite existing files)"
         )
+        self.to_original.setEnabled(False)
         destination_layout.addWidget(self.to_original)
         target_row = QHBoxLayout()
         self.target_input = QLineEdit()

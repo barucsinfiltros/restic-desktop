@@ -470,8 +470,6 @@ def populate_jobs_table(host: Any) -> None:
     if themes.ensure_repo_colors(repositories):
         host.settings_manager.set("repositories", repositories)
         host.settings_manager.save_settings()
-    repo_last = getattr(host, "_repo_last_backup", {}) or {}
-    repo_snaps = getattr(host, "_repo_last_snapshot", {}) or {}
     repo_sizes = getattr(host, "_repo_sizes", {}) or {}
 
     latest_runs: dict = {}
@@ -542,31 +540,15 @@ def populate_jobs_table(host: Any) -> None:
         else:
             sched_text = "Manual"
 
-        # Prefer live restic snapshot times/ids, then persisted job fields
-        last_run = schedule.get("last_run") or job.get("last_run") or ""
-        snap_short = job.get("last_snapshot_id") or ""
-        snap_full = job.get("last_snapshot_full_id") or ""
-        best_live = ""
-        best_live_snap = None
-        size_bytes = 0
-        for name in repos:
-            stamp = repo_last.get(name) or ""
-            if stamp and (not best_live or stamp > best_live):
-                best_live = stamp
-                best_live_snap = repo_snaps.get(name)
-            size_bytes = max(size_bytes, int(repo_sizes.get(name) or 0))
-        if best_live and (not last_run or best_live > str(last_run)):
-            last_run = best_live
-        if best_live_snap and best_live_snap.get("short_id"):
-            snap_short = best_live_snap["short_id"]
-            snap_full = best_live_snap.get("id") or snap_short
-        if not last_run:
-            last_run = "—"
-        snap_text = snap_short or "—"
-        size_text = _format_size(size_bytes)
-
         job_name = job.get("name", "—") or "—"
         last_hist = latest_runs.get(job_name)
+        last_run = (last_hist or {}).get("finished_at") or schedule.get("last_run") or job.get("last_run") or "—"
+        # A repository-wide latest snapshot is not evidence of this job's result.
+        snap_short = (last_hist or {}).get("snapshot_short_id") or ""
+        snap_text = snap_short or "—"
+        size_bytes = max((int(repo_sizes.get(name) or 0) for name in repos), default=0)
+        size_text = _format_size(size_bytes)
+
         duration_text = "—"
         duration_sec = -1.0
         if last_hist is not None:
@@ -626,7 +608,7 @@ def populate_jobs_table(host: Any) -> None:
             elif col == 5:
                 item.setData(
                     _SNAPSHOT_ID_ROLE,
-                    snap_full or (snap_short if snap_short and snap_short != "—" else ""),
+                    snap_short,
                 )
             elif col == 6:
                 item.setData(Qt.ItemDataRole.UserRole, size_bytes)
@@ -653,8 +635,6 @@ def populate_jobs_table(host: Any) -> None:
                 item.setForeground(muted_color)
                 item.setData(TableRowHover.BASE_FG_ROLE, muted)
                 item.setData(TableRowHover.HOVER_LIGHTEN_ROLE, True)
-            if col == 5 and snap_full:
-                item.setToolTip(str(snap_full))
             if col == 6:
                 item.setForeground(muted_color)
                 item.setData(TableRowHover.BASE_FG_ROLE, muted)

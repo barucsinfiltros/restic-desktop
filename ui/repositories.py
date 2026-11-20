@@ -274,7 +274,7 @@ def _make_repo_menu_cell(
     icon_color: str,
     parent=None,
 ) -> QWidget:
-    """Kebab (⋯) button that opens Check / Edit / Delete."""
+    """Kebab (⋯) button that opens Check / Edit / Unregister."""
     cell = QWidget(parent)
     cell.setObjectName("repoActions")
     row = QHBoxLayout(cell)
@@ -298,7 +298,7 @@ def _make_repo_menu_cell(
             check_act = menu.addAction("Check connection")
             menu.addSeparator()
         edit_act = menu.addAction("Edit")
-        delete_act = menu.addAction("Delete")
+        delete_act = menu.addAction("Unregister…")
         chosen = menu.exec(button.mapToGlobal(button.rect().bottomRight()))
         if check_act is not None and chosen is check_act and on_check is not None:
             on_check(name)

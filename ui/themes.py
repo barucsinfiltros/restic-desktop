@@ -3543,12 +3543,15 @@ def populate_theme_combo(combo) -> None:
 
 
 def apply_theme(app, settings_manager, theme: str, window=None) -> str:
-    """
-    Apply an AppTheme stylesheet to the QApplication (and optional main window).
-    Returns the resolved theme id that was applied.
-    """
+    """Apply a widget theme and preserve the legacy settings integration."""
     theme_id = resolve_theme_id(theme)
     settings_manager.set("theme", theme_id)
+    return apply_widget_theme(app, theme_id, window)
+
+
+def apply_widget_theme(app, theme: str, window=None) -> str:
+    """Apply the existing Qt theme without requiring application settings."""
+    theme_id = resolve_theme_id(theme)
     app_theme = get_app_theme(theme_id)
     css = build_stylesheet(app_theme)
     app.setStyleSheet(css)

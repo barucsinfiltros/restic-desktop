@@ -1,32 +1,34 @@
-"""Modern UI components for Restic Manager."""
+"""Reusable Qt widgets and compatibility exports for the desktop pages."""
 
-from ui.backup_jobs import create_backup_jobs_page, populate_backup_jobs_table
+from importlib import import_module
+
 from ui.cards import SectionCard, StatCard
-from ui.dashboard import create_dashboard_page, populate_jobs_table
-from ui.logs import create_logs_page
-from ui.repositories import create_repositories_page, populate_repository_table
-from ui.retention import create_retention_page
-from ui.settings import create_settings_page
 from ui.sidebar import NavSidebar
-from ui.snapshots import create_snapshots_page, populate_snapshots_table
-from ui.restore import create_restore_page
-from ui.health_dialog import RepositoryHealthDialog
 
-__all__ = [
-    "NavSidebar",
-    "StatCard",
-    "SectionCard",
-    "RepositoryHealthDialog",
-    "create_dashboard_page",
-    "create_repositories_page",
-    "create_snapshots_page",
-    "create_restore_page",
-    "create_backup_jobs_page",
-    "create_retention_page",
-    "create_logs_page",
-    "create_settings_page",
-    "populate_jobs_table",
-    "populate_repository_table",
-    "populate_snapshots_table",
-    "populate_backup_jobs_table",
-]
+_LEGACY_EXPORTS = {
+    "RepositoryHealthDialog": "health_dialog",
+    "create_dashboard_page": "dashboard",
+    "create_repositories_page": "repositories",
+    "create_snapshots_page": "snapshots",
+    "create_restore_page": "restore",
+    "create_backup_jobs_page": "backup_jobs",
+    "create_retention_page": "retention",
+    "create_logs_page": "logs",
+    "create_settings_page": "settings",
+    "populate_jobs_table": "dashboard",
+    "populate_repository_table": "repositories",
+    "populate_snapshots_table": "snapshots",
+    "populate_backup_jobs_table": "backup_jobs",
+}
+
+__all__ = ["NavSidebar", "StatCard", "SectionCard", *_LEGACY_EXPORTS]
+
+
+def __getattr__(name: str):
+    """Load desktop pages only when requested through the public package API."""
+    module = _LEGACY_EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(f".{module}", __name__), name)
+    globals()[name] = value
+    return value

@@ -222,6 +222,7 @@ def create_restore_page(host: Any) -> QWidget:
     dest_layout.setSpacing(10)
 
     host.restore_to_original_check = QCheckBox("Restore to original location")
+    host.restore_to_original_check.setEnabled(False)
     host.restore_to_original_check.setToolTip(
         "When checked, files will be restored to their original paths from the snapshot"
     )
