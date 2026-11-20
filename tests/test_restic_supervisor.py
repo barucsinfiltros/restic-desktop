@@ -1,4 +1,5 @@
 import json
+from collections import deque
 from io import BytesIO
 import os
 from pathlib import Path
@@ -248,6 +249,67 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(result.snapshot_id, "ab" * 32)
         self.assertTrue(result.output_truncated)
         self.assertLessEqual(len(result.stdout), 1024 * 1024)
+
+    def monitor_post_exit_output(self, stdout_chunks):
+        execution = supervisor.Execution()
+        execution.pid = 123
+        request = ExecutionRequest("fixture", ("backup",), validate_backup=True)
+        child = SimpleNamespace(stdout=BytesIO(), stderr=BytesIO(), poll=Mock(return_value=0))
+        pending = {
+            child.stdout: deque(stdout_chunks),
+            child.stderr: deque([b"final diagnostic\n"]),
+        }
+
+        def read(pipe):
+            child.poll.assert_called_once_with()
+            self.assertFalse(execution.process_is_running)
+            self.assertIsNone(execution.wait(0))
+            chunks = pending[pipe]
+            # No bytes available is distinct from EOF on an inherited pipe.
+            return chunks.popleft() if chunks else None
+
+        with (
+            patch.object(supervisor, "prepare_pipe"),
+            patch.object(supervisor, "read_available", side_effect=read),
+        ):
+            supervisor._monitor(execution, request, child, 0, lambda text: text)
+
+        self.assertTrue(child.stdout.closed)
+        self.assertTrue(child.stderr.closed)
+        result = self.result(execution)
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stderr, "final diagnostic\n")
+        return result, list(pending[child.stdout])
+
+    def test_post_exit_drain_recovers_final_summary(self):
+        snapshot = "ab" * 32
+        summary = json.dumps({
+            "message_type": "summary", "total_files_processed": 1, "snapshot_id": snapshot,
+        }) + "\n"
+        data = summary.encode()
+        result, unread = self.monitor_post_exit_output([b"progress\n", data[:50], data[50:]])
+        self.assertEqual(unread, [])
+        self.assertEqual(result.stdout, "progress\n" + summary)
+        self.assertEqual(result.outcome, Outcome.COMPLETED)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.snapshot_id, snapshot)
+        self.assertFalse(result.output_truncated)
+
+    def test_post_exit_drain_limit_rejects_backup_without_summary(self):
+        summary = json.dumps({
+            "message_type": "summary", "total_files_processed": 1, "snapshot_id": "ab" * 32,
+        }).encode() + b"\n"
+        # Short records isolate the 64-pass budget from byte and line limits.
+        pending = [b"progress\n"] * 64 + [summary]
+        result, unread = self.monitor_post_exit_output(pending)
+        self.assertEqual(unread, [summary])
+        self.assertEqual(result.stdout, "progress\n" * 64)
+        self.assertEqual(result.outcome, Outcome.FAILED)
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.snapshot_id)
+        self.assertTrue(result.output_truncated)
+        self.assertIn("No valid final Restic backup summary", result.detail)
+        self.assertIn("Subprocess output capture was incomplete", result.detail)
 
     def test_backup_requires_documented_summary(self):
         base = {"message_type": "summary", "total_files_processed": 1}

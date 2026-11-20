@@ -195,7 +195,7 @@ Criterios de aceptación:
 
 ### Fase 2 — Contención de riesgos heredados
 
-**Estado:** implementada inicialmente. H1.1 tiene una corrección verificada con procesos simulados y sigue pendiente de auditoría y aceptación.
+**Estado:** implementada inicialmente. H1.1 fue aceptado por auditoría independiente. H1.2 conserva sus límites documentados y H1.3 tiene pendiente la validación de symlinks reales.
 
 Objetivos:
 
@@ -215,7 +215,7 @@ Criterios de aceptación:
 
 ### Fase 3 — Supervisor Restic independiente de Qt
 
-**Estado:** implementada inicialmente; H2 aceptado tras auditoría. H3 permanece como limitación documentada.
+**Estado:** implementada inicialmente. La clasificación de H2 fue aceptada y H2.3 está resuelto. H2.2 está verificado por pruebas y pendiente de aceptación independiente. H3 sigue pendiente de diseño.
 
 Objetivos:
 
@@ -537,6 +537,7 @@ Referencia de implementación auditada:
 - Base upstream: `d2f258f99a56f8b40a4cd10f75e0bc2727cfc065`.
 - Commit de fundación: `60635d59676676bf03324cf10591753d60f6407a`.
 - Commit de correcciones H1/H2 auditado: `58d2524a07f48f32bc9eae4848266dec6636a8af`.
+- Commit de seguimiento auditado: `6bd2a6a16ed2223e7a566e640fa9418356b45a59`.
 - Rama de referencia: `codex/initial-restic-foundation`.
 
 ### Estado por fase
@@ -545,8 +546,8 @@ Referencia de implementación auditada:
 |---|---|
 | 0 — Preparación | Realizada inicialmente |
 | 1 — Componentes visuales | Implementada inicialmente; aceptación pendiente |
-| 2 — Contención heredada | Corrección H1.1 probada con procesos simulados; H1 pendiente de auditoría y aceptación |
-| 3 — Supervisor Restic | H2 aceptado; H3 pendiente de solución futura |
+| 2 — Contención heredada | H1.1 aceptado por auditoría independiente. H1.2 documentado y H1.3 parcialmente validado |
+| 3 — Supervisor Restic | H2.2 verificado por pruebas, pendiente de aceptación independiente. H2.3 resuelto. H3 pendiente de diseño |
 | 4 — Modelo perfiles/repositorios | Pendiente |
 | 5 — Perfiles y respaldos | Pendiente |
 | 6 — Restauración segura | Pendiente |
@@ -557,15 +558,15 @@ Referencia de implementación auditada:
 
 ### Deuda técnica y riesgos abiertos
 
-- **H1:** el commit auditado liberaba handles sin confirmar la salida en ciertos caminos de timeout o excepción. El seguimiento local mantiene la protección hasta observar la salida del hijo directo. Las pruebas sincronizadas cubren timeout, cancelación y errores de terminación y espera. La aceptación y la prueba de symlinks reales en Windows siguen pendientes.
-- **H2:** la auditoría aceptó la separación entre resultado y motivo de parada. El seguimiento conserva ambos datos en el registro secundario y deja intacto el límite de drenaje, ya que las pruebas no reprodujeron la pérdida del resumen. Ver [Base inicial del fork](INITIAL_FOUNDATION.md) para la evidencia y sus límites.
+- **H1.1–H1.3:** la auditoría aceptó la protección hasta confirmar la salida del hijo directo. La validación de la ruta reduce carreras y sigue teniendo límites de confinamiento. La prueba de symlinks reales en Windows queda pendiente por el error de permisos 1314.
+- **H2.2–H2.3:** el registro secundario conserva el resultado y el motivo de parada. Dos pruebas deterministas verifican que el monitor recupera un resumen durante el drenaje posterior a la salida y que, si queda más allá del límite, devuelve fallo y señala captura incompleta. H2.2 queda pendiente de aceptación independiente. Ver [Base inicial del fork](INITIAL_FOUNDATION.md) para la evidencia y sus límites.
 - **H3:** `StopPolicy.WAIT` puede esperar indefinidamente; el plazo no garantiza la terminación.
 - La restauración aún no tiene confinamiento completo de escrituras, staging transaccional, verificación final ni rollback.
 - Las tareas programadas heredadas, comandos fuera del supervisor, gestión de credenciales y concurrencia entre instancias necesitan revisión.
 - El servicio o mecanismo de apagado de Windows no está seleccionado ni validado.
 - Las pruebas con Restic real deben seguir usando repositorios temporales desechables.
 
-La auditoría indicada se aplica al commit de referencia. Las correcciones posteriores de esta sección se describen como seguimiento pendiente de reauditoría.
+La aceptación independiente corresponde al commit de referencia auditado. Las pruebas posteriores de H2.2 se registran como evidencia pendiente de revisión independiente.
 
 ---
 
