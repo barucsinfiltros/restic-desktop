@@ -215,7 +215,7 @@ Criterios de aceptación:
 
 ### Fase 3 — Supervisor Restic independiente de Qt
 
-**Estado:** implementada inicialmente. La clasificación de H2 fue aceptada y H2.3 está resuelto. H2.2 está verificado por pruebas y pendiente de aceptación independiente. H3 sigue pendiente de diseño.
+**Estado:** implementada inicialmente. La clasificación original de H2 fue aceptada y H2.3 está resuelto. Los casos residuales de H2.2 tienen corrección verificada por pruebas y pendiente de aceptación independiente. H3 sigue pendiente de diseño.
 
 Objetivos:
 
@@ -559,14 +559,14 @@ Referencia de implementación auditada:
 ### Deuda técnica y riesgos abiertos
 
 - **H1.1–H1.3:** la auditoría aceptó la protección hasta confirmar la salida del hijo directo. La validación de la ruta reduce carreras y sigue teniendo límites de confinamiento. La prueba de symlinks reales en Windows queda pendiente por el error de permisos 1314.
-- **H2.2–H2.3:** el registro secundario conserva el resultado y el motivo de parada. Dos pruebas deterministas verifican que el monitor recupera un resumen durante el drenaje posterior a la salida y que, si queda más allá del límite, devuelve fallo y señala captura incompleta. H2.2 queda pendiente de aceptación independiente. Ver [Base inicial del fork](INITIAL_FOUNDATION.md) para la evidencia y sus límites.
+- **H2.2–H2.3:** el registro secundario conserva el resultado y el motivo de parada. Ocho pruebas deterministas cubren el drenaje posterior a la salida, los registros parciales o descartados y el tratamiento independiente de stdout y stderr. La corrección impide confirmar un respaldo con stdout incompleto y conserva el límite de 64 pasadas. H2.2 queda pendiente de aceptación independiente. Ver [Base inicial del fork](INITIAL_FOUNDATION.md) para la evidencia y sus límites.
 - **H3:** `StopPolicy.WAIT` puede esperar indefinidamente; el plazo no garantiza la terminación.
 - La restauración aún no tiene confinamiento completo de escrituras, staging transaccional, verificación final ni rollback.
 - Las tareas programadas heredadas, comandos fuera del supervisor, gestión de credenciales y concurrencia entre instancias necesitan revisión.
 - El servicio o mecanismo de apagado de Windows no está seleccionado ni validado.
 - Las pruebas con Restic real deben seguir usando repositorios temporales desechables.
 
-La aceptación independiente corresponde al commit de referencia auditado. Las pruebas posteriores de H2.2 se registran como evidencia pendiente de revisión independiente.
+La aceptación independiente corresponde a los hallazgos ya auditados. La corrección residual y las pruebas de H2.2 se registran como evidencia pendiente de revisión independiente.
 
 ---
 

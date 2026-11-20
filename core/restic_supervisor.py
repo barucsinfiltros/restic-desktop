@@ -205,6 +205,7 @@ class _Capture:
         self.last_record = b""
         self.discard_line = False
         self.truncated = False
+        self.incomplete = False
         self.closed = False
 
     def drain(self) -> bool:
@@ -231,11 +232,14 @@ class _Capture:
             self.discard_line = False
         if len(self.pending) > _MAX_LINE:
             self.pending = b""
+            self.last_record = b""
             self.discard_line = self.truncated = True
         return True
 
     def close(self) -> None:
         if not self.closed:
+            if self.discard_line or self.pending.strip():
+                self.incomplete = True
             if self.pending:
                 self._line(self.pending)
             self.closed = True
@@ -347,24 +351,23 @@ def _monitor(handle: Execution, request: ExecutionRequest, process, launched_at:
         _Capture("stderr", process.stderr, handle._emit, redact),
     ]
     deadline = None if request.timeout is None else launched_at + request.timeout
-    capture_failed = False
     termination_attempted = False
     termination_failed = False
     for stream in captures:
         try:
             prepare_pipe(stream.pipe)
         except OSError:
-            capture_failed = True
+            stream.incomplete = True
             stream.close()
 
-    def drain() -> bool:
-        nonlocal capture_failed
-        received = False
+    def drain() -> list[_Capture]:
+        received = []
         for stream in captures:
             try:
-                received = stream.drain() or received
+                if stream.drain():
+                    received.append(stream)
             except OSError:
-                capture_failed = True
+                stream.incomplete = True
                 stream.close()
         return received
 
@@ -396,22 +399,28 @@ def _monitor(handle: Execution, request: ExecutionRequest, process, launched_at:
     # Drain currently available bytes. A descendant keeping a pipe open cannot
     # postpone completion of the direct child or force an unbounded final drain.
     for _ in range(64):
-        if not drain():
+        received = drain()
+        if not received:
             break
     else:
-        capture_failed = True
+        # Only streams still delivering bytes at the limit have unread output
+        # that we cannot rule out. A busy stderr does not invalidate stdout.
+        for stream in received:
+            stream.incomplete = True
     for stream in captures:
         stream.close()
     stdout, stderr = captures
-    outcome, snapshot, detail = _classify(request, code, stdout.last_record)
-    if capture_failed:
-        detail = f"{detail} Subprocess output capture was incomplete.".strip()
+    final_stdout = b"" if stdout.incomplete else stdout.last_record
+    outcome, snapshot, detail = _classify(request, code, final_stdout)
+    incomplete = ", ".join(stream.stream for stream in captures if stream.incomplete)
+    if incomplete:
+        detail = f"{detail} Subprocess output capture was incomplete ({incomplete}).".strip()
     if termination_failed:
         detail = f"{detail} The termination call failed or the process had already exited.".strip()
     _finish(
         handle, request, launched_at, outcome, code, snapshot_id=snapshot,
         stdout=stdout.output(), stderr=stderr.output(), detail=detail,
-        output_truncated=capture_failed or stdout.truncated or stderr.truncated,
+        output_truncated=bool(incomplete) or stdout.truncated or stderr.truncated,
     )
 
 

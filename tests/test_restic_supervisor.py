@@ -250,14 +250,14 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(result.output_truncated)
         self.assertLessEqual(len(result.stdout), 1024 * 1024)
 
-    def monitor_post_exit_output(self, stdout_chunks):
+    def monitor_post_exit_output(self, stdout_chunks, stderr_chunks=(b"final diagnostic\n",)):
         execution = supervisor.Execution()
         execution.pid = 123
         request = ExecutionRequest("fixture", ("backup",), validate_backup=True)
         child = SimpleNamespace(stdout=BytesIO(), stderr=BytesIO(), poll=Mock(return_value=0))
         pending = {
             child.stdout: deque(stdout_chunks),
-            child.stderr: deque([b"final diagnostic\n"]),
+            child.stderr: deque(stderr_chunks),
         }
 
         def read(pipe):
@@ -266,7 +266,10 @@ class SupervisorTests(unittest.TestCase):
             self.assertIsNone(execution.wait(0))
             chunks = pending[pipe]
             # No bytes available is distinct from EOF on an inherited pipe.
-            return chunks.popleft() if chunks else None
+            chunk = chunks.popleft() if chunks else None
+            if isinstance(chunk, OSError):
+                raise chunk
+            return chunk
 
         with (
             patch.object(supervisor, "prepare_pipe"),
@@ -278,7 +281,6 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(child.stderr.closed)
         result = self.result(execution)
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.stderr, "final diagnostic\n")
         return result, list(pending[child.stdout])
 
     def test_post_exit_drain_recovers_final_summary(self):
@@ -290,6 +292,7 @@ class SupervisorTests(unittest.TestCase):
         result, unread = self.monitor_post_exit_output([b"progress\n", data[:50], data[50:]])
         self.assertEqual(unread, [])
         self.assertEqual(result.stdout, "progress\n" + summary)
+        self.assertEqual(result.stderr, "final diagnostic\n")
         self.assertEqual(result.outcome, Outcome.COMPLETED)
         self.assertTrue(result.succeeded)
         self.assertEqual(result.snapshot_id, snapshot)
@@ -310,6 +313,67 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(result.output_truncated)
         self.assertIn("No valid final Restic backup summary", result.detail)
         self.assertIn("Subprocess output capture was incomplete", result.detail)
+
+    def backup_summary(self, snapshot="ab" * 32):
+        return json.dumps({
+            "message_type": "summary", "total_files_processed": 1, "snapshot_id": snapshot,
+        }).encode() + b"\n"
+
+    def assert_unconfirmed_stdout(self, result):
+        self.assertEqual(result.outcome, Outcome.FAILED)
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.snapshot_id)
+        self.assertTrue(result.output_truncated)
+        self.assertIn("Subprocess output capture was incomplete (stdout)", result.detail)
+
+    def test_post_exit_stdout_loss_invalidates_previously_read_summary(self):
+        summary = self.backup_summary()
+        for ending in ([OSError("stdout read failed")], [b"\n"] * 64):
+            with self.subTest(ending=type(ending[0]).__name__):
+                result, _ = self.monitor_post_exit_output([summary, *ending])
+                self.assertIn(summary.decode(), result.stdout)
+                self.assert_unconfirmed_stdout(result)
+
+    def test_post_exit_stderr_loss_preserves_complete_stdout_summary(self):
+        for eof, diagnostic in (
+            ([b""], [b"error\n", OSError("stderr read failed")]),
+            ([], [b"error\n"] * 65),
+        ):
+            with self.subTest(stdout_eof=bool(eof), stderr_reads=len(diagnostic)):
+                result, _ = self.monitor_post_exit_output([self.backup_summary(), *eof], diagnostic)
+                self.assertEqual(result.outcome, Outcome.COMPLETED)
+                self.assertTrue(result.succeeded)
+                self.assertEqual(result.snapshot_id, "ab" * 32)
+                self.assertTrue(result.output_truncated)
+                self.assertIn("Subprocess output capture was incomplete (stderr)", result.detail)
+
+    def test_post_exit_partial_stdout_record_at_eof_invalidates_summary(self):
+        result, _ = self.monitor_post_exit_output([
+            self.backup_summary(), b'{"message_type": "status"', b"",
+        ])
+        self.assert_unconfirmed_stdout(result)
+
+    def test_post_exit_oversized_partial_stdout_record_invalidates_summary(self):
+        fragment = b"x" * (supervisor._MAX_LINE // 2 + 1)
+        result, _ = self.monitor_post_exit_output([
+            self.backup_summary(), fragment, fragment, b"",
+        ])
+        self.assert_unconfirmed_stdout(result)
+
+    def test_post_exit_summary_after_discarded_record_remains_valid(self):
+        fragment = b"x" * (supervisor._MAX_LINE // 2 + 1)
+        result, _ = self.monitor_post_exit_output([fragment, fragment, b"\n", self.backup_summary(), b""])
+        self.assertEqual(result.outcome, Outcome.COMPLETED)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.snapshot_id, "ab" * 32)
+        self.assertTrue(result.output_truncated)
+        self.assertEqual(result.detail, "")
+
+    def test_post_exit_unterminated_json_cannot_replace_summary(self):
+        result, _ = self.monitor_post_exit_output([
+            self.backup_summary(), self.backup_summary("cd" * 32).rstrip(b"\n"), b"",
+        ])
+        self.assert_unconfirmed_stdout(result)
 
     def test_backup_requires_documented_summary(self):
         base = {"message_type": "summary", "total_files_processed": 1}
