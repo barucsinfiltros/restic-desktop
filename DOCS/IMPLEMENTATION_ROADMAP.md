@@ -215,7 +215,7 @@ Criterios de aceptación:
 
 ### Fase 3 — Supervisor Restic independiente de Qt
 
-**Estado:** implementada inicialmente. La clasificación original de H2 fue aceptada y H2.3 está resuelto. Los casos residuales de H2.2 tienen corrección verificada por pruebas y pendiente de aceptación independiente. H3 sigue pendiente de diseño.
+**Estado:** implementada inicialmente. La clasificación original de H2 fue aceptada y H2.3 está resuelto. H2.2-R3 y H2.2-T1 están corregidos y auditados. H2.2 fue aceptado para el alcance verificado en Windows. La prueba nativa en POSIX sigue pendiente. H3 sigue pendiente de diseño.
 
 Objetivos:
 
@@ -538,6 +538,7 @@ Referencia de implementación auditada:
 - Commit de fundación: `60635d59676676bf03324cf10591753d60f6407a`.
 - Commit de correcciones H1/H2 auditado: `58d2524a07f48f32bc9eae4848266dec6636a8af`.
 - Commit de seguimiento auditado: `6bd2a6a16ed2223e7a566e640fa9418356b45a59`.
+- Seguimiento H2.2-R3 y H2.2-T1: auditoría independiente del diff local sobre `792802c2d4b370c3ed80f76b2d193c2ab3b5a015`.
 - Rama de referencia: `codex/initial-restic-foundation`.
 
 ### Estado por fase
@@ -547,7 +548,7 @@ Referencia de implementación auditada:
 | 0 — Preparación | Realizada inicialmente |
 | 1 — Componentes visuales | Implementada inicialmente; aceptación pendiente |
 | 2 — Contención heredada | H1.1 aceptado por auditoría independiente. H1.2 documentado y H1.3 parcialmente validado |
-| 3 — Supervisor Restic | H2.2 verificado por pruebas, pendiente de aceptación independiente. H2.3 resuelto. H3 pendiente de diseño |
+| 3 — Supervisor Restic | H2.2 aceptado en el alcance verificado en Windows. Prueba POSIX pendiente. H2.3 resuelto. H3 pendiente de diseño |
 | 4 — Modelo perfiles/repositorios | Pendiente |
 | 5 — Perfiles y respaldos | Pendiente |
 | 6 — Restauración segura | Pendiente |
@@ -559,14 +560,14 @@ Referencia de implementación auditada:
 ### Deuda técnica y riesgos abiertos
 
 - **H1.1–H1.3:** la auditoría aceptó la protección hasta confirmar la salida del hijo directo. La validación de la ruta reduce carreras y sigue teniendo límites de confinamiento. La prueba de symlinks reales en Windows queda pendiente por el error de permisos 1314.
-- **H2.2–H2.3:** el registro secundario conserva el resultado y el motivo de parada. Ocho pruebas deterministas cubren el drenaje posterior a la salida, los registros parciales o descartados y el tratamiento independiente de stdout y stderr. La corrección impide confirmar un respaldo con stdout incompleto y conserva el límite de 64 pasadas. H2.2 queda pendiente de aceptación independiente. Ver [Base inicial del fork](INITIAL_FOUNDATION.md) para la evidencia y sus límites.
+- **H2.2–H2.3:** el registro secundario conserva el resultado y el motivo de parada. La auditoría independiente aceptó H2.2-R3 y H2.2-T1 en el alcance verificado en Windows con pruebas deterministas, una tubería nativa y procesos con tuberías heredadas. El supervisor exige EOF de stdout para confirmar el resumen final. Si solo stderr queda incompleto, el respaldo puede conservar el éxito. Se mantiene el límite de 64 pasadas. La prueba nativa en POSIX sigue pendiente. Ver [Base inicial del fork](INITIAL_FOUNDATION.md) para la evidencia y sus límites.
 - **H3:** `StopPolicy.WAIT` puede esperar indefinidamente; el plazo no garantiza la terminación.
 - La restauración aún no tiene confinamiento completo de escrituras, staging transaccional, verificación final ni rollback.
 - Las tareas programadas heredadas, comandos fuera del supervisor, gestión de credenciales y concurrencia entre instancias necesitan revisión.
 - El servicio o mecanismo de apagado de Windows no está seleccionado ni validado.
 - Las pruebas con Restic real deben seguir usando repositorios temporales desechables.
 
-La aceptación independiente corresponde a los hallazgos ya auditados. La corrección residual y las pruebas de H2.2 se registran como evidencia pendiente de revisión independiente.
+La aceptación independiente de H2.2 se limita al diff auditado y al alcance verificado en Windows. La validación nativa en POSIX queda abierta.
 
 ---
 

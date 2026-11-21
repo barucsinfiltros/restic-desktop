@@ -214,8 +214,8 @@ class _Capture:
         chunk = read_available(self.pipe)
         if chunk is None:
             return False
-        if not chunk:
-            self.close()
+        if chunk == b"":
+            self.close(eof=True)
             return False
         self.tail.extend(chunk)
         if len(self.tail) > _MAX_CAPTURE:
@@ -236,9 +236,9 @@ class _Capture:
             self.discard_line = self.truncated = True
         return True
 
-    def close(self) -> None:
+    def close(self, *, eof: bool = False) -> None:
         if not self.closed:
-            if self.discard_line or self.pending.strip():
+            if not eof or self.discard_line or self.pending.strip():
                 self.incomplete = True
             if self.pending:
                 self._line(self.pending)
@@ -357,17 +357,14 @@ def _monitor(handle: Execution, request: ExecutionRequest, process, launched_at:
         try:
             prepare_pipe(stream.pipe)
         except OSError:
-            stream.incomplete = True
             stream.close()
 
-    def drain() -> list[_Capture]:
-        received = []
+    def drain() -> bool:
+        received = False
         for stream in captures:
             try:
-                if stream.drain():
-                    received.append(stream)
+                received = stream.drain() or received
             except OSError:
-                stream.incomplete = True
                 stream.close()
         return received
 
@@ -399,14 +396,9 @@ def _monitor(handle: Execution, request: ExecutionRequest, process, launched_at:
     # Drain currently available bytes. A descendant keeping a pipe open cannot
     # postpone completion of the direct child or force an unbounded final drain.
     for _ in range(64):
-        received = drain()
-        if not received:
+        if not drain():
             break
-    else:
-        # Only streams still delivering bytes at the limit have unread output
-        # that we cannot rule out. A busy stderr does not invalidate stdout.
-        for stream in received:
-            stream.incomplete = True
+    # After quiescence or the cap, every still-open stream lacks EOF evidence.
     for stream in captures:
         stream.close()
     stdout, stderr = captures

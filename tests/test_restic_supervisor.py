@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from core.process_output import prepare_pipe, read_available
 from core import restic_supervisor as supervisor
 from core.restic_supervisor import ExecutionRequest, ExecutionState, Outcome, StopPolicy, StopReason, start
 
@@ -239,6 +240,18 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(children[0].stdout.closed)
         self.assertTrue(children[0].stderr.closed)
 
+    def test_native_pipe_reports_eof_only_after_last_writer_closes(self):
+        reader_fd, writer_fd = os.pipe()
+        with os.fdopen(reader_fd, "rb", buffering=0) as reader:
+            prepare_pipe(reader)
+            with os.fdopen(writer_fd, "wb", buffering=0) as writer:
+                remaining_writer = os.fdopen(os.dup(writer.fileno()), "wb", buffering=0)
+            with remaining_writer:
+                self.assertIsNone(read_available(reader))
+                remaining_writer.write(b"final record\n")
+            self.assertEqual(read_available(reader), b"final record\n")
+            self.assertEqual(read_available(reader), b"")
+
     def test_tail_limit_and_final_summary(self):
         summary = json.dumps({"message_type": "summary", "total_files_processed": 1, "snapshot_id": "ab" * 32})
         result = self.result(self.launch(
@@ -250,7 +263,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(result.output_truncated)
         self.assertLessEqual(len(result.stdout), 1024 * 1024)
 
-    def monitor_post_exit_output(self, stdout_chunks, stderr_chunks=(b"final diagnostic\n",)):
+    def monitor_post_exit_output(self, stdout_chunks, stderr_chunks=(b"final diagnostic\n", b"")):
         execution = supervisor.Execution()
         execution.pid = 123
         request = ExecutionRequest("fixture", ("backup",), validate_backup=True)
@@ -289,7 +302,7 @@ class SupervisorTests(unittest.TestCase):
             "message_type": "summary", "total_files_processed": 1, "snapshot_id": snapshot,
         }) + "\n"
         data = summary.encode()
-        result, unread = self.monitor_post_exit_output([b"progress\n", data[:50], data[50:]])
+        result, unread = self.monitor_post_exit_output([b"progress\n", data[:50], data[50:], b""])
         self.assertEqual(unread, [])
         self.assertEqual(result.stdout, "progress\n" + summary)
         self.assertEqual(result.stderr, "final diagnostic\n")
@@ -297,6 +310,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(result.succeeded)
         self.assertEqual(result.snapshot_id, snapshot)
         self.assertFalse(result.output_truncated)
+        self.assertEqual(result.detail, "")
 
     def test_post_exit_drain_limit_rejects_backup_without_summary(self):
         summary = json.dumps({
@@ -319,12 +333,12 @@ class SupervisorTests(unittest.TestCase):
             "message_type": "summary", "total_files_processed": 1, "snapshot_id": snapshot,
         }).encode() + b"\n"
 
-    def assert_unconfirmed_stdout(self, result):
+    def assert_unconfirmed_stdout(self, result, *, incomplete_streams="stdout"):
         self.assertEqual(result.outcome, Outcome.FAILED)
         self.assertFalse(result.succeeded)
         self.assertIsNone(result.snapshot_id)
         self.assertTrue(result.output_truncated)
-        self.assertIn("Subprocess output capture was incomplete (stdout)", result.detail)
+        self.assertIn(f"Subprocess output capture was incomplete ({incomplete_streams})", result.detail)
 
     def test_post_exit_stdout_loss_invalidates_previously_read_summary(self):
         summary = self.backup_summary()
@@ -335,17 +349,33 @@ class SupervisorTests(unittest.TestCase):
                 self.assert_unconfirmed_stdout(result)
 
     def test_post_exit_stderr_loss_preserves_complete_stdout_summary(self):
-        for eof, diagnostic in (
+        for stdout_end, diagnostic in (
             ([b""], [b"error\n", OSError("stderr read failed")]),
-            ([], [b"error\n"] * 65),
+            ([b""], [b"error\n"] * 65),
+            ([None] * 62 + [b""], [b"error\n"] * 65),
         ):
-            with self.subTest(stdout_eof=bool(eof), stderr_reads=len(diagnostic)):
-                result, _ = self.monitor_post_exit_output([self.backup_summary(), *eof], diagnostic)
+            with self.subTest(stdout_eof_pass=len(stdout_end) + 1, stderr_reads=len(diagnostic)):
+                result, unread = self.monitor_post_exit_output([self.backup_summary(), *stdout_end], diagnostic)
+                self.assertEqual(unread, [])
                 self.assertEqual(result.outcome, Outcome.COMPLETED)
                 self.assertTrue(result.succeeded)
                 self.assertEqual(result.snapshot_id, "ab" * 32)
                 self.assertTrue(result.output_truncated)
                 self.assertIn("Subprocess output capture was incomplete (stderr)", result.detail)
+
+    def test_post_exit_open_stdout_with_busy_stderr_is_unconfirmed(self):
+        summary = self.backup_summary()
+        result, _ = self.monitor_post_exit_output([summary], [b"diagnostic\n"] * 65)
+        self.assertEqual(result.stdout, summary.decode())
+        self.assertEqual(result.stderr, "diagnostic\n" * 64)
+        self.assert_unconfirmed_stdout(result, incomplete_streams="stdout, stderr")
+
+    def test_post_exit_open_stdout_at_quiescence_is_unconfirmed(self):
+        summary = self.backup_summary()
+        result, _ = self.monitor_post_exit_output([summary], [b""])
+        self.assertEqual(result.stdout, summary.decode())
+        self.assertEqual(result.stderr, "")
+        self.assert_unconfirmed_stdout(result)
 
     def test_post_exit_partial_stdout_record_at_eof_invalidates_summary(self):
         result, _ = self.monitor_post_exit_output([

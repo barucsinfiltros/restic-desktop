@@ -28,7 +28,7 @@ def read_available(pipe: BinaryIO, limit: int = 65536) -> bytes | None:
         available = wintypes.DWORD()
         if not _peek(msvcrt.get_osfhandle(fd), None, 0, None, ctypes.byref(available), None):
             error = ctypes.get_last_error()
-            if error in (109, 232):  # broken pipe / pipe is closing
+            if error == 109:  # ERROR_BROKEN_PIPE on an anonymous subprocess pipe
                 return b""
             raise ctypes.WinError(error)
         if not available.value:
