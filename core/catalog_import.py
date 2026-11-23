@@ -3,7 +3,7 @@
 import hashlib
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -30,6 +30,7 @@ REPOSITORY_FIELDS = {
 SENSITIVE_FIELDS = {
     "password", "rest_password", "network_password", "object_key_id", "object_secret",
     "rclone_config", "app_password_hash", "app_password_salt", "rclone_conf_encrypted",
+    "ssh_key", "https_url", "rest_auth",
 }
 # Values of all other root settings stay out of the plan as they are not catalog entities.
 ROOT_FIELDS = {
@@ -59,7 +60,7 @@ class FieldReview:
 @dataclass(frozen=True)
 class RecordPlan:
     source_key: str
-    fingerprint: str
+    fingerprint: str = field(repr=False)
     fields: tuple[FieldReview, ...]
 
 
@@ -79,13 +80,41 @@ class Conflict:
 @dataclass(frozen=True)
 class ImportPlan:
     canonical_version: int
-    source_sha256: str
-    canonical_sha256: str
+    source_sha256: str = field(repr=False)
+    canonical_sha256: str = field(repr=False)
     profiles: tuple[RecordPlan, ...]
     repositories: tuple[RecordPlan, ...]
     relationships: tuple[Relationship, ...]
     root_fields: tuple[FieldReview, ...]
     conflicts: tuple[Conflict, ...]
+
+
+@dataclass(frozen=True)
+class DisplayRecord:
+    source_key: str
+    fields: tuple[FieldReview, ...]
+
+
+@dataclass(frozen=True)
+class DisplayPlan:
+    """Safe presentation representation without hashes or source values."""
+
+    canonical_version: int
+    profiles: tuple[DisplayRecord, ...]
+    repositories: tuple[DisplayRecord, ...]
+    relationships: tuple[Relationship, ...]
+    root_fields: tuple[FieldReview, ...]
+    conflicts: tuple[Conflict, ...]
+
+
+def display_plan(plan: ImportPlan) -> DisplayPlan:
+    """Use this projection for presentation, logging or serialization."""
+    return DisplayPlan(
+        plan.canonical_version,
+        tuple(DisplayRecord(record.source_key, record.fields) for record in plan.profiles),
+        tuple(DisplayRecord(record.source_key, record.fields) for record in plan.repositories),
+        plan.relationships, plan.root_fields, plan.conflicts,
+    )
 
 
 def _pairs(pairs):
@@ -160,10 +189,35 @@ def _record(record, key, known, profile):
                 fields.append(FieldReview(field, "incompatible"))
             else:
                 fields.append(FieldReview(field, "known"))
-        elif field in {"schedule", "created", "last_run"}:
+        elif field == "schedule":
+            fields.append(FieldReview(field, "not_representable"))
+            if not isinstance(value, dict):
+                fields.append(FieldReview("schedule", "incompatible"))
+            else:
+                schedule_fields = {
+                    "enabled", "frequency", "time", "days", "day_of_month",
+                    "run_if_missed", "pause_after_completion", "last_run",
+                }
+                for child, child_value in value.items():
+                    if child in SENSITIVE_FIELDS or child.lower() in {"token", "secret", "password", "credential"}:
+                        fields.append(FieldReview("schedule.<sensitive>", "sensitive"))
+                    elif child not in schedule_fields:
+                        fields.append(FieldReview("schedule.<unknown>", "unknown"))
+                    elif isinstance(child_value, (dict, list)) and child != "days":
+                        fields.append(FieldReview("schedule." + child, "review"))
+                    elif child == "days" and (
+                        not isinstance(child_value, list)
+                        or any(not isinstance(day, str) for day in child_value)
+                    ):
+                        fields.append(FieldReview("schedule.days", "review"))
+                    else:
+                        fields.append(FieldReview("schedule." + child, "not_representable"))
+        elif field in {"created", "last_run"}:
             fields.append(FieldReview(field, "not_representable"))
         elif not profile and field not in {"name", "type", "path"}:
             # Metadata and backend-specific values require an explicit mapping.
+            fields.append(FieldReview(field, "review"))
+        elif isinstance(value, (dict, list)) and field != "repositories":
             fields.append(FieldReview(field, "review"))
         else:
             fields.append(FieldReview(field, "known"))
@@ -200,7 +254,11 @@ def _backend(repo):
 
 
 def analyze_bytes(data: bytes) -> ImportPlan:
-    """Parse and plan in memory. Hashes are sensitive metadata; retain them privately."""
+    """Return internal analysis containing sensitive hashes.
+
+    Never serialize or display this object. Use display_plan() for presentation.
+    Store hashes only in protected memory or storage authorized by a later phase.
+    """
     if not isinstance(data, bytes):
         raise TypeError("Input must be bytes.")
     try:
@@ -228,10 +286,14 @@ def analyze_bytes(data: bytes) -> ImportPlan:
     root_fields = tuple(
         FieldReview(field if field in ROOT_FIELDS else "<unknown>",
                     "sensitive" if field in SENSITIVE_FIELDS else
+                    "review" if field in ROOT_FIELDS and isinstance(root[field], (dict, list)) else
                     "known" if field in ROOT_FIELDS else "unknown")
         for field in root if field not in ("repositories", "backup_jobs")
     )
-    conflicts = []
+    conflicts = [
+        Conflict(name, "missing_collection")
+        for name in ("repositories", "backup_jobs") if name not in root
+    ]
     links = []
     names = [repo.get("name") for repo in repositories]
     profile_names = [profile.get("name") for profile in profiles]
@@ -283,7 +345,7 @@ def analyze_bytes(data: bytes) -> ImportPlan:
     for record in (*profile_plans, *repository_plans):
         if any(field.category != "known" for field in record.fields):
             conflicts.append(Conflict(record.source_key, "field_review_required"))
-    if any(field.category in ("unknown", "sensitive") for field in root_fields):
+    if any(field.category in ("unknown", "sensitive", "review") for field in root_fields):
         conflicts.append(Conflict("root", "field_review_required"))
     return ImportPlan(
         CANONICAL_VERSION, hashlib.sha256(data).hexdigest(), canonical_hash,

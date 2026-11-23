@@ -1,10 +1,14 @@
 import hashlib
 import json
+import sqlite3
+from dataclasses import asdict
+from contextlib import closing
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from core.catalog_import import InvalidLegacyConfiguration, analyze_bytes, analyze_file
+from core.catalog_storage import _SCHEMA
+from core.catalog_import import InvalidLegacyConfiguration, analyze_bytes, analyze_file, display_plan
 
 
 def encode(value):
@@ -97,6 +101,82 @@ class ImportPlanTests(unittest.TestCase):
                       b'{"backup_jobs":{}}', b'{"repositories":[null]}'):
             with self.subTest(value=value), self.assertRaises(InvalidLegacyConfiguration):
                 analyze_bytes(value)
+
+    def test_missing_collections_are_distinct_from_empty(self):
+        for source, expected in (
+            ({}, {"repositories", "backup_jobs"}),
+            ({"repositories": []}, {"backup_jobs"}),
+            ({"backup_jobs": []}, {"repositories"}),
+        ):
+            plan = analyze_bytes(encode(source))
+            self.assertEqual({c.source_key for c in plan.conflicts if c.code == "missing_collection"}, expected)
+        complete = analyze_bytes(encode({"repositories": [], "backup_jobs": []}))
+        self.assertEqual(complete.conflicts, ())
+
+    def test_sensitive_nested_fields_and_safe_projection(self):
+        secret = "private-value-97531"
+        plan = analyze_bytes(encode({
+            "repositories": [{
+                "name": "repo", "type": "https", "path": "https://example.test/repo",
+                "ssh_key": secret, "https_url": "https://user:" + secret + "@example.test",
+                "rest_auth": {"password": secret},
+            }],
+            "backup_jobs": [{
+                "name": "job", "repository": "repo",
+                "schedule": {"enabled": True, "days": [secret, {"token": secret}],
+                             "password": secret, secret: {"token": secret}},
+            }],
+        }))
+        fields = plan.repositories[0].fields
+        for name in ("ssh_key", "https_url", "rest_auth"):
+            self.assertIn((name, "sensitive"), [(f.field, f.category) for f in fields])
+        profile_fields = [(f.field, f.category) for f in plan.profiles[0].fields]
+        self.assertIn(("schedule.days", "review"), profile_fields)
+        self.assertIn(("schedule.<unknown>", "unknown"), profile_fields)
+        self.assertIn(("schedule.<sensitive>", "sensitive"), profile_fields)
+        visible = display_plan(plan)
+        serialized = json.dumps(asdict(visible))
+        for value in (secret, plan.source_sha256, plan.canonical_sha256,
+                      plan.profiles[0].fingerprint, plan.repositories[0].fingerprint):
+            self.assertNotIn(value, serialized)
+            self.assertNotIn(value, repr(plan))
+
+    def test_canonical_numeric_and_unicode_vectors(self):
+        for left, right in (
+            (b'{"x":12300.000}', b'{"x":123e2}'),
+            (b'{"x":-0.00120}', b'{"x":-12e-4}'),
+            (b'{"x":10000000000000000000000000001}', b'{"x":100000000000000000000000000010e-1}'),
+            (b'{"x":"\\ud83d\\ude00"}', '{"x":"😀"}'.encode("utf-8")),
+            (b'{"\\u0061":1,"b":2}', b'{"b":2,"a":1.0}'),
+        ):
+            with self.subTest(left=left):
+                self.assertEqual(analyze_bytes(left).canonical_sha256, analyze_bytes(right).canonical_sha256)
+        for left, right in (
+            (b'{"x":-0.1}', b'{"x":0.1}'),
+            (b'{"x":1.000000000000000000000000001}', b'{"x":1}'),
+        ):
+            self.assertNotEqual(analyze_bytes(left).canonical_sha256, analyze_bytes(right).canonical_sha256)
+
+    def test_analyzing_source_leaves_existing_catalog_bytes_unchanged(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = root / "catalog.db"
+            with closing(sqlite3.connect(catalog)) as connection:
+                connection.executescript(_SCHEMA)
+                connection.execute(
+                    "INSERT INTO profiles VALUES ('existing', 'profile', 'draft', 1, '{}')"
+                )
+                connection.commit()
+            source = root / "settings.json"
+            source.write_bytes(b'{"repositories":[],"backup_jobs":[]}')
+            before_db = catalog.read_bytes()
+            before_json = source.read_bytes()
+            analyze_file(source)
+            self.assertEqual(catalog.read_bytes(), before_db)
+            self.assertEqual(source.read_bytes(), before_json)
+            with closing(sqlite3.connect(catalog)) as connection:
+                self.assertEqual(connection.execute("SELECT profile_id FROM profiles").fetchone(), ("existing",))
+                self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone(), ("ok",))
 
     def test_source_file_unchanged_and_no_new_files(self):
         with TemporaryDirectory() as directory:
