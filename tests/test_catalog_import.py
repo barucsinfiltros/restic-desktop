@@ -185,6 +185,46 @@ class ImportPlanTests(unittest.TestCase):
         ], "backup_jobs": []}))
         self.assertIn(("path", "known"), [(f.field, f.category) for f in safe.repositories[0].fields])
 
+    def test_sftp_scp_userinfo_is_sensitive_and_safe_view_hides_source(self):
+        for locator in (
+            "sftp:private-user@example.test:/repo",
+            "sftp:private-user@example.test:relative/repo",
+            "sftp:private-user@[2001:db8::1]:/repo",
+        ):
+            with self.subTest(locator=locator):
+                plan = analyze_bytes(encode({
+                    "repositories": [{
+                        "name": "repo", "type": "sftp", "path": locator,
+                        "unknown-private-key-name": "private-value",
+                    }],
+                    "backup_jobs": [],
+                }))
+                fields = [(item.field, item.category) for item in plan.repositories[0].fields]
+                self.assertIn(("path", "sensitive"), fields)
+                self.assertNotIn(("path", "known"), fields)
+                self.assertNotIn("location_requires_review", [item.code for item in plan.conflicts])
+                rendered = json.dumps(asdict(display_plan(plan)))
+                for value in (locator, "private-user", "unknown-private-key-name",
+                              "private-value", plan.source_sha256, plan.canonical_sha256,
+                              plan.repositories[0].fingerprint):
+                    self.assertNotIn(value, rendered)
+
+    def test_sftp_without_userinfo_remains_known(self):
+        for locator in (
+            "sftp:example.test:/repo",
+            "sftp:example.test:relative/repo",
+            "sftp:[2001:db8::1]:/repo",
+            "sftp://example.test:2222//repo",
+        ):
+            with self.subTest(locator=locator):
+                plan = analyze_bytes(encode({
+                    "repositories": [{"name": "repo", "type": "sftp", "path": locator}],
+                    "backup_jobs": [],
+                }))
+                self.assertIn(("path", "known"),
+                              [(item.field, item.category) for item in plan.repositories[0].fields])
+                self.assertEqual(plan.conflicts, ())
+
     def test_canonical_numeric_and_unicode_vectors(self):
         for left, right in (
             (b'{"x":12300.000}', b'{"x":123e2}'),

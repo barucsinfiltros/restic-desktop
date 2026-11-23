@@ -227,6 +227,8 @@ def _locator_has_authentication(value):
             return bool(url.username or url.password or url.query or url.fragment)
         except ValueError:
             return True
+    if re.match(r"^sftp:[^/:@]+@", candidate, re.IGNORECASE):
+        return True
     return bool(re.search(r"(?:^|[:/])[^/:@]+:[^/@]+@", candidate))
 
 
