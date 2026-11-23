@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import re
+from urllib.parse import unquote, urlsplit
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -30,7 +32,8 @@ REPOSITORY_FIELDS = {
 SENSITIVE_FIELDS = {
     "password", "rest_password", "network_password", "object_key_id", "object_secret",
     "rclone_config", "app_password_hash", "app_password_salt", "rclone_conf_encrypted",
-    "ssh_key", "https_url", "rest_auth",
+    "ssh_key", "https_url", "rest_auth", "access_token", "refresh_token",
+    "api_key", "private_key", "client_secret", "token", "secret", "credential",
 }
 # Values of all other root settings stay out of the plan as they are not catalog entities.
 ROOT_FIELDS = {
@@ -175,11 +178,63 @@ def _catalog_option(value):
     return value
 
 
+def _sensitive_key(key):
+    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+    return normalized in {re.sub(r"[^a-z0-9]", "", name) for name in SENSITIVE_FIELDS}
+
+
+def _nested_reviews(value, *, schedule=False):
+    """Report nested types without disclosing keys outside the known schedule schema."""
+    reviews = []
+    schedule_fields = {
+        "enabled", "frequency", "time", "days", "day_of_month",
+        "run_if_missed", "pause_after_completion", "last_run",
+    }
+    if isinstance(value, dict):
+        for child, child_value in value.items():
+            if _sensitive_key(child):
+                reviews.append(FieldReview("<nested_sensitive>", "sensitive"))
+            elif schedule and child in schedule_fields:
+                category = "not_representable"
+                if child == "days" and (
+                    not isinstance(child_value, list)
+                    or any(not isinstance(day, str) for day in child_value)
+                ):
+                    category = "review"
+                reviews.append(FieldReview("schedule." + child, category))
+            else:
+                reviews.append(FieldReview("<nested_unknown>", "unknown"))
+            reviews.extend(_nested_reviews(child_value))
+    elif isinstance(value, list):
+        for item in value:
+            reviews.extend(_nested_reviews(item))
+    return reviews
+
+
+def _locator_has_authentication(value):
+    if not isinstance(value, str):
+        return False
+    # URL query/fragment and userinfo can carry credentials. Treat encoded
+    # delimiters conservatively as well, without returning the original value.
+    candidate = unquote(value)
+    if "?" in candidate or "#" in candidate:
+        return True
+    if "://" in candidate:
+        scheme = candidate.split("://", 1)[0].rsplit(":", 1)[-1]
+        url_text = scheme + "://" + candidate.split("://", 1)[1]
+        try:
+            url = urlsplit(url_text)
+            return bool(url.username or url.password or url.query or url.fragment)
+        except ValueError:
+            return True
+    return bool(re.search(r"(?:^|[:/])[^/:@]+:[^/@]+@", candidate))
+
+
 def _record(record, key, known, profile):
     fields = []
     for field, value in record.items():
-        if field in SENSITIVE_FIELDS:
-            fields.append(FieldReview(field, "sensitive"))
+        if _sensitive_key(field):
+            fields.append(FieldReview(field if field in known else "<sensitive>", "sensitive"))
         elif field not in known:
             fields.append(FieldReview("<unknown>", "unknown"))
         elif profile and field in PROFILE_OPTIONS:
@@ -193,25 +248,8 @@ def _record(record, key, known, profile):
             fields.append(FieldReview(field, "not_representable"))
             if not isinstance(value, dict):
                 fields.append(FieldReview("schedule", "incompatible"))
-            else:
-                schedule_fields = {
-                    "enabled", "frequency", "time", "days", "day_of_month",
-                    "run_if_missed", "pause_after_completion", "last_run",
-                }
-                for child, child_value in value.items():
-                    if child in SENSITIVE_FIELDS or child.lower() in {"token", "secret", "password", "credential"}:
-                        fields.append(FieldReview("schedule.<sensitive>", "sensitive"))
-                    elif child not in schedule_fields:
-                        fields.append(FieldReview("schedule.<unknown>", "unknown"))
-                    elif isinstance(child_value, (dict, list)) and child != "days":
-                        fields.append(FieldReview("schedule." + child, "review"))
-                    elif child == "days" and (
-                        not isinstance(child_value, list)
-                        or any(not isinstance(day, str) for day in child_value)
-                    ):
-                        fields.append(FieldReview("schedule.days", "review"))
-                    else:
-                        fields.append(FieldReview("schedule." + child, "not_representable"))
+        elif not profile and field == "path" and _locator_has_authentication(value):
+            fields.append(FieldReview(field, "sensitive"))
         elif field in {"created", "last_run"}:
             fields.append(FieldReview(field, "not_representable"))
         elif not profile and field not in {"name", "type", "path"}:
@@ -221,6 +259,7 @@ def _record(record, key, known, profile):
             fields.append(FieldReview(field, "review"))
         else:
             fields.append(FieldReview(field, "known"))
+        fields.extend(_nested_reviews(value, schedule=field == "schedule"))
     return RecordPlan(key, _digest(record), tuple(fields))
 
 
@@ -283,13 +322,20 @@ def analyze_bytes(data: bytes) -> ImportPlan:
                           for index, item in enumerate(profiles))
     repository_plans = tuple(_record(item, f"repositories[{index}]", REPOSITORY_FIELDS, False)
                              for index, item in enumerate(repositories))
-    root_fields = tuple(
-        FieldReview(field if field in ROOT_FIELDS else "<unknown>",
-                    "sensitive" if field in SENSITIVE_FIELDS else
-                    "review" if field in ROOT_FIELDS and isinstance(root[field], (dict, list)) else
-                    "known" if field in ROOT_FIELDS else "unknown")
-        for field in root if field not in ("repositories", "backup_jobs")
-    )
+    root_fields_list = []
+    for name, value in root.items():
+        if name in ("repositories", "backup_jobs"):
+            continue
+        if _sensitive_key(name):
+            root_fields_list.append(FieldReview(name if name in ROOT_FIELDS else "<sensitive>", "sensitive"))
+        elif name not in ROOT_FIELDS:
+            root_fields_list.append(FieldReview("<unknown>", "unknown"))
+        elif isinstance(value, (dict, list)):
+            root_fields_list.append(FieldReview(name, "review"))
+        else:
+            root_fields_list.append(FieldReview(name, "known"))
+        root_fields_list.extend(_nested_reviews(value))
+    root_fields = tuple(root_fields_list)
     conflicts = [
         Conflict(name, "missing_collection")
         for name in ("repositories", "backup_jobs") if name not in root

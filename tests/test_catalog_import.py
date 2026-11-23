@@ -132,14 +132,58 @@ class ImportPlanTests(unittest.TestCase):
             self.assertIn((name, "sensitive"), [(f.field, f.category) for f in fields])
         profile_fields = [(f.field, f.category) for f in plan.profiles[0].fields]
         self.assertIn(("schedule.days", "review"), profile_fields)
-        self.assertIn(("schedule.<unknown>", "unknown"), profile_fields)
-        self.assertIn(("schedule.<sensitive>", "sensitive"), profile_fields)
+        self.assertIn(("<nested_unknown>", "unknown"), profile_fields)
+        self.assertIn(("<nested_sensitive>", "sensitive"), profile_fields)
         visible = display_plan(plan)
         serialized = json.dumps(asdict(visible))
         for value in (secret, plan.source_sha256, plan.canonical_sha256,
                       plan.profiles[0].fingerprint, plan.repositories[0].fingerprint):
             self.assertNotIn(value, serialized)
             self.assertNotIn(value, repr(plan))
+
+    def test_recursive_sensitive_keys_and_private_names(self):
+        variants = ("access_token", "refresh_token", "api_key", "private_key", "client_secret")
+        nested = {key: "credential-value" for key in variants}
+        source = {
+            "repositories": [{"name": "repo", "path": "/safe"}],
+            "backup_jobs": [{"name": "job", "repository": "repo",
+                             "schedule": {"days": [{"secret-field-name": [nested]}]}}],
+        }
+        plan = analyze_bytes(encode(source))
+        fields = plan.profiles[0].fields
+        self.assertGreaterEqual(sum(f.category == "sensitive" for f in fields), len(variants))
+        self.assertIn(("<nested_unknown>", "unknown"), [(f.field, f.category) for f in fields])
+        text = json.dumps(asdict(display_plan(plan)))
+        for value in (*variants, "secret-field-name", "credential-value",
+                      plan.canonical_sha256, plan.profiles[0].fingerprint):
+            self.assertNotIn(value, text)
+
+    def test_nested_safe_schedule_has_no_sensitive_fields(self):
+        plan = analyze_bytes(encode({
+            "repositories": [], "backup_jobs": [
+                {"name": "job", "schedule": {"enabled": True, "days": ["Monday"]}}
+            ],
+        }))
+        self.assertFalse(any(f.category == "sensitive" for f in plan.profiles[0].fields))
+
+    def test_authentication_in_locator_is_not_known(self):
+        for locator in ("https://user:pass@example.test/repo",
+                        "https://example.test/repo?access_token=secret",
+                        "rest:https://user%3Apass%40example.test/repo",
+                        "sftp://user:pass@example.test/data"):
+            with self.subTest(locator=locator):
+                backend = "sftp" if locator.startswith("sftp") else "https"
+                plan = analyze_bytes(encode({"repositories": [
+                    {"name": "repo", "type": backend, "path": locator}], "backup_jobs": []}))
+                fields = [(f.field, f.category) for f in plan.repositories[0].fields]
+                self.assertIn(("path", "sensitive"), fields)
+                self.assertNotIn(("path", "known"), fields)
+                rendered = json.dumps(asdict(display_plan(plan)))
+                self.assertNotIn(locator, rendered)
+        safe = analyze_bytes(encode({"repositories": [
+            {"name": "repo", "type": "https", "path": "https://example.test/repo"}
+        ], "backup_jobs": []}))
+        self.assertIn(("path", "known"), [(f.field, f.category) for f in safe.repositories[0].fields])
 
     def test_canonical_numeric_and_unicode_vectors(self):
         for left, right in (
