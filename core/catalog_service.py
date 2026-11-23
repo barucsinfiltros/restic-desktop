@@ -278,13 +278,14 @@ class CatalogService:
         profile = require_uuid(profile_id)
         with self._mutation(expected_revision) as connection:
             self._editable_profile(connection, profile)
-            connection.execute("UPDATE profiles SET state = 'archived' WHERE profile_id = ?", (profile,))
-            exclusive = (
-                row[0] for row in connection.execute(
-                    "SELECT repository_id FROM repositories WHERE exclusive_profile_id = ?", (profile,)
+            if connection.execute(
+                "SELECT 1 FROM repositories WHERE exclusive_profile_id = ? LIMIT 1", (profile,)
+            ).fetchone():
+                raise InvalidCatalogChange(
+                    "Transfer or make shared all exclusive repositories before archiving."
                 )
-            )
-            self._touch(connection, profiles=(profile,), repositories=exclusive)
+            connection.execute("UPDATE profiles SET state = 'archived' WHERE profile_id = ?", (profile,))
+            self._touch(connection, profiles=(profile,))
 
     def unregister_repository(self, repository_id, *, expected_revision):
         repository = require_uuid(repository_id)

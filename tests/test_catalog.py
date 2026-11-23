@@ -207,12 +207,13 @@ class CatalogServiceTests(CatalogFixture):
         owner, other = self.profile(), self.profile()
         exclusive = self.repository(exclusive_profile_id=owner, location=self.location)
         before = self.service.snapshot()
+        self.change(self.service.make_shared, exclusive)
         self.change(self.service.archive_profile, owner)
         self.change(self.service.unregister_repository, exclusive)
         after = self.service.snapshot()
         self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
         self.assertEqual(self.repository_row(exclusive).state, RepositoryState.UNREGISTERED)
-        self.assertEqual(self.repository_row(exclusive).exclusive_profile_id, owner)
+        self.assertIsNone(self.repository_row(exclusive).exclusive_profile_id)
         self.assertEqual(after.associations, before.associations)
         self.assertEqual(after.locations, before.locations)
         with self.assertRaises(InvalidCatalogChange):
@@ -221,6 +222,43 @@ class CatalogServiceTests(CatalogFixture):
             self.change(self.service.transfer_exclusive, exclusive, owner, approved_owner_id=other)
         self.assertEqual(self.service.snapshot(), after)
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "data")
+
+    def test_archive_requires_all_exclusive_repositories_resolved(self):
+        owner, new_owner = self.profile(), self.profile()
+        first = self.repository(exclusive_profile_id=owner, location=self.location)
+        second = self.repository(exclusive_profile_id=owner, location=self.location)
+        self.change(self.service.unregister_repository, second)
+        before = self.service.snapshot()
+        with self.assertRaises(InvalidCatalogChange):
+            self.change(self.service.archive_profile, owner)
+        self.assertEqual(self.service.snapshot(), before)
+
+        self.change(self.service.transfer_exclusive, first, new_owner, approved_owner_id=owner)
+        before = self.service.snapshot()
+        with self.assertRaises(InvalidCatalogChange):
+            self.change(self.service.archive_profile, owner)
+        self.assertEqual(self.service.snapshot(), before)
+
+        self.change(self.service.make_shared, second)
+        before = self.service.snapshot()
+        self.change(self.service.archive_profile, owner)
+        after = self.service.snapshot()
+        self.assertEqual(after.revision, before.revision + 1)
+        self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
+        self.assertEqual(self.repository_row(first).exclusive_profile_id, new_owner)
+        self.assertIsNone(self.repository_row(second).exclusive_profile_id)
+        self.assertEqual(after.associations, before.associations)
+
+    def test_archive_without_exclusive_repositories(self):
+        owner = self.profile()
+        repository = self.repository()
+        self.link(owner, repository)
+        before = self.service.snapshot()
+        self.change(self.service.archive_profile, owner)
+        after = self.service.snapshot()
+        self.assertEqual(after.revision, before.revision + 1)
+        self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
+        self.assertEqual(after.associations, before.associations)
 
     def test_rejects_missing_references_archived_owner_and_invalid_options(self):
         archived = self.profile()
