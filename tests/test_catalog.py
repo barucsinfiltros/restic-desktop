@@ -249,6 +249,35 @@ class CatalogServiceTests(CatalogFixture):
         self.assertIsNone(self.repository_row(second).exclusive_profile_id)
         self.assertEqual(after.associations, before.associations)
 
+    def test_archive_rejects_pending_exclusive_until_made_shared(self):
+        owner = self.profile()
+        repository = self.repository(
+            exclusive_profile_id=owner,
+            state=RepositoryState.PENDING_INIT,
+            location=self.location,
+        )
+        before = self.service.snapshot()
+        self.assertEqual(self.repository_row(repository).state, RepositoryState.PENDING_INIT)
+        self.assertEqual(self.repository_row(repository).exclusive_profile_id, owner)
+
+        with self.assertRaises(InvalidCatalogChange):
+            self.change(self.service.archive_profile, owner)
+        after_rejection = self.service.snapshot()
+        self.assertEqual(after_rejection, before)
+        self.assertEqual(after_rejection.revision, before.revision)
+
+        self.change(self.service.make_shared, repository)
+        before_archive = self.service.snapshot()
+        self.change(self.service.archive_profile, owner)
+        after_archive = self.service.snapshot()
+        self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
+        self.assertIsNone(self.repository_row(repository).exclusive_profile_id)
+        self.assertEqual(self.repository_row(repository).state, RepositoryState.PENDING_INIT)
+        self.assertEqual(after_archive.associations, before_archive.associations)
+        self.assertEqual(len(after_archive.associations), 1)
+        self.assertEqual(after_archive.associations[0].profile_id, owner)
+        self.assertEqual(after_archive.associations[0].repository_id, repository)
+
     def test_archive_without_exclusive_repositories(self):
         owner = self.profile()
         repository = self.repository()
