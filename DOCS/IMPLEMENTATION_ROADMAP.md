@@ -254,7 +254,7 @@ Limitación conocida:
 
 ### Fase 4 — Modelo de dominio y persistencia de perfiles/repositorios
 
-**Estado:** pendiente.
+**Estado:** núcleo de dominio y persistencia implementado en modo `staged`, pendiente de auditoría. El catálogo SQLite se crea en una ruta explícita y opera mediante un servicio Python con revisiones, transacciones y validación de exclusividad. La aplicación sigue usando la configuración heredada. El importador, el corte a SQLite, la integración con GUI/CLI y el respaldo portable siguen pendientes.
 
 Objetivo: introducir un modelo coherente para perfiles y repositorios, sin depender de las asociaciones y heurísticas heredadas.
 
@@ -270,14 +270,10 @@ Requisitos funcionales:
 - Permitir desregistrar sin borrar datos.
 - Mantener referencias estables, no depender únicamente de nombres visibles.
 
-Diseño pendiente de concretar:
+Implementación pendiente:
 
-- Entidades y relaciones.
-- Identificadores estables.
-- Formato de configuración y responsabilidades de SQLite.
-- Migración compatible desde la configuración upstream.
-- Detección de duplicados y conflictos.
-- Gestión de repositorios compartidos.
+- Importación compatible desde la configuración upstream y reconciliación de duplicados y conflictos.
+- Activación del catálogo, integración con los consumidores y respaldo portable, según el [diseño de Fase 4](PHASE_4_DESIGN.md).
 
 Criterios de aceptación:
 
@@ -549,7 +545,7 @@ Referencia de implementación auditada:
 | 1 — Componentes visuales | Implementada inicialmente; aceptación pendiente |
 | 2 — Contención heredada | H1.1 aceptado por auditoría independiente. H1.2 documentado y H1.3 parcialmente validado |
 | 3 — Supervisor Restic | H2.2 aceptado en el alcance verificado en Windows. Prueba POSIX pendiente. H2.3 resuelto. H3 pendiente de diseño |
-| 4 — Modelo perfiles/repositorios | Pendiente |
+| 4 — Modelo perfiles/repositorios | Núcleo en modo staged, pendiente de auditoría. Integración pendiente |
 | 5 — Perfiles y respaldos | Pendiente |
 | 6 — Restauración segura | Pendiente |
 | 7 — Exploración, integridad y retención | Pendiente |
