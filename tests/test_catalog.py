@@ -342,6 +342,28 @@ class CatalogServiceTests(CatalogFixture):
                     connection.execute("UPDATE profiles SET options_json = ? WHERE profile_id = ?",
                                        ('{"paths":["valid"]}', str(profile)))
 
+    def test_open_rejects_active_profile_without_registered_verified_destination(self):
+        profile = self.profile()
+        repository = self.repository(location=self.location)
+        self.link(profile, repository)
+        self.change(self.service.activate_profile, profile)
+        with self.raw() as connection:
+            connection.execute("UPDATE repositories SET state = 'unregistered' WHERE repository_id = ?",
+                               (str(repository),))
+        before = self.database.read_bytes()
+        with self.assertRaises(CatalogStorageError):
+            CatalogService(self.database)
+        self.assertEqual(self.database.read_bytes(), before)
+        with self.raw() as connection:
+            connection.execute("UPDATE repositories SET state = 'registered' WHERE repository_id = ?",
+                               (str(repository),))
+            connection.execute("UPDATE repository_locations SET verified_restic_id = NULL WHERE repository_id = ?",
+                               (str(repository),))
+        before = self.database.read_bytes()
+        with self.assertRaises(CatalogStorageError):
+            CatalogService(self.database)
+        self.assertEqual(self.database.read_bytes(), before)
+
     def test_open_rejects_archived_profile_with_options_or_association(self):
         profile = self.profile()
         repository = self.repository()

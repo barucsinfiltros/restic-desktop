@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QDialog
-from core.catalog_domain import LocationSpec, ProfileState
+from core.catalog_domain import CatalogStorageError, LocationSpec, ProfileState
 from core.catalog_service import CatalogService
 from restic_manager import BackupJobDialog
 from ui.catalog_staging import CatalogStagingDialog
@@ -61,6 +61,87 @@ class CatalogStagingTests(unittest.TestCase):
         self.assertEqual(edited.display_name, "Editado")
         self.assertEqual(edited.options["paths"], [str(root / "next")])
         self.assertEqual(self.catalog.snapshot().associations[0].repository_id, self.repo)
+
+    def test_edit_preserves_unmodified_options_and_association_order(self):
+        second = self.catalog.create_repository(
+            "Segundo", location=LocationSpec("local", str(self.root / "second")),
+            expected_revision=1,
+        )
+        profile = self.catalog.create_profile(
+            "Perfil", options={"paths": [str(self.root)], "timeout": 7261, "pack_size": 17},
+            repository_ids=[second, self.repo], expected_revision=2,
+        )
+
+        class UnchangedForm(BackupJobDialog):
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+        dialog = CatalogStagingDialog(self.catalog, UnchangedForm)
+        self.addCleanup(dialog.close)
+        dialog.profiles.setCurrentRow(0)
+        dialog.edit_profile()
+        snapshot = self.catalog.snapshot()
+        self.assertEqual(snapshot.profiles[0].profile_id, profile)
+        self.assertEqual(snapshot.profiles[0].options["timeout"], 7261)
+        self.assertEqual(snapshot.profiles[0].options["pack_size"], 17)
+        self.assertEqual([item.repository_id for item in snapshot.associations], [second, self.repo])
+
+    def test_repository_registration_compensates_failed_catalog_write(self):
+        dialog = CatalogStagingDialog(self.catalog, BackupJobDialog)
+        self.addCleanup(dialog.close)
+        before = self.catalog.snapshot()
+        with patch("ui.catalog_staging.QInputDialog.getText",
+                   side_effect=[("Otro", True), ("synthetic", True)]), \
+             patch("ui.catalog_staging.QFileDialog.getExistingDirectory", return_value=str(self.root)), \
+             patch("ui.catalog_staging.WindowsCredentialStore") as factory, \
+             patch.object(self.catalog, "create_repository", side_effect=CatalogStorageError("failure")), \
+             patch.object(dialog, "_report"):
+            dialog.create_repository()
+        ref = factory.return_value.store.call_args.args[0]
+        factory.return_value.delete.assert_called_once_with(ref)
+        self.assertEqual(self.catalog.snapshot(), before)
+
+    def test_failed_credential_compensation_is_reported(self):
+        from core.catalog_credentials import CredentialStoreError
+
+        dialog = CatalogStagingDialog(self.catalog, BackupJobDialog)
+        self.addCleanup(dialog.close)
+        with patch("ui.catalog_staging.QInputDialog.getText",
+                   side_effect=[("Otro", True), ("synthetic", True)]), \
+             patch("ui.catalog_staging.QFileDialog.getExistingDirectory", return_value=str(self.root)), \
+             patch("ui.catalog_staging.WindowsCredentialStore") as factory, \
+             patch.object(self.catalog, "create_repository", side_effect=CatalogStorageError("failure")), \
+             patch.object(dialog, "_report") as report:
+            factory.return_value.delete.side_effect = CredentialStoreError("failure")
+            dialog.create_repository()
+        self.assertEqual(report.call_count, 2)
+        self.assertIn("credencial", report.call_args_list[0].args[0])
+
+    def test_staging_view_never_launches_processes_or_system_tasks(self):
+        root = self.root
+
+        class Form(BackupJobDialog):
+            def exec(self):
+                self.name_input.setText("Perfil")
+                self.paths_list.clear()
+                self.paths_list.addItem(str(root / "source"))
+                self.repos_list.item(0).setSelected(True)
+                return QDialog.DialogCode.Accepted
+
+        with patch("subprocess.Popen", side_effect=AssertionError("Unexpected process")), \
+             patch("subprocess.run", side_effect=AssertionError("Unexpected system task")), \
+             patch("ui.catalog_staging.QMessageBox.question",
+                   return_value=__import__("PySide6.QtWidgets", fromlist=["QMessageBox"]).QMessageBox.StandardButton.Yes):
+            dialog = CatalogStagingDialog(self.catalog, Form)
+            self.addCleanup(dialog.close)
+            dialog.create_profile()
+            dialog.profiles.setCurrentRow(0)
+            dialog.edit_profile()
+            dialog.profiles.setCurrentRow(0)
+            dialog.archive_profile()
+            dialog.repositories.setCurrentRow(0)
+            dialog.unregister_repository()
+        self.assertEqual(self.catalog.snapshot().profiles[0].state, ProfileState.ARCHIVED)
 
     def test_archive_from_staged_dialog(self):
         profile = self.catalog.create_profile(

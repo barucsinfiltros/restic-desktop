@@ -112,14 +112,26 @@ class CatalogStagingDialog(QDialog):
         )
         dialog.schedule_enabled_check.setChecked(False)
         dialog.schedule_enabled_check.setEnabled(False)
+        original_form = dialog.get_job_data() if profile else None
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         data = dialog.get_job_data()
         selected = [labels[label] for label in data["repositories"]]
+        if profile:
+            selected_set = set(selected)
+            previous = [link.repository_id for link in snapshot.associations
+                        if link.profile_id == identifier and link.repository_id in selected_set]
+            selected = previous + [repo for repo in selected if repo not in previous]
         fields = ("paths", "tags", "exclude_patterns", "exclude_caches", "pack_size",
                   "one_file_system", "timeout", "exclude_if_present", "compression",
                   "no_cache", "ignore_inode", "skip_if_unchanged")
-        options = {name: data[name] for name in fields if name in data}
+        if profile:
+            options = dict(profile.options)
+            for name in fields:
+                if name in data and data[name] != original_form.get(name):
+                    options[name] = data[name]
+        else:
+            options = {name: data[name] for name in fields if name in data}
         try:
             if identifier is None:
                 self.catalog.create_profile(data["name"], options=options,

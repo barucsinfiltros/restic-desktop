@@ -54,6 +54,10 @@ class CatalogService:
                         raise InvalidCatalogChange("Archived profile has operational data.")
                 else:
                     cls._profile_options(options)
+                    if row["state"] == ProfileState.ACTIVE.value and not cls._has_staged_destination(
+                        connection, row["profile_id"]
+                    ):
+                        raise InvalidCatalogChange("Active profile has no valid destination.")
             except (ValueError, TypeError, InvalidCatalogChange):
                 raise CatalogStorageError("Catalog contains incompatible profile data.") from None
 
