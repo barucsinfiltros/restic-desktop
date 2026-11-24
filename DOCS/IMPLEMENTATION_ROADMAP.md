@@ -1,5 +1,30 @@
 # Hoja de ruta de implementación — Restic Desktop Fork
 
+> **Alcance vigente.** La especificación rectora es [RESTIC_DESKTOP_DESIGN.md](RESTIC_DESKTOP_DESIGN.md). El contenido anterior de esta hoja se conserva como historial cuando contradice esa especificación. El catálogo parte limpio y no requiere importar JSON heredado ni implementar el esquema v2 de linaje.
+
+## Estado del MVP
+
+- Catálogo SQLite en preparación con carpeta única al crear o editar perfiles, desvinculación explícita, archivado que retira opciones y asociaciones, y copia SQLite coherente a una ruta nueva. La integración con la interfaz y los respaldos reales sigue pendiente.
+- Existe un adaptador aislado de Credential Manager de Windows, probado con un doble. La GUI y los ejecutores aún no lo usan y falta probar su funcionamiento real bajo la cuenta que ejecutará Restic.
+- Antes de operaciones reales deben verificarse la barrera contra ejecutores heredados, la identidad de los destinos, las credenciales y la recuperación del catálogo.
+- La restauración sobre el origen permanece deshabilitada. La restauración alternativa requiere verificación.
+
+## Criterios verificables del catálogo en preparación
+
+- Cuando se crea o edita un perfil, el servicio exige una única carpeta y valida sus opciones.
+- Cuando un repositorio compartido tiene asociaciones incompatibles, el servicio rechaza convertirlo en exclusivo hasta retirarlas de forma explícita.
+- Cuando se archiva un perfil sin propiedad exclusiva, el servicio conserva su UUID y nombre, retira opciones y asociaciones, y preserva repositorios físicos. Si conserva un exclusivo, rechaza la operación.
+- Cuando se solicita una copia del catálogo, se crea en una ruta nueva y se verifica su integridad y referencias. Se publica mediante un enlace exclusivo desde un temporal del mismo directorio y falla si el destino existe o el sistema de archivos no admite ese enlace.
+
+## Orden de entrega
+
+1. Catálogo de carpeta única, exclusividad y archivado, con pruebas y recuperación.
+2. Interfaz y credenciales seguras, con barrera frente a ejecutores incompatibles.
+3. Respaldo manual por UUID con resultados por destino.
+4. Exploración y restauración alternativa verificada.
+5. Automatización, restauración al origen y retención segura en etapas posteriores.
+
+
 **Documento rector:** plan de desarrollo funcional y técnico del fork.  
 **Estado:** hoja de ruta consolidada; las fases 0–3 tienen implementación inicial, pero su aceptación técnica no está cerrada.  
 **Rama de referencia:** `codex/initial-restic-foundation`  

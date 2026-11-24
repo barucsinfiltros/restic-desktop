@@ -42,6 +42,10 @@ class CatalogService:
         _CatalogStorage(path).initialize(installation)
         return cls(path)
 
+    def backup_to(self, destination):
+        """Create a consistent backup without replacing an existing file."""
+        self._storage.backup_to(destination)
+
     def snapshot(self) -> CatalogSnapshot:
         """Read entities, locations, and ordered associations at the same revision."""
         with self._storage.transaction() as (connection, state):
@@ -99,7 +103,7 @@ class CatalogService:
     def create_profile(self, display_name, *, expected_revision, options=None,
                        exclusive_repository: RepositoryDraft | None = None) -> UUID:
         name = require_text(display_name, "Profile name")
-        encoded = encode_profile_options({} if options is None else options)
+        encoded = self._profile_options(options)
         profile_id = uuid4()
         with self._mutation(expected_revision) as connection:
             connection.execute(
@@ -109,6 +113,27 @@ class CatalogService:
             if exclusive_repository is not None:
                 self._insert_repository(connection, exclusive_repository, str(profile_id))
         return profile_id
+
+    @staticmethod
+    def _profile_options(options):
+        encoded = encode_profile_options({} if options is None else options)
+        paths = options.get("paths") if isinstance(options, dict) else None
+        if not isinstance(paths, list) or len(paths) != 1:
+            raise InvalidCatalogChange("A profile requires exactly one source folder.")
+        return encoded
+
+    def update_profile(self, profile_id, display_name, options, *, expected_revision):
+        """Update a profile's name, single source and exclusions transactionally."""
+        key = require_uuid(profile_id)
+        name = require_text(display_name, "Profile name")
+        encoded = self._profile_options(options)
+        with self._mutation(expected_revision) as connection:
+            self._editable_profile(connection, key)
+            connection.execute(
+                "UPDATE profiles SET display_name = ?, options_json = ? WHERE profile_id = ?",
+                (name, encoded, key),
+            )
+            self._touch(connection, profiles=(key,))
 
     def create_repository(self, display_name, *, expected_revision, location=None,
                           state=RepositoryState.REGISTERED, exclusive_profile_id=None) -> UUID:
@@ -196,8 +221,22 @@ class CatalogService:
             self._append_link(connection, profile, repository)
             self._touch(connection, profiles=(profile,), repositories=(repository,))
 
+    def dissociate_repository(self, profile_id, repository_id, *, expected_revision):
+        """Remove a shared association without deleting repository data."""
+        profile, repository = require_uuid(profile_id), require_uuid(repository_id)
+        with self._mutation(expected_revision) as connection:
+            self._editable_profile(connection, profile)
+            row = self._repository(connection, repository)
+            if row["exclusive_profile_id"] is not None:
+                raise InvalidCatalogChange("Resolve exclusive ownership before removing its association.")
+            if profile not in self._linked_profiles(connection, repository):
+                raise InvalidCatalogChange("The association does not exist.")
+            self._remove_link(connection, profile, repository)
+            self._draft_if_no_staged_destination(connection, profile)
+            self._touch(connection, profiles=(profile,), repositories=(repository,))
+
     def make_exclusive(self, repository_id, owner_id, *, expected_revision, approved_removals=()):
-        """Require the exact set of reviewed profile links that will be removed."""
+        """Require incompatible links to have been removed explicitly."""
         repository, owner = require_uuid(repository_id), require_uuid(owner_id)
         approved = tuple(require_uuid(profile) for profile in approved_removals)
         with self._mutation(expected_revision) as connection:
@@ -206,11 +245,12 @@ class CatalogService:
                 raise InvalidCatalogChange("Only a shared repository can become exclusive.")
             linked = self._linked_profiles(connection, repository)
             removals = linked - {owner}
-            if len(approved) != len(removals) or set(approved) != removals:
-                raise InvalidCatalogChange("Approve exactly the affected profiles before removing links.")
-            for profile in removals:
-                self._remove_link(connection, profile, repository)
-                self._draft_if_no_staged_destination(connection, profile)
+            if removals:
+                raise InvalidCatalogChange(
+                    "Remove incompatible associations before making the repository exclusive."
+                )
+            if approved:
+                raise InvalidCatalogChange("No association removal is performed by this operation.")
             self._set_owner(connection, repository, owner)
             if owner not in linked:
                 self._append_link(connection, owner, repository)
@@ -267,8 +307,10 @@ class CatalogService:
         """Mark a draft active from staged metadata, without checking credentials or launching Restic."""
         profile = require_uuid(profile_id)
         with self._mutation(expected_revision) as connection:
-            if self._editable_profile(connection, profile)["state"] != ProfileState.DRAFT.value:
+            row = self._editable_profile(connection, profile)
+            if row["state"] != ProfileState.DRAFT.value:
                 raise InvalidCatalogChange("Only a draft profile can be marked active.")
+            self._profile_options(json.loads(row["options_json"]))
             if not self._has_staged_destination(connection, profile):
                 raise InvalidCatalogChange("An active profile requires a registered and verified destination.")
             connection.execute("UPDATE profiles SET state = 'active' WHERE profile_id = ?", (profile,))
@@ -284,8 +326,17 @@ class CatalogService:
                 raise InvalidCatalogChange(
                     "Transfer or make shared all exclusive repositories before archiving."
                 )
-            connection.execute("UPDATE profiles SET state = 'archived' WHERE profile_id = ?", (profile,))
-            self._touch(connection, profiles=(profile,))
+            repositories = tuple(
+                row[0] for row in connection.execute(
+                    "SELECT repository_id FROM profile_repositories WHERE profile_id = ?", (profile,)
+                )
+            )
+            connection.execute("DELETE FROM profile_repositories WHERE profile_id = ?", (profile,))
+            connection.execute(
+                "UPDATE profiles SET state = 'archived', options_json = '{}' WHERE profile_id = ?",
+                (profile,),
+            )
+            self._touch(connection, profiles=(profile,), repositories=repositories)
 
     def unregister_repository(self, repository_id, *, expected_revision):
         repository = require_uuid(repository_id)

@@ -33,6 +33,8 @@ class CatalogFixture(unittest.TestCase):
         self.location = LocationSpec("local", str(self.root / "repo"), verified_restic_id="a" * 64)
 
     def change(self, command, *args, **kwargs):
+        if command == self.service.create_profile and "options" not in kwargs:
+            kwargs["options"] = {"paths": [str(self.root / "source")]}
         return command(*args, **kwargs, expected_revision=self.service.snapshot().revision)
 
     def profile(self, name="Profile"):
@@ -58,7 +60,7 @@ class CatalogFixture(unittest.TestCase):
 
 class CatalogServiceTests(CatalogFixture):
     def test_create_reopen_and_rename_keep_independent_ids(self):
-        first = self.change(self.service.create_profile, "Same", options={"tags": ["tag"]})
+        first = self.change(self.service.create_profile, "Same", options={"paths": [str(self.root / "source")], "tags": ["tag"]})
         second = self.profile("Same")
         repo = self.repository("Same")
         ref = uuid4()
@@ -71,7 +73,7 @@ class CatalogServiceTests(CatalogFixture):
         self.assertEqual(snapshot.revision, 6)
         self.assertNotEqual(first, second)
         self.assertEqual({p.profile_id for p in snapshot.profiles}, {first, second})
-        self.assertEqual(self.profile_row(first).options, {"tags": ["tag"]})
+        self.assertEqual(self.profile_row(first).options, {"paths": [str(self.root / "source")], "tags": ["tag"]})
         self.assertEqual(self.profile_row(first).display_name, "New profile name")
         self.assertEqual(self.repository_row(repo).display_name, "New repository name")
         self.assertEqual(self.repository_row(repo).revision, 3)
@@ -147,9 +149,14 @@ class CatalogServiceTests(CatalogFixture):
             with self.subTest(approval=approval), self.assertRaises(InvalidCatalogChange):
                 self.change(self.service.make_exclusive, converted, owner, approved_removals=approval)
         self.assertEqual(self.service.snapshot(), before)
-        self.change(self.service.make_exclusive, converted, owner, approved_removals=(losing, remaining))
+        with self.assertRaises(InvalidCatalogChange):
+            self.change(self.service.make_exclusive, converted, owner, approved_removals=(losing, remaining))
+        self.assertEqual(self.service.snapshot(), before)
+        self.change(self.service.dissociate_repository, losing, converted)
+        self.change(self.service.dissociate_repository, remaining, converted)
+        self.change(self.service.make_exclusive, converted, owner)
         result = self.service.snapshot()
-        self.assertEqual(result.revision, before.revision + 1)
+        self.assertEqual(result.revision, before.revision + 3)
         self.assertEqual(self.repository_row(converted).exclusive_profile_id, owner)
         links = [link for link in result.associations if link.repository_id == converted]
         self.assertEqual([(link.profile_id, link.position) for link in links], [(owner, 1)])
@@ -214,7 +221,8 @@ class CatalogServiceTests(CatalogFixture):
         self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
         self.assertEqual(self.repository_row(exclusive).state, RepositoryState.UNREGISTERED)
         self.assertIsNone(self.repository_row(exclusive).exclusive_profile_id)
-        self.assertEqual(after.associations, before.associations)
+        self.assertEqual(after.associations, ())
+        self.assertEqual(self.profile_row(owner).options, {})
         self.assertEqual(after.locations, before.locations)
         with self.assertRaises(InvalidCatalogChange):
             self.link(other, exclusive)
@@ -247,7 +255,11 @@ class CatalogServiceTests(CatalogFixture):
         self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
         self.assertEqual(self.repository_row(first).exclusive_profile_id, new_owner)
         self.assertIsNone(self.repository_row(second).exclusive_profile_id)
-        self.assertEqual(after.associations, before.associations)
+        self.assertEqual(
+            after.associations,
+            tuple(link for link in before.associations if link.profile_id != owner),
+        )
+        self.assertEqual(self.profile_row(owner).options, {})
 
     def test_archive_rejects_pending_exclusive_until_made_shared(self):
         owner = self.profile()
@@ -273,10 +285,9 @@ class CatalogServiceTests(CatalogFixture):
         self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
         self.assertIsNone(self.repository_row(repository).exclusive_profile_id)
         self.assertEqual(self.repository_row(repository).state, RepositoryState.PENDING_INIT)
-        self.assertEqual(after_archive.associations, before_archive.associations)
-        self.assertEqual(len(after_archive.associations), 1)
-        self.assertEqual(after_archive.associations[0].profile_id, owner)
-        self.assertEqual(after_archive.associations[0].repository_id, repository)
+        self.assertEqual(len(before_archive.associations), 1)
+        self.assertEqual(after_archive.associations, ())
+        self.assertEqual(self.profile_row(owner).options, {})
 
     def test_archive_without_exclusive_repositories(self):
         owner = self.profile()
@@ -287,7 +298,72 @@ class CatalogServiceTests(CatalogFixture):
         after = self.service.snapshot()
         self.assertEqual(after.revision, before.revision + 1)
         self.assertEqual(self.profile_row(owner).state, ProfileState.ARCHIVED)
-        self.assertEqual(after.associations, before.associations)
+        self.assertEqual(len(before.associations), 1)
+        self.assertEqual(after.associations, ())
+        self.assertEqual(self.profile_row(owner).options, {})
+
+    def test_archive_rolls_back_association_removal_when_update_fails(self):
+        owner = self.profile()
+        repository = self.repository()
+        self.link(owner, repository)
+        before = self.service.snapshot()
+        with self.raw() as connection:
+            connection.executescript("""
+                CREATE TRIGGER reject_archive BEFORE UPDATE OF state ON profiles
+                WHEN NEW.state = 'archived'
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected failure');
+                END;
+            """)
+        with self.assertRaises(CatalogStorageError):
+            self.change(self.service.archive_profile, owner)
+        self.assertEqual(self.service.snapshot(), before)
+
+    def test_dissociation_rejects_exclusive_and_preserves_catalog(self):
+        owner = self.profile()
+        repository = self.repository(exclusive_profile_id=owner)
+        before = self.service.snapshot()
+        with self.assertRaises(InvalidCatalogChange):
+            self.change(self.service.dissociate_repository, owner, repository)
+        self.assertEqual(self.service.snapshot(), before)
+
+    def test_backup_is_consistent_and_does_not_overwrite_existing_files(self):
+        profile = self.profile()
+        repository = self.repository(location=self.location)
+        self.link(profile, repository)
+        before = self.service.snapshot()
+        backup = self.root / "backup.db"
+        self.service.backup_to(backup)
+        self.assertEqual(CatalogService(backup).snapshot(), before)
+        with closing(sqlite3.connect(backup)) as connection:
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            connection.execute("PRAGMA foreign_keys = ON")
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        original = backup.read_bytes()
+        with self.assertRaises(CatalogStorageError):
+            self.service.backup_to(backup)
+        self.assertEqual(backup.read_bytes(), original)
+        self.assertEqual(self.service.snapshot(), before)
+
+    def test_profile_requires_one_folder_and_edits_transactionally(self):
+        for paths in ([], ["one", "two"]):
+            before = self.service.snapshot()
+            with self.assertRaises(InvalidCatalogChange):
+                self.change(self.service.create_profile, "Invalid", options={"paths": paths})
+            self.assertEqual(self.service.snapshot(), before)
+        profile = self.profile()
+        before = self.service.snapshot()
+        with self.assertRaises(InvalidCatalogChange):
+            self.change(self.service.update_profile, profile, "Updated", {"paths": []})
+        self.assertEqual(self.service.snapshot(), before)
+        self.change(self.service.update_profile, profile, "Updated", {
+            "paths": [str(self.root / "new")], "exclude_patterns": ["*.tmp"],
+        })
+        self.assertEqual(self.profile_row(profile).display_name, "Updated")
+        self.assertEqual(self.profile_row(profile).options["exclude_patterns"], ["*.tmp"])
+        with self.assertRaises(StaleCatalogRevision):
+            self.service.update_profile(profile, "Stale", {"paths": [str(self.root)]},
+                                        expected_revision=before.revision)
 
     def test_rejects_missing_references_archived_owner_and_invalid_options(self):
         archived = self.profile()
@@ -532,7 +608,7 @@ class CatalogDDLTests(CatalogFixture):
         with self.assertRaises(CatalogStorageError):
             CatalogService(self.database)
         with self.assertRaises(CatalogStorageError):
-            self.service.create_profile("Should fail", expected_revision=0)
+            self.service.create_profile("Should fail", options={"paths": [str(self.root)]}, expected_revision=0)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 # Diseño de la fase 4 de Restic Desktop
 
+> **Documento histórico.** Los requisitos vigentes se encuentran en [RESTIC_DESKTOP_DESIGN.md](RESTIC_DESKTOP_DESIGN.md). La importación heredada y el esquema v2 de linaje han quedado fuera del alcance.
+
 **Propuesta para auditoría.** La fase 4 separa perfiles y repositorios, estabiliza sus identidades y prepara una transición reversible desde JSON a SQLite. La propuesta está pendiente de aprobación. La base de código analizada es `38d87c81a337926c6be31b29d257abb894158d70` en `codex/initial-restic-foundation`. El informe no activa el catálogo ni cambia el comportamiento de la aplicación.
 
 ## Alcance y evidencia en el código

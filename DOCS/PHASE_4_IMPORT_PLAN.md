@@ -1,5 +1,7 @@
 # Fase 4 — Plan de importación y preparación de activación
 
+> **Documento histórico.** Los requisitos vigentes se encuentran en [RESTIC_DESKTOP_DESIGN.md](RESTIC_DESKTOP_DESIGN.md). La importación heredada y el esquema v2 de linaje han quedado fuera del alcance.
+
 Propuesta para revisión sobre el commit `f5f9e4d04fe278a6cfdfb952a9eade0e5d6101ad`. El diseño rector es [PHASE_4_DESIGN.md](PHASE_4_DESIGN.md) y el orden del proyecto está en [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md). Este informe propone etapas y no autoriza un corte ni acredita que la importación funcione.
 
 ## Estado comprobado

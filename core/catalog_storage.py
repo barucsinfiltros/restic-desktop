@@ -1,7 +1,9 @@
 """Private SQLite storage for the standalone staged catalog."""
 
+import os
 import sqlite3
-from contextlib import contextmanager
+import tempfile
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .catalog_domain import CatalogStorageError
@@ -223,6 +225,36 @@ class _CatalogStorage:
                 raise CatalogStorageError("Only an initialized staged catalog is supported.")
             yield connection, state
             connection.commit()
+
+    def backup_to(self, destination):
+        """Publish a verified SQLite snapshot without replacing an existing file."""
+        destination = Path(destination).absolute()
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".restic-catalog-", suffix=".tmp", dir=destination.parent
+            )
+            os.close(descriptor)
+        except OSError as exc:
+            raise CatalogStorageError("Cannot prepare the catalog backup.") from exc
+
+        temporary = Path(temporary_name)
+        try:
+            with self.transaction() as (source, _):
+                with closing(sqlite3.connect(temporary, isolation_level=None)) as target:
+                    source.backup(target)
+                    target.execute("PRAGMA foreign_keys = ON")
+                    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise CatalogStorageError("Catalog backup failed integrity verification.")
+                    if target.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                        raise CatalogStorageError("Catalog backup has invalid references.")
+                    self.validate_lineage(target)
+            # Hard-link publication fails atomically when the destination already exists.
+            # The temporary file is on the same volume as the requested destination.
+            os.link(temporary, destination)
+        except (OSError, sqlite3.Error) as exc:
+            raise CatalogStorageError("Catalog backup could not be published.") from exc
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @staticmethod
     def validate_lineage(connection):
