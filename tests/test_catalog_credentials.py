@@ -44,6 +44,12 @@ class CredentialStoreTests(unittest.TestCase):
         with self.assertRaises(InvalidCatalogChange):
             self.store.store(self.reference, "")
 
+    def test_delete_removes_only_specified_reference(self):
+        self.store.delete(self.reference)
+        self.backend.delete_password.assert_called_once_with(
+            "ResticDesktop.Catalog", str(self.reference)
+        )
+
     def test_rejects_other_keyring_backend(self):
         with patch("keyring.get_keyring", return_value=object()):
             with self.assertRaises(CredentialStoreError):

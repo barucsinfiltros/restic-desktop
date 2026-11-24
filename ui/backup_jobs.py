@@ -54,6 +54,10 @@ def create_backup_jobs_page(host: Any) -> QWidget:
     subtitle.setObjectName("pageSubtitle")
     title_col.addWidget(subtitle)
     header.addLayout(title_col, stretch=1)
+    if callable(getattr(host, "open_staged_catalog", None)):
+        catalog_button = QPushButton("Catálogo en preparación")
+        catalog_button.clicked.connect(host.open_staged_catalog)
+        header.addWidget(catalog_button)
     # New Job lives on the window title bar (same pattern as Add Repository).
     layout.addLayout(header)
 

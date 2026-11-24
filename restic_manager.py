@@ -5938,6 +5938,35 @@ class ResticManagerWindow(QMainWindow):
         self.refresh_backup_jobs_list()
         self.stacked_widget.addWidget(page)
     
+    def open_staged_catalog(self):
+        """Open an explicit catalog in preparation without enabling Restic operations."""
+        from core.catalog_domain import CatalogError
+        from core.catalog_service import CatalogService
+        from ui.catalog_staging import CatalogStagingDialog
+
+        action, accepted = QInputDialog.getItem(
+            self, "Catálogo en preparación", "Selecciona una acción",
+            ["Abrir catálogo", "Crear catálogo"], 0, False,
+        )
+        if not accepted:
+            return
+        if action == "Crear catálogo":
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Crear catálogo", "", "SQLite (*.db)"
+            )
+        else:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Abrir catálogo", "", "SQLite (*.db)"
+            )
+        if not path:
+            return
+        try:
+            catalog = CatalogService.create(path) if action == "Crear catálogo" else CatalogService(path)
+            CatalogStagingDialog(catalog, BackupJobDialog, self).exec()
+        except (CatalogError, OSError, ValueError):
+            QMessageBox.warning(self, "Catálogo en preparación",
+                                "No se pudo abrir o crear el catálogo.")
+
     def refresh_backup_jobs_list(self):
         """Refresh the backup jobs table"""
         populate_backup_jobs_table(self)

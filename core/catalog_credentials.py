@@ -49,3 +49,11 @@ class WindowsCredentialStore:
         if not secret:
             raise CredentialStoreError("The credential is unavailable for this Windows account.")
         return secret
+
+    def delete(self, reference: UUID) -> None:
+        """Delete a specific credential reference from the current account."""
+        key = require_uuid(reference)
+        try:
+            self._backend.delete_password(self._service, key)
+        except Exception:
+            raise CredentialStoreError("Credential deletion failed.") from None

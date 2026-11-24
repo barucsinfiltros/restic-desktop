@@ -327,6 +327,57 @@ class CatalogServiceTests(CatalogFixture):
             self.change(self.service.dissociate_repository, owner, repository)
         self.assertEqual(self.service.snapshot(), before)
 
+    def test_open_rejects_incompatible_profiles_without_modifying_catalog(self):
+        for options in ("{}", '{"paths":[]}', '{"paths":["one","two"]}', "broken"):
+            with self.subTest(options=options):
+                profile = self.profile()
+                with self.raw() as connection:
+                    connection.execute("UPDATE profiles SET options_json = ? WHERE profile_id = ?",
+                                       (options, str(profile)))
+                before = self.database.read_bytes()
+                with self.assertRaises(CatalogStorageError):
+                    CatalogService(self.database)
+                self.assertEqual(self.database.read_bytes(), before)
+                with self.raw() as connection:
+                    connection.execute("UPDATE profiles SET options_json = ? WHERE profile_id = ?",
+                                       ('{"paths":["valid"]}', str(profile)))
+
+    def test_open_rejects_archived_profile_with_options_or_association(self):
+        profile = self.profile()
+        repository = self.repository()
+        self.link(profile, repository)
+        with self.raw() as connection:
+            connection.execute("UPDATE profiles SET state = 'archived' WHERE profile_id = ?",
+                               (str(profile),))
+        before = self.database.read_bytes()
+        with self.assertRaises(CatalogStorageError):
+            CatalogService(self.database)
+        self.assertEqual(self.database.read_bytes(), before)
+        with self.raw() as connection:
+            connection.execute("UPDATE profiles SET options_json = '{}' WHERE profile_id = ?",
+                               (str(profile),))
+        before = self.database.read_bytes()
+        with self.assertRaises(CatalogStorageError):
+            CatalogService(self.database)
+        self.assertEqual(self.database.read_bytes(), before)
+
+    def test_unregister_demotes_only_profiles_without_other_valid_destinations(self):
+        losing, remaining = self.profile(), self.profile()
+        first = self.repository(location=self.location)
+        second = self.repository(location=self.location)
+        self.link(losing, first)
+        self.link(remaining, first)
+        self.link(remaining, second)
+        self.change(self.service.activate_profile, losing)
+        self.change(self.service.activate_profile, remaining)
+        before = self.service.snapshot()
+        self.change(self.service.unregister_repository, first)
+        after = self.service.snapshot()
+        self.assertEqual(after.revision, before.revision + 1)
+        self.assertEqual(self.profile_row(losing).state, ProfileState.DRAFT)
+        self.assertEqual(self.profile_row(remaining).state, ProfileState.ACTIVE)
+        self.assertEqual(after.associations, before.associations)
+
     def test_backup_is_consistent_and_does_not_overwrite_existing_files(self):
         profile = self.profile()
         repository = self.repository(location=self.location)
@@ -344,6 +395,46 @@ class CatalogServiceTests(CatalogFixture):
             self.service.backup_to(backup)
         self.assertEqual(backup.read_bytes(), original)
         self.assertEqual(self.service.snapshot(), before)
+
+    def test_unregister_rolls_back_when_profile_demotion_fails(self):
+        profile = self.profile()
+        repository = self.repository(location=self.location)
+        self.link(profile, repository)
+        self.change(self.service.activate_profile, profile)
+        before = self.service.snapshot()
+        with self.raw() as connection:
+            connection.executescript("""
+                CREATE TRIGGER reject_demotion BEFORE UPDATE OF state ON profiles
+                WHEN NEW.state = 'draft'
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected failure');
+                END;
+            """)
+        with self.assertRaises(CatalogStorageError):
+            self.change(self.service.unregister_repository, repository)
+        self.assertEqual(self.service.snapshot(), before)
+
+    def test_staged_catalog_rejects_operational_admission(self):
+        before = self.service.snapshot()
+        with self.assertRaises(CatalogStorageError):
+            self.service.require_operations_allowed()
+        self.assertEqual(self.service.snapshot(), before)
+
+    def test_profile_associations_are_saved_atomically(self):
+        owner, other = self.profile(), self.profile()
+        shared = self.repository()
+        exclusive = self.repository(exclusive_profile_id=other)
+        before = self.service.snapshot()
+        with self.assertRaises(InvalidCatalogChange):
+            self.change(self.service.update_profile, owner, "Changed",
+                        {"paths": [str(self.root / "source")]},
+                        repository_ids=[shared, exclusive])
+        self.assertEqual(self.service.snapshot(), before)
+        self.change(self.service.update_profile, owner, "Changed",
+                    {"paths": [str(self.root / "source")]}, repository_ids=[shared])
+        self.assertEqual(self.profile_row(owner).display_name, "Changed")
+        self.assertIn(shared, [link.repository_id for link in self.service.snapshot().associations
+                               if link.profile_id == owner])
 
     def test_profile_requires_one_folder_and_edits_transactionally(self):
         for paths in ([], ["one", "two"]):

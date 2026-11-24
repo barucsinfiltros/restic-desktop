@@ -4,9 +4,9 @@
 
 ## Estado del MVP
 
-- Catálogo SQLite en preparación con carpeta única al crear o editar perfiles, desvinculación explícita, archivado que retira opciones y asociaciones, y copia SQLite coherente a una ruta nueva. La integración con la interfaz y los respaldos reales sigue pendiente.
-- Existe un adaptador aislado de Credential Manager de Windows, probado con un doble. La GUI y los ejecutores aún no lo usan y falta probar su funcionamiento real bajo la cuenta que ejecutará Restic.
-- Antes de operaciones reales deben verificarse la barrera contra ejecutores heredados, la identidad de los destinos, las credenciales y la recuperación del catálogo.
+- Catálogo SQLite en preparación con validación de invariantes al abrir, carpeta única, asociaciones transaccionales, archivado y copia SQLite coherente a una ruta nueva. Una vista aislada permite crear y editar perfiles con el formulario existente, gestionar asociaciones y registrar carpetas de repositorios sin ejecutar Restic. Los respaldos por catálogo siguen pendientes.
+- La vista de preparación puede guardar referencias de credenciales en Credential Manager. El adaptador se probó con dobles y con una credencial sintética creada y eliminada en la cuenta actual. Falta verificar la cuenta de ejecución automática y completar la recuperación ante fallos entre almacén y catálogo.
+- La vista de preparación no ejecuta Restic y el servicio ofrece una comprobación de admisión que actualmente rechaza cualquier operación. Todavía no existe un coordinador que aplique esa comprobación a ejecuciones reales. Las rutas heredadas existentes siguen independientes y no se han neutralizado. Antes de operaciones reales del catálogo deben verificarse la barrera contra ejecutores heredados, la identidad de destinos, las credenciales y la recuperación.
 - La restauración sobre el origen permanece deshabilitada. La restauración alternativa requiere verificación.
 
 ## Criterios verificables del catálogo en preparación

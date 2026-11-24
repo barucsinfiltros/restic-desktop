@@ -34,6 +34,28 @@ class CatalogService:
         self._storage = _CatalogStorage(path)
         with self._storage.transaction() as (connection, _):
             self._storage.validate_lineage(connection)
+            self._validate_profiles(connection)
+
+    @classmethod
+    def _validate_profiles(cls, connection):
+        """Reject incompatible older profiles without mutating their catalog."""
+        rows = connection.execute("SELECT profile_id, state, options_json FROM profiles")
+        for row in rows:
+            try:
+                options = json.loads(row["options_json"])
+                if row["state"] == ProfileState.ARCHIVED.value:
+                    if options != {} or connection.execute(
+                        "SELECT 1 FROM profile_repositories WHERE profile_id = ? LIMIT 1",
+                        (row["profile_id"],),
+                    ).fetchone() or connection.execute(
+                        "SELECT 1 FROM repositories WHERE exclusive_profile_id = ? LIMIT 1",
+                        (row["profile_id"],),
+                    ).fetchone():
+                        raise InvalidCatalogChange("Archived profile has operational data.")
+                else:
+                    cls._profile_options(options)
+            except (ValueError, TypeError, InvalidCatalogChange):
+                raise CatalogStorageError("Catalog contains incompatible profile data.") from None
 
     @classmethod
     def create(cls, path, *, installation_id: UUID | None = None):
@@ -41,6 +63,12 @@ class CatalogService:
         installation = str(uuid4()) if installation_id is None else require_uuid(installation_id)
         _CatalogStorage(path).initialize(installation)
         return cls(path)
+
+    def require_operations_allowed(self):
+        """Fail closed until legacy executors and activation are verified."""
+        raise CatalogStorageError(
+            "Catalog operations remain blocked until activation is independently verified."
+        )
 
     def backup_to(self, destination):
         """Create a consistent backup without replacing an existing file."""
@@ -101,7 +129,8 @@ class CatalogService:
             # Deferred foreign keys check the final owner link at commit in the storage layer.
 
     def create_profile(self, display_name, *, expected_revision, options=None,
-                       exclusive_repository: RepositoryDraft | None = None) -> UUID:
+                       exclusive_repository: RepositoryDraft | None = None,
+                       repository_ids=None) -> UUID:
         name = require_text(display_name, "Profile name")
         encoded = self._profile_options(options)
         profile_id = uuid4()
@@ -112,6 +141,8 @@ class CatalogService:
             )
             if exclusive_repository is not None:
                 self._insert_repository(connection, exclusive_repository, str(profile_id))
+            if repository_ids is not None:
+                self._replace_profile_associations(connection, str(profile_id), repository_ids)
         return profile_id
 
     @staticmethod
@@ -122,7 +153,7 @@ class CatalogService:
             raise InvalidCatalogChange("A profile requires exactly one source folder.")
         return encoded
 
-    def update_profile(self, profile_id, display_name, options, *, expected_revision):
+    def update_profile(self, profile_id, display_name, options, *, expected_revision, repository_ids=None):
         """Update a profile's name, single source and exclusions transactionally."""
         key = require_uuid(profile_id)
         name = require_text(display_name, "Profile name")
@@ -133,7 +164,34 @@ class CatalogService:
                 "UPDATE profiles SET display_name = ?, options_json = ? WHERE profile_id = ?",
                 (name, encoded, key),
             )
+            if repository_ids is not None:
+                self._replace_profile_associations(connection, key, repository_ids)
+                self._draft_if_no_staged_destination(connection, key)
             self._touch(connection, profiles=(key,))
+
+    def _replace_profile_associations(self, connection, profile, repository_ids):
+        desired = tuple(require_uuid(repository) for repository in repository_ids)
+        if len(set(desired)) != len(desired):
+            raise InvalidCatalogChange("Duplicate repository association.")
+        current = {
+            row[0] for row in connection.execute(
+                "SELECT repository_id FROM profile_repositories WHERE profile_id = ?", (profile,)
+            )
+        }
+        for repository in current | set(desired):
+            row = self._repository(connection, repository)
+            if row["exclusive_profile_id"] not in (None, profile):
+                raise InvalidCatalogChange("The repository is exclusive to another profile.")
+            if repository in current - set(desired) and row["exclusive_profile_id"] is not None:
+                raise InvalidCatalogChange("Resolve exclusive ownership before removing its association.")
+            if repository in set(desired) - current and row["state"] == RepositoryState.UNREGISTERED.value:
+                raise InvalidCatalogChange("The repository is unregistered.")
+        connection.execute("DELETE FROM profile_repositories WHERE profile_id = ?", (profile,))
+        connection.executemany(
+            "INSERT INTO profile_repositories (profile_id, repository_id, position) VALUES (?, ?, ?)",
+            ((profile, repository, position) for position, repository in enumerate(desired)),
+        )
+        self._touch(connection, repositories=current | set(desired))
 
     def create_repository(self, display_name, *, expected_revision, location=None,
                           state=RepositoryState.REGISTERED, exclusive_profile_id=None) -> UUID:
@@ -345,9 +403,10 @@ class CatalogService:
             connection.execute(
                 "UPDATE repositories SET state = 'unregistered' WHERE repository_id = ?", (repository,)
             )
-            self._touch(
-                connection, profiles=self._linked_profiles(connection, repository), repositories=(repository,)
-            )
+            profiles = self._linked_profiles(connection, repository)
+            for profile in profiles:
+                self._draft_if_no_staged_destination(connection, profile)
+            self._touch(connection, profiles=profiles, repositories=(repository,))
 
     @staticmethod
     def _editable_profile(connection, profile):
