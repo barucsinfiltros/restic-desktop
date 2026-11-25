@@ -13,7 +13,7 @@ from core.catalog_domain import InvalidCatalogChange, encode_profile_options
 
 class AttemptTests(unittest.TestCase):
     def test_reserved_tag_and_safe_tags(self):
-        for tag in ("profile:abc", " PROFILE:abc"):
+        for tag in ("profile:abc", " PROFILE:abc", "ordinary,profile:abc", "ordinary, PROFILE:abc"):
             with self.subTest(tag=tag), self.assertRaises(InvalidCatalogChange):
                 encode_profile_options({"tags": [tag]})
         encode_profile_options({"tags": ["myprofile:abc", "ordinary"]})
@@ -44,3 +44,17 @@ class AttemptTests(unittest.TestCase):
             child = subprocess.run([sys.executable, "-B", "-c", script, str(path)],
                                    capture_output=True, timeout=15)
             self.assertEqual(child.returncode, 0, child.stderr.decode(errors="replace"))
+
+    def test_unresolved_standard_history_blocks_catalog_edits(self):
+        from core.catalog_service import CatalogService
+        from core.catalog_domain import CatalogStorageError
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "catalog.db"
+            catalog = CatalogService.create(path)
+            history = path.with_suffix(".history.db")
+            attempt = catalog_attempts.begin(history, uuid4(), uuid4())
+            with self.assertRaises(CatalogStorageError):
+                catalog.create_profile("No permitido", options={"paths": [temp]}, expected_revision=0)
+            self.assertEqual(catalog.snapshot().revision, 0)
+            catalog_attempts.finish(history, attempt, "failed")
+            catalog.create_profile("Permitido", options={"paths": [temp]}, expected_revision=0)

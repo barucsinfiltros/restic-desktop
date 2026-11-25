@@ -135,7 +135,8 @@ def _text(value):
 _PROFILE_OPTIONS = {
     "paths": _string_list,
     "tags": lambda value: _string_list(value) and all(
-        not item.strip().casefold().startswith("profile:") for item in value
+        not any(tag.strip().casefold().startswith("profile:") for tag in item.split(","))
+        for item in value
     ),
     "exclude_patterns": _string_list,
     "exclude_caches": _boolean,

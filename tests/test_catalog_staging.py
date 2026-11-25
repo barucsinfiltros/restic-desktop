@@ -158,6 +158,16 @@ class CatalogStagingTests(unittest.TestCase):
         report.assert_called_once()
         self.assertIsNone(dialog._backup_worker)
 
+    def test_verification_control_respects_closed_gate(self):
+        dialog = CatalogStagingDialog(self.catalog, BackupJobDialog)
+        self.addCleanup(dialog.close)
+        dialog.repositories.setCurrentRow(0)
+        with patch.object(dialog, "_report") as report, \
+             patch("subprocess.Popen", side_effect=AssertionError("Unexpected process")):
+            dialog.verify_repository()
+        report.assert_called_once()
+        self.assertIsNone(dialog._verify_worker)
+
     def test_backup_worker_forwards_progress_and_result(self):
         from types import SimpleNamespace
         from PySide6.QtTest import QSignalSpy

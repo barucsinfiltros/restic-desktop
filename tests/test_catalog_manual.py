@@ -133,6 +133,64 @@ class TemporaryManualBackupTests(unittest.TestCase):
                 "SELECT outcome, snapshot_id FROM catalog_backup_attempts"
             ).fetchone(), ("completed", result.snapshot_id))
 
+    def test_unknown_backup_result_remains_running_and_blocks_retry(self):
+        original = self.coordinator._wait
+        def interrupted(request, progress):
+            if request.validate_backup:
+                raise RuntimeError("synthetic observation failure")
+            return original(request, progress)
+        with patch.object(self.catalog, "require_operations_allowed"), \
+             patch.object(self.coordinator, "_wait", side_effect=interrupted):
+            with self.assertRaises(RuntimeError):
+                self.coordinator.run(self.profile, self.repo)
+            with self.assertRaises(ManualBackupError):
+                self.coordinator.run(self.profile, self.repo)
+        with closing(sqlite3.connect(self.history)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT outcome, finished_at FROM catalog_backup_attempts"
+            ).fetchone(), ("running", None))
+
+    def test_partial_snapshot_is_retained_without_success(self):
+        from datetime import datetime, timezone
+        from core.restic_supervisor import ExecutionResult
+        original = self.coordinator._wait
+        def incomplete(request, progress):
+            if not request.validate_backup:
+                return original(request, progress)
+            return ExecutionResult("test", None, None, datetime.now(timezone.utc), 1,
+                                   Outcome.INCOMPLETE, 3, snapshot_id="a" * 64)
+        with patch.object(self.catalog, "require_operations_allowed"), \
+             patch.object(self.coordinator, "_wait", side_effect=incomplete):
+            result = self.coordinator.run(self.profile, self.repo)
+        self.assertFalse(result.succeeded)
+        with closing(sqlite3.connect(self.history)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT outcome, snapshot_id FROM catalog_backup_attempts"
+            ).fetchone(), ("incomplete", "a" * 64))
+
+    def test_catalog_mutation_is_blocked_by_other_instance_operation(self):
+        from core.catalog_attempts import operation_lock
+        other = CatalogService(self.catalog._storage.path)
+        revision = self.catalog.snapshot().revision
+        with operation_lock(self.catalog._storage.path):
+            with self.assertRaises(CatalogStorageError):
+                other.rename_profile(self.profile, "changed", expected_revision=revision)
+        self.assertEqual(self.catalog.snapshot().revision, revision)
+
+    def test_verify_existing_temporary_repository_and_reject_identity_change(self):
+        from core.catalog_verification import verify_repository
+        from core.catalog_domain import InvalidCatalogChange
+        with self.catalog._storage.transaction(write=True) as (connection, _):
+            connection.execute("UPDATE repository_locations SET verified_restic_id=NULL")
+        with patch.object(self.catalog, "require_operations_allowed"):
+            observed = verify_repository(self.catalog, self.vault, RESTIC, self.repo)
+            location = self.catalog.snapshot().locations[0].spec
+            self.assertEqual(location.verified_restic_id, observed)
+            with self.catalog._storage.transaction(write=True) as (connection, _):
+                connection.execute("UPDATE repository_locations SET verified_restic_id=?", ("b" * 64,))
+            with self.assertRaises(InvalidCatalogChange):
+                verify_repository(self.catalog, self.vault, RESTIC, self.repo)
+
 
 if __name__ == "__main__":
     unittest.main()

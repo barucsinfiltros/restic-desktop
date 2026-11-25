@@ -81,3 +81,18 @@ def finish(path, attempt_id, outcome, snapshot_id=None):
         )
         if cursor.rowcount != 1:
             raise UnresolvedAttempt("Attempt state changed unexpectedly.")
+
+
+def require_no_unresolved_for_catalog(catalog_path):
+    """Fail closed if the catalog's standard history contains an unfinished attempt."""
+    path = Path(catalog_path).with_suffix(".history.db")
+    if not path.exists():
+        return
+    try:
+        with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as connection:
+            if connection.execute(
+                "SELECT 1 FROM catalog_backup_attempts WHERE outcome='running' LIMIT 1"
+            ).fetchone():
+                raise UnresolvedAttempt("An attempt has an unknown result.")
+    except sqlite3.Error as exc:
+        raise UnresolvedAttempt("Attempt history cannot be verified.") from exc

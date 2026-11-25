@@ -79,6 +79,8 @@ SQLite almacena configuración, relaciones e historial, no los archivos respalda
 
 Las conexiones de escritura del catálogo y de intentos solicitan `synchronous=FULL`; esto no garantiza la durabilidad ante fallos de hardware o almacenamiento que no respete las sincronizaciones. El respaldo SQLite consistente existente debe verificarse y restaurarse explícitamente; la recuperación completa y la política de activación siguen pendientes. La comprobación `restic cat config` verifica acceso mediante la credencial y compara el ID observado con el guardado, pero no impide sustituir el destino después de comprobarlo ni distingue copias exactas con el mismo ID. Se debe limitar el acceso a la ubicación y mantener cerrada la activación hasta resolver estas limitaciones y los ejecutores heredados.
 
+El prototipo incorpora una acción de verificación supervisada desde la vista de preparación, bloqueada por la misma barrera; la primera observación registra el ID y las posteriores rechazan un cambio. El bloqueo cooperativo también cubre mutaciones del servicio y rechaza cambios cuando el historial estándar contiene un intento sin resolver. No controla ejecutores heredados, accesos directos a SQLite, alias de ruta ni historiales alternativos; la recuperación de procesos huérfanos sigue sin estar implementada. Un fallo de observación tras iniciar el respaldo conserva el intento pendiente y los resultados parciales conservan su ID sin declararse exitosos. El flujo completo de exploración, restauración y verificación todavía no está integrado con el catálogo.
+
 ### 3.2. Componentes y responsabilidades
 
 ```mermaid

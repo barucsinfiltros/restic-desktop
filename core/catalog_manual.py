@@ -99,6 +99,7 @@ class ManualBackupCoordinator:
     def _run_locked(self, profile_id, repository_id, started, on_progress):
         attempt = catalog_attempts.begin(self.history_path, profile_id, repository_id)
         result = None
+        backup_started = False
         try:
             snapshot = self.catalog.snapshot()
             profile = next((p for p in snapshot.profiles if p.profile_id == profile_id), None)
@@ -157,10 +158,11 @@ class ManualBackupCoordinator:
             if profile.options.get("ignore_inode"):
                 args.append("--ignore-inode")
             for tag in profile.options.get("tags", []):
-                if tag.strip().casefold().startswith("profile:"):
+                if any(part.strip().casefold().startswith("profile:") for part in tag.split(",")):
                     raise ManualBackupError("Reserved profile tag.")
                 args.extend(("--tag", tag))
             args.extend(("--", profile.options["paths"][0]))
+            backup_started = True
             result = self._wait(restic_supervisor.ExecutionRequest(
                 self.executable, tuple(args), environment=environment,
                 timeout=profile.options.get("timeout") or None, validate_backup=True,
@@ -169,7 +171,9 @@ class ManualBackupCoordinator:
             self._history(profile_id, repository_id, started, result)
             return result
         finally:
-            catalog_attempts.finish(
-                self.history_path, attempt, result.outcome.value if result else "failed",
-                result.snapshot_id if result and result.succeeded else None,
-            )
+            # An exception after launch leaves the result unknown and blocks retry.
+            if result is not None or not backup_started:
+                catalog_attempts.finish(
+                    self.history_path, attempt, result.outcome.value if result else "failed",
+                    result.snapshot_id if result else None,
+                )

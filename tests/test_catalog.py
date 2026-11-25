@@ -578,7 +578,7 @@ class CatalogServiceTests(CatalogFixture):
             barrier.wait()
             try:
                 service.transfer_exclusive(repo, target, approved_owner_id=owner, expected_revision=revision)
-            except StaleCatalogRevision:
+            except (StaleCatalogRevision, CatalogStorageError):
                 return None
             return target
 

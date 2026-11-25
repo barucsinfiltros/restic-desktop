@@ -27,6 +27,7 @@ from .catalog_domain import (
     require_uuid,
 )
 from .catalog_storage import _CatalogStorage
+from . import catalog_attempts
 
 
 class CatalogService:
@@ -125,12 +126,16 @@ class CatalogService:
     def _mutation(self, expected_revision):
         if type(expected_revision) is not int or expected_revision < 0:
             raise InvalidCatalogChange("A non-negative catalog revision is required.")
-        with self._storage.transaction(write=True) as (connection, state):
-            if state["catalog_revision"] != expected_revision:
-                raise StaleCatalogRevision("The catalog revision has changed.")
-            yield connection
-            connection.execute("UPDATE catalog_state SET catalog_revision = catalog_revision + 1")
-            # Deferred foreign keys check the final owner link at commit in the storage layer.
+        try:
+            with catalog_attempts.operation_lock(self._storage.path):
+                catalog_attempts.require_no_unresolved_for_catalog(self._storage.path)
+                with self._storage.transaction(write=True) as (connection, state):
+                    if state["catalog_revision"] != expected_revision:
+                        raise StaleCatalogRevision("The catalog revision has changed.")
+                    yield connection
+                    connection.execute("UPDATE catalog_state SET catalog_revision = catalog_revision + 1")
+        except catalog_attempts.UnresolvedAttempt as exc:
+            raise CatalogStorageError("Catalog is busy with another operation.") from exc
 
     def create_profile(self, display_name, *, expected_revision, options=None,
                        exclusive_repository: RepositoryDraft | None = None,
@@ -242,6 +247,23 @@ class CatalogService:
             ).fetchone():
                 raise InvalidCatalogChange("This repository already has a location.")
             self._insert_location(connection, key, encoded)
+            self._touch(connection, profiles=self._linked_profiles(connection, key), repositories=(key,))
+
+    def record_repository_identity(self, repository_id, identity, *, expected_revision):
+        """Record a supervised observation; reject a change of known identity."""
+        import re
+        key = require_uuid(repository_id)
+        if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity):
+            raise InvalidCatalogChange("Invalid Restic identity.")
+        with self._mutation(expected_revision) as connection:
+            self._registered_or_pending(connection, key)
+            row = connection.execute(
+                "SELECT verified_restic_id FROM repository_locations WHERE repository_id=?", (key,)
+            ).fetchone()
+            if row is None or (row[0] and row[0] != identity):
+                raise InvalidCatalogChange("Repository identity differs or location is missing.")
+            connection.execute("UPDATE repository_locations SET verified_restic_id=? WHERE repository_id=?",
+                               (identity, key))
             self._touch(connection, profiles=self._linked_profiles(connection, key), repositories=(key,))
 
     @staticmethod

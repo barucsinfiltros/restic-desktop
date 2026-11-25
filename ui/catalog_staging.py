@@ -34,6 +34,22 @@ class _BackupWorker(QThread):
             self.completed.emit("No se pudo ejecutar el respaldo; consulta el estado del catálogo.")
 
 
+class _VerifyWorker(QThread):
+    completed = Signal(str)
+
+    def __init__(self, catalog, executable, repository_id, parent=None):
+        super().__init__(parent)
+        self.catalog, self.executable, self.repository_id = catalog, executable, repository_id
+
+    def run(self):
+        from core.catalog_verification import verify_repository
+        try:
+            verify_repository(self.catalog, WindowsCredentialStore(), self.executable, self.repository_id)
+            self.completed.emit("Repositorio verificado.")
+        except Exception:
+            self.completed.emit("No se pudo verificar el repositorio o su identidad cambió.")
+
+
 class _RepositorySettings:
     """Adapter for the existing backup-job form."""
 
@@ -71,6 +87,7 @@ class CatalogStagingDialog(QDialog):
         layout.addWidget(self.repositories)
         buttons = QHBoxLayout()
         for label, action in (("Registrar carpeta", self.create_repository),
+                              ("Verificar", self.verify_repository),
                               ("Renombrar", self.rename_repository),
                               ("Desregistrar", self.unregister_repository)):
             button = QPushButton(label)
@@ -88,7 +105,26 @@ class CatalogStagingDialog(QDialog):
         self.profiles.currentItemChanged.connect(self.refresh_history)
         self.repositories.currentItemChanged.connect(self.refresh_history)
         self._backup_worker = None
+        self._verify_worker = None
         self.refresh()
+
+    def verify_repository(self):
+        identifier = self._selected_id(self.repositories)
+        if identifier is None:
+            self._report("Selecciona un repositorio.")
+            return
+        try:
+            self.catalog.require_operations_allowed()
+        except CatalogError:
+            self._report("La verificación está bloqueada hasta completar la barrera del catálogo.")
+            return
+        if self._verify_worker is not None and self._verify_worker.isRunning():
+            return
+        executable = self.parent().settings_manager.get("restic_path")
+        self._verify_worker = _VerifyWorker(self.catalog, executable, identifier, self)
+        self._verify_worker.completed.connect(self.backup_status.setText)
+        self._verify_worker.finished.connect(self.refresh)
+        self._verify_worker.start()
 
     def refresh_history(self, *_):
         profile = self._selected_id(self.profiles)
@@ -136,7 +172,8 @@ class CatalogStagingDialog(QDialog):
         self._backup_worker.start()
 
     def reject(self):
-        if self._backup_worker is not None and self._backup_worker.isRunning():
+        if ((self._backup_worker is not None and self._backup_worker.isRunning()) or
+                (self._verify_worker is not None and self._verify_worker.isRunning())):
             self._report("Espera a que termine el respaldo antes de cerrar esta ventana.")
             return
         super().reject()
