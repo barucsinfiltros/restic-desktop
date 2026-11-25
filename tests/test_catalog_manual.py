@@ -103,6 +103,36 @@ class TemporaryManualBackupTests(unittest.TestCase):
                 self.coordinator._operation_lock.release()
         self.assertEqual(json.loads(self._restic("snapshots", "--json")), [])
 
+    def test_attempt_exists_before_process_and_compression_off_is_passed(self):
+        from core import restic_supervisor
+        original = restic_supervisor.start
+        calls = []
+
+        def start(request):
+            with closing(sqlite3.connect(self.history)) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT outcome FROM catalog_backup_attempts"
+                ).fetchone()[0], "running")
+            calls.append(request.arguments)
+            return original(request)
+
+        snapshot = self.catalog.snapshot()
+        profile = snapshot.profiles[0]
+        self.catalog.update_profile(
+            self.profile, profile.display_name, {**profile.options, "compression": "off"},
+            expected_revision=snapshot.revision,
+        )
+        with patch.object(self.catalog, "require_operations_allowed"), \
+             patch("core.catalog_manual.restic_supervisor.start", side_effect=start):
+            result = self.coordinator.run(self.profile, self.repo)
+        self.assertEqual(result.outcome, Outcome.COMPLETED)
+        self.assertIn("--compression", calls[-1])
+        self.assertEqual(calls[-1][calls[-1].index("--compression") + 1], "off")
+        with closing(sqlite3.connect(self.history)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT outcome, snapshot_id FROM catalog_backup_attempts"
+            ).fetchone(), ("completed", result.snapshot_id))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from core.catalog_domain import CatalogStorageError, LocationSpec, ProfileState
 from core.catalog_service import CatalogService
 from restic_manager import BackupJobDialog
-from ui.catalog_staging import CatalogStagingDialog
+from ui.catalog_staging import CatalogStagingDialog, _BackupWorker
 
 
 class CatalogStagingTests(unittest.TestCase):
@@ -67,9 +67,11 @@ class CatalogStagingTests(unittest.TestCase):
             "Segundo", location=LocationSpec("local", str(self.root / "second")),
             expected_revision=1,
         )
+        ordered = [item.repository_id for item in self.catalog.snapshot().repositories]
+        requested = list(reversed(ordered))
         profile = self.catalog.create_profile(
             "Perfil", options={"paths": [str(self.root)], "timeout": 7261, "pack_size": 17},
-            repository_ids=[second, self.repo], expected_revision=2,
+            repository_ids=requested, expected_revision=2,
         )
 
         class UnchangedForm(BackupJobDialog):
@@ -84,7 +86,7 @@ class CatalogStagingTests(unittest.TestCase):
         self.assertEqual(snapshot.profiles[0].profile_id, profile)
         self.assertEqual(snapshot.profiles[0].options["timeout"], 7261)
         self.assertEqual(snapshot.profiles[0].options["pack_size"], 17)
-        self.assertEqual([item.repository_id for item in snapshot.associations], [second, self.repo])
+        self.assertEqual([item.repository_id for item in snapshot.associations], requested)
 
     def test_repository_registration_compensates_failed_catalog_write(self):
         dialog = CatalogStagingDialog(self.catalog, BackupJobDialog)
@@ -142,6 +144,55 @@ class CatalogStagingTests(unittest.TestCase):
             dialog.repositories.setCurrentRow(0)
             dialog.unregister_repository()
         self.assertEqual(self.catalog.snapshot().profiles[0].state, ProfileState.ARCHIVED)
+
+    def test_backup_control_respects_closed_gate(self):
+        self.catalog.create_profile("Perfil", options={"paths": [str(self.root)]},
+                                    repository_ids=[self.repo], expected_revision=1)
+        dialog = CatalogStagingDialog(self.catalog, BackupJobDialog)
+        self.addCleanup(dialog.close)
+        dialog.profiles.setCurrentRow(0)
+        dialog.repositories.setCurrentRow(0)
+        with patch.object(dialog, "_report") as report, \
+             patch("subprocess.Popen", side_effect=AssertionError("Unexpected process")):
+            dialog.start_backup()
+        report.assert_called_once()
+        self.assertIsNone(dialog._backup_worker)
+
+    def test_backup_worker_forwards_progress_and_result(self):
+        from types import SimpleNamespace
+        from PySide6.QtTest import QSignalSpy
+
+        class Coordinator:
+            def run(self, profile, repository, *, on_progress):
+                on_progress(SimpleNamespace(line="progreso sintético"))
+                return SimpleNamespace(outcome=SimpleNamespace(value="completed"))
+
+        worker = _BackupWorker(Coordinator(), self.repo, self.repo)
+        progress = QSignalSpy(worker.progress)
+        finished = QSignalSpy(worker.completed)
+        worker.start()
+        self.assertTrue(worker.wait(5000))
+        self.app.processEvents()
+        self.assertEqual(progress.count(), 1)
+        self.assertEqual(finished.at(0)[0], "Resultado: completed")
+
+    def test_history_is_filtered_by_profile_and_repository(self):
+        from core.catalog_attempts import begin, finish
+        from uuid import uuid4
+
+        profile = self.catalog.create_profile("Perfil", options={"paths": [str(self.root)]},
+                                              repository_ids=[self.repo], expected_revision=1)
+        path = self.catalog._storage.path.with_suffix(".history.db")
+        attempt = begin(path, profile, self.repo)
+        finish(path, attempt, "completed")
+        attempt = begin(path, uuid4(), self.repo)
+        finish(path, attempt, "failed")
+        dialog = CatalogStagingDialog(self.catalog, BackupJobDialog)
+        self.addCleanup(dialog.close)
+        dialog.profiles.setCurrentRow(0)
+        dialog.repositories.setCurrentRow(0)
+        self.assertIn("completed", dialog.history_status.text())
+        self.assertNotIn("failed", dialog.history_status.text())
 
     def test_archive_from_staged_dialog(self):
         profile = self.catalog.create_profile(

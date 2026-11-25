@@ -1,9 +1,11 @@
 """Isolated staged catalog editor. It never launches Restic."""
 
+import sqlite3
+from contextlib import closing
 from pathlib import PureWindowsPath
 from uuid import UUID, uuid4
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout,
@@ -11,6 +13,25 @@ from PySide6.QtWidgets import (
 
 from core.catalog_credentials import CredentialStoreError, WindowsCredentialStore
 from core.catalog_domain import CatalogError, LocationSpec, ProfileState, RepositoryState
+
+
+class _BackupWorker(QThread):
+    progress = Signal(str)
+    completed = Signal(str)
+
+    def __init__(self, coordinator, profile_id, repository_id, parent=None):
+        super().__init__(parent)
+        self.coordinator, self.profile_id, self.repository_id = coordinator, profile_id, repository_id
+
+    def run(self):
+        try:
+            result = self.coordinator.run(
+                self.profile_id, self.repository_id,
+                on_progress=lambda event: self.progress.emit(event.line),
+            )
+            self.completed.emit(f"Resultado: {result.outcome.value}")
+        except Exception:
+            self.completed.emit("No se pudo ejecutar el respaldo; consulta el estado del catálogo.")
 
 
 class _RepositorySettings:
@@ -56,7 +77,69 @@ class CatalogStagingDialog(QDialog):
             button.clicked.connect(action)
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        self.backup_status = QLabel("Los respaldos del catálogo permanecen bloqueados.")
+        self.backup_status.setWordWrap(True)
+        layout.addWidget(self.backup_status)
+        self.backup_button = QPushButton("Respaldar asociación seleccionada")
+        self.backup_button.clicked.connect(self.start_backup)
+        layout.addWidget(self.backup_button)
+        self.history_status = QLabel("Historial: selecciona una asociación.")
+        layout.addWidget(self.history_status)
+        self.profiles.currentItemChanged.connect(self.refresh_history)
+        self.repositories.currentItemChanged.connect(self.refresh_history)
+        self._backup_worker = None
         self.refresh()
+
+    def refresh_history(self, *_):
+        profile = self._selected_id(self.profiles)
+        repository = self._selected_id(self.repositories)
+        path = self.catalog._storage.path.with_suffix(".history.db")
+        self.history_status.setText("Historial: sin intentos para la selección.")
+        if profile is None or repository is None or not path.is_file():
+            return
+        try:
+            with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as connection:
+                row = connection.execute(
+                    "SELECT started_at, outcome FROM catalog_backup_attempts "
+                    "WHERE profile_id=? AND repository_id=? ORDER BY id DESC LIMIT 1",
+                    (str(profile), str(repository)),
+                ).fetchone()
+        except sqlite3.Error:
+            self.history_status.setText("Historial: no disponible.")
+            return
+        if row:
+            self.history_status.setText(f"Último intento: {row[0]} — {row[1]}")
+
+    def start_backup(self):
+        from core.catalog_manual import ManualBackupCoordinator
+        profile = self._selected_id(self.profiles)
+        repository = self._selected_id(self.repositories)
+        if profile is None or repository is None:
+            self._report("Selecciona un perfil y un repositorio asociado.")
+            return
+        try:
+            self.catalog.require_operations_allowed()
+        except CatalogError:
+            self._report("El catálogo todavía no está autorizado para ejecutar respaldos.")
+            return
+        if self._backup_worker is not None and self._backup_worker.isRunning():
+            return
+        executable = self.parent().settings_manager.get("restic_path")
+        history = self.catalog._storage.path.with_suffix(".history.db")
+        coordinator = ManualBackupCoordinator(self.catalog, WindowsCredentialStore(), executable, history)
+        self._backup_worker = _BackupWorker(coordinator, profile, repository, self)
+        self._backup_worker.progress.connect(self.backup_status.setText)
+        self._backup_worker.completed.connect(self.backup_status.setText)
+        self._backup_worker.completed.connect(self.refresh_history)
+        self.backup_button.setEnabled(False)
+        self._backup_worker.finished.connect(lambda: self.backup_button.setEnabled(True))
+        self._backup_worker.start()
+
+    def reject(self):
+        if self._backup_worker is not None and self._backup_worker.isRunning():
+            self._report("Espera a que termine el respaldo antes de cerrar esta ventana.")
+            return
+        super().reject()
 
     def refresh(self):
         self.current = self.catalog.snapshot()

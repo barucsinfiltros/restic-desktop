@@ -199,6 +199,10 @@ class _CatalogStorage:
             raise CatalogStorageError("Cannot open the catalog database.") from exc
         try:
             connection.row_factory = sqlite3.Row
+            if mode == "rw":
+                connection.execute("PRAGMA synchronous = FULL")
+                if connection.execute("PRAGMA synchronous").fetchone()[0] != 2:
+                    raise CatalogStorageError("SQLite FULL synchronization could not be enabled.")
             connection.execute("PRAGMA foreign_keys = ON")
             if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
                 raise CatalogStorageError("SQLite foreign keys could not be enabled.")

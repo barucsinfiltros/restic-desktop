@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 
-from . import history_db, restic_supervisor
+from . import catalog_attempts, history_db, restic_supervisor
 from .catalog_domain import ProfileState, RepositoryState, require_uuid
 
 
@@ -34,6 +34,19 @@ class ManualBackupCoordinator:
 
     def _wait(self, request, on_progress):
         handle = restic_supervisor.start(request)
+        try:
+            return self._drain(handle, on_progress)
+        finally:
+            # Never release the operation lock until the monitor observes exit.
+            while True:
+                try:
+                    if handle.wait(0.1) is not None:
+                        break
+                except BaseException:
+                    # Defer interruptions until the child has actually finished.
+                    continue
+
+    def _drain(self, handle, on_progress):
         while True:
             result = handle.wait(0.1)
             for event in handle.drain_progress():
@@ -75,6 +88,17 @@ class ManualBackupCoordinator:
         if not self._operation_lock.acquire(blocking=False):
             raise ManualBackupError("Another catalog operation is in progress.")
         started = datetime.now(timezone.utc)
+        try:
+            with catalog_attempts.operation_lock(self.catalog._storage.path):
+                return self._run_locked(profile_id, repository_id, started, on_progress)
+        except catalog_attempts.UnresolvedAttempt as exc:
+            raise ManualBackupError(str(exc)) from exc
+        finally:
+            self._operation_lock.release()
+
+    def _run_locked(self, profile_id, repository_id, started, on_progress):
+        attempt = catalog_attempts.begin(self.history_path, profile_id, repository_id)
+        result = None
         try:
             snapshot = self.catalog.snapshot()
             profile = next((p for p in snapshot.profiles if p.profile_id == profile_id), None)
@@ -126,13 +150,15 @@ class ManualBackupCoordinator:
                 args.extend(("--exclude-if-present", profile.options["exclude_if_present"]))
             if profile.options.get("pack_size"):
                 args.extend(("--pack-size", str(profile.options["pack_size"])))
-            if profile.options.get("compression") in ("auto", "max"):
+            if profile.options.get("compression") in ("auto", "off", "max"):
                 args.extend(("--compression", profile.options["compression"]))
             if profile.options.get("no_cache"):
                 args.append("--no-cache")
             if profile.options.get("ignore_inode"):
                 args.append("--ignore-inode")
             for tag in profile.options.get("tags", []):
+                if tag.strip().casefold().startswith("profile:"):
+                    raise ManualBackupError("Reserved profile tag.")
                 args.extend(("--tag", tag))
             args.extend(("--", profile.options["paths"][0]))
             result = self._wait(restic_supervisor.ExecutionRequest(
@@ -143,4 +169,7 @@ class ManualBackupCoordinator:
             self._history(profile_id, repository_id, started, result)
             return result
         finally:
-            self._operation_lock.release()
+            catalog_attempts.finish(
+                self.history_path, attempt, result.outcome.value if result else "failed",
+                result.snapshot_id if result and result.succeeded else None,
+            )

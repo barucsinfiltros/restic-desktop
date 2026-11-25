@@ -75,6 +75,10 @@ No se requieren cuentas, autenticación propia, roles, servidor SQL, API web, mi
 
 SQLite almacena configuración, relaciones e historial, no los archivos respaldados. Es una base local sin servidor independiente; sus transacciones ayudan a mantener coherencia entre GUI y ejecutores. Restic conserva la autoridad sobre el contenido real y los snapshots de sus repositorios.
 
+**Estado del prototipo:** el catálogo sigue en `staged` y su barrera rechaza las operaciones. El coordinador experimental registra cada intento antes de iniciar Restic, lo cierra con su resultado y bloquea nuevos intentos si encuentra uno sin resolver. La coordinación utiliza un bloqueo entre procesos cooperantes sobre la ruta del catálogo y espera la terminación observada; no controla ejecutores heredados, rutas alternativas al mismo archivo ni procesos huérfanos. Una interrupción abrupta puede dejar un intento en `running`; no existe todavía un procedimiento automático seguro para resolverlo. La interfaz conecta un trabajador no bloqueante, pero no puede ejecutar respaldos mientras la barrera esté cerrada.
+
+Las conexiones de escritura del catálogo y de intentos solicitan `synchronous=FULL`; esto no garantiza la durabilidad ante fallos de hardware o almacenamiento que no respete las sincronizaciones. El respaldo SQLite consistente existente debe verificarse y restaurarse explícitamente; la recuperación completa y la política de activación siguen pendientes. La comprobación `restic cat config` verifica acceso mediante la credencial y compara el ID observado con el guardado, pero no impide sustituir el destino después de comprobarlo ni distingue copias exactas con el mismo ID. Se debe limitar el acceso a la ubicación y mantener cerrada la activación hasta resolver estas limitaciones y los ejecutores heredados.
+
 ### 3.2. Componentes y responsabilidades
 
 ```mermaid
