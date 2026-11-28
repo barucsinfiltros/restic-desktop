@@ -14,15 +14,16 @@
 import sys
 from pathlib import Path
 
+ROOT = Path(SPECPATH).resolve()
 _ICON = str(
-    Path("icons") / ("app.ico" if sys.platform == "win32" else "app.png")
+    ROOT / "icons" / ("app.ico" if sys.platform == "win32" else "app.png")
 )
 
 a = Analysis(
-    ['restic_manager.py'],
+    [str(ROOT / 'restic_manager.py')],
     pathex=[],
-    binaries=[],
-    datas=[('icons', 'icons')],
+    binaries=[(str(ROOT / 'restic/windows/restic.exe'), 'restic/windows')] if sys.platform == 'win32' else [],
+    datas=[(str(ROOT / name), name) for name in ('icons', 'images')],
     hiddenimports=[
         'core',
         'core.history_db',
@@ -66,9 +67,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='ResticDesktop',
     debug=False,
     bootloader_ignore_signals=False,
@@ -84,3 +84,5 @@ exe = EXE(
     entitlements_file=None,
     icon=_ICON,
 )
+
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='ResticDesktop')

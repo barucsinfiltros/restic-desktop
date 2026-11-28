@@ -11,7 +11,6 @@ import math
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 from threading import Event, Lock, Thread
 import time
@@ -20,6 +19,8 @@ from uuid import uuid4
 
 from core.process_output import prepare_pipe, read_available
 
+
+from core.app_paths import resolve_restic
 
 class ExecutionState(str, Enum):
     RUNNING = "running"
@@ -284,16 +285,13 @@ def _prepare(request: ExecutionRequest) -> tuple[list[str], dict[str, str], Path
     cwd = (request.cwd or Path.cwd()).resolve()
     if not cwd.is_dir():
         raise _InvalidRequest("The working directory must be an existing directory.")
-    exe = Path(request.executable)
-    if exe.is_absolute() or exe.name != request.executable:
-        candidates = [cwd / exe]
-    else:
-        candidates = [cwd / folder / exe for folder in environment.get("PATH", os.defpath).split(os.pathsep) if folder]
-    for candidate in candidates:
-        found = shutil.which(str(candidate))
-        if found and (os.name != "nt" or Path(found).suffix.lower() == ".exe"):
-            return [found, *request.arguments], environment, cwd
-    raise _InvalidRequest("The configured executable could not be resolved.")
+    try:
+        executable = resolve_restic(
+            request.executable, cwd=cwd, search_path=environment.get("PATH", os.defpath),
+        )
+    except FileNotFoundError:
+        raise _InvalidRequest("No se encontró el ejecutable de Restic configurado.") from None
+    return [executable, *request.arguments], environment, cwd
 
 
 def _classify(request: ExecutionRequest, code: int | None, final_stdout: bytes) -> tuple[Outcome, str | None, str]:

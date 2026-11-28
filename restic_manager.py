@@ -51,6 +51,7 @@ import core.history_db as history_db
 import core.rclone_util as rclone_util
 import core.network_share as network_share
 from core import restic_supervisor
+from core.app_paths import data_directory, resolve_restic
 from core.restore_destination import guard_destination
 from ui.backup_worker import BackupWorker
 from ui.title_bar import TitleBar
@@ -1311,9 +1312,13 @@ class ResticCommand:
     """Wrapper for executing Restic commands"""
     
     def __init__(self, restic_path: str = "restic", debug: bool = False):
-        self.restic_path = restic_path
+        self.configured_restic = restic_path
         self.debug = debug
     
+    @property
+    def restic_path(self) -> str:
+        return resolve_restic(self.configured_restic, cwd=data_directory())
+
     def run(
         self,
         args: List[str],
@@ -1326,8 +1331,10 @@ class ResticCommand:
         Execute a restic command
         Returns: (success, stdout, stderr)
         """
-        cmd = [self.restic_path] + args
-        
+        try:
+            cmd = [self.restic_path] + args
+        except FileNotFoundError as exc:
+            return False, "", str(exc)
         if self.debug:
             print(f"[RESTIC] Running: {' '.join(cmd)}")
         
@@ -1385,8 +1392,10 @@ class ResticCommand:
         Only the most recent 1000 lines are kept in memory.
         Progress lines that use carriage-return (\\r) updates are also forwarded.
         """
-        cmd = [self.restic_path] + args
-        
+        try:
+            cmd = [self.restic_path] + args
+        except FileNotFoundError as exc:
+            return False, "", str(exc)
         if self.debug:
             print(f"[RESTIC] Running: {' '.join(cmd)}")
         
@@ -1563,8 +1572,8 @@ class ResticCommand:
     
     def version(self) -> Optional[str]:
         """Get Restic version"""
-        success, stdout, _ = self.run(["version"])
-        if success:
+        success, stdout, _ = self.run(["version"], timeout=10)
+        if success and stdout.lower().startswith("restic "):
             return stdout.strip()
         return None
     
@@ -4421,7 +4430,7 @@ class SchedulerManager:
             self._delete_windows_task(task_name)
             
             # Generate PowerShell script with restic command
-            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
+            script_dir = os.path.join(str(data_directory()), "scheduled_tasks")
             os.makedirs(script_dir, exist_ok=True)
             script_file = os.path.join(script_dir, f"{task_name}.ps1")
 
@@ -4555,7 +4564,7 @@ if ($exitCode -eq 0) {{
                 password = self.settings_manager.password_manager.decrypt(repo["password"])
             
             # Get restic path
-            restic_path = self.settings_manager.get("restic_path")
+            restic_path = resolve_restic(self.settings_manager.get("restic_path"), cwd=data_directory())
             script_path = os.path.abspath(sys.argv[0])
             python_exe = sys.executable
             
@@ -4950,7 +4959,7 @@ if ($exitCode -eq 0) {{
             )
             
             # Delete PowerShell script file if it exists
-            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
+            script_dir = os.path.join(str(data_directory()), "scheduled_tasks")
             script_file = os.path.join(script_dir, f"{task_name}.ps1")
             password_file = os.path.join(script_dir, f"{task_name}.password")
             
@@ -13132,7 +13141,7 @@ class ResticManagerWindow(QMainWindow):
         
         # Save PowerShell script to scheduled_tasks folder (same as backup jobs)
         import os
-        script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
+        script_dir = os.path.join(str(data_directory()), "scheduled_tasks")
         os.makedirs(script_dir, exist_ok=True)
         script_path = os.path.join(script_dir, f"{task_name}.ps1")
         
@@ -13519,7 +13528,7 @@ $arguments = @(
                 if result.returncode == 0:
                     # Also delete the PowerShell script and password file
                     import os
-                    script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduled_tasks")
+                    script_dir = os.path.join(str(data_directory()), "scheduled_tasks")
                     script_file = os.path.join(script_dir, f"{task_name}.ps1")
                     password_file = os.path.join(script_dir, f"{task_name}.password")
                     
@@ -14528,12 +14537,10 @@ $arguments = @(
             QApplication.processEvents()
             
             # Try the configured path first
-            restic_path = self.settings_manager.get("restic_path")
+            restic_path = resolve_restic(self.settings_manager.get("restic_path"), cwd=data_directory())
             
             self.log(f"Checking restic at: {restic_path}")
             
-            # Use shell=True on Windows for better PATH resolution
-            use_shell = platform.system() == "Windows"
             
             # Use longer timeout and explicit error handling
             result = subprocess.run(
@@ -14541,7 +14548,7 @@ $arguments = @(
                 capture_output=True,
                 text=True,
                 timeout=10,
-                shell=use_shell,
+                shell=False,
                 creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
             )
             
@@ -14578,9 +14585,9 @@ $arguments = @(
         except FileNotFoundError as e:
             from ui.settings import set_settings_status
 
-            set_settings_status(self.restic_status_label, "Not found in PATH", "err")
+            set_settings_status(self.restic_status_label, "Restic no disponible", "err")
             self.restic_install_btn.setVisible(True)
-            self.log(f"Restic executable NOT FOUND: {restic_path}")
+            self.log(str(e))
             self.log(f"FileNotFoundError: {str(e)}")
             self.log("Try: 1) Installing restic, or 2) Setting full path in Settings (e.g., C:\\\\Program Files\\\\restic\\\\restic.exe)")
         
@@ -15191,9 +15198,8 @@ $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
             QMessageBox.warning(
                 self,
                 "Restic Not Found",
-                "Restic executable not found!\n\n"
-                "Please install Restic or configure the path in Settings.\n\n"
-                "Download from: https://restic.net/"
+                "No se pudo ejecutar Restic. Comprueba la ruta en Settings o restaura "
+                "la carpeta completa de Restic Desktop, incluido _internal."
             )
             self.log("ERROR: Restic not found!")
     
@@ -16120,4 +16126,7 @@ def main():
 
 
 if __name__ == "__main__":
+    directory = data_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chdir(directory)
     sys.exit(main())

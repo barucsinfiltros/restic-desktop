@@ -98,21 +98,28 @@ python restic_manager.py
 
 ### Building a standalone executable
 
-Use the project PyInstaller spec so icons and the `icons/` folder are bundled:
+On Windows, with the development environment set up as above:
 
 ```powershell
-pyinstaller restic_manager.spec
+.\tools\build_windows.ps1
 ```
 
-Output: `dist/ResticDesktop.exe` (Windows) or `dist/ResticDesktop` (Linux).
-
-Do not use a bare `pyinstaller --onefile restic_manager.py` for release builds — it skips the spec’s `datas` / icon settings.
+Double-click `dist\ResticDesktop\ResticDesktop.exe`. Distribute the entire
+`ResticDesktop` folder, including `_internal`, which contains Qt, resources
+and the bundled Windows Restic. In Settings, `restic` or an empty field selects
+automatic detection. To override it, browse to another `restic.exe` and test
+the path before saving. Linux builds use the same spec and a system Restic.
 
 ---
 
 ## Data locations
 
-Files are created in the application working directory (the folder you run from, or the folder next to a frozen executable):
+The Windows executable stores application data under
+`%LOCALAPPDATA%\ResticDesktop`, independent of where it is launched. Replace
+the distribution folder after closing the app to update it. Source runs use
+the project folder. To bring existing settings into the Windows distribution,
+use the Settings export and import commands. Staged catalogs remain at the
+locations you choose when creating or opening them.
 
 | File / folder | Purpose |
 |---------------|---------|

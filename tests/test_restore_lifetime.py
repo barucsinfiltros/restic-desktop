@@ -3,6 +3,7 @@ from io import StringIO
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from threading import Event, Thread
 from types import SimpleNamespace
@@ -62,7 +63,7 @@ class RestoreLifetimeTests(unittest.TestCase):
                                 kill=kill, terminate=lambda: events.append("terminate"),
                                 poll=lambda: None, wait=wait)
         report = Mock()
-        command = desktop.ResticCommand("fixture")
+        command = desktop.ResticCommand(sys.executable)
 
         def run():
             results.append(command.run_with_progress(
